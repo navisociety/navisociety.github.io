@@ -12,10 +12,13 @@ import {
  * NAVI — AI companion for NAVISOCIETY, created by Prophet Dian.
  *
  * Static SPA deployed to GitHub Pages. Access is gated to a single account
- * (prophetdian@gmail.com) at three layers: this UI, RLS on the messages table,
- * and a check inside the `chat` Edge Function. Chat replies come from Claude
- * via supabase.functions.invoke('chat'); messages persist in the `messages`
- * table and the last 20 are restored on load.
+ * (prophetdian@gmail.com) at three layers: this UI, magic-link email auth,
+ * and RLS on the `messages` table.
+ *
+ * Chat model: messages are written straight to the `messages` table. NAVI
+ * (a local Claude Code agent) polls for pending user messages and writes an
+ * assistant row back. This UI subscribes to Realtime INSERTs and renders the
+ * assistant reply when it lands. The last 20 messages are restored on load.
  */
 
 interface ChatMessage {
@@ -95,23 +98,40 @@ function SplashScreen() {
 }
 
 function LoginScreen() {
+  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<string | null>(null);
 
-  const signInWithGoogle = async () => {
+  const sendMagicLink = async () => {
     if (!isSupabaseConfigured) {
       setError("NAVI is not configured yet. Backend setup is required.");
       return;
     }
+    const target = email.trim();
+    if (!target) {
+      setError("Enter your email to receive a magic link.");
+      return;
+    }
     setBusy(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: SITE_URL },
+    const { error } = await supabase.auth.signInWithOtp({
+      email: target,
+      options: { emailRedirectTo: SITE_URL },
     });
     if (error) {
       setError(error.message);
       setBusy(false);
+      return;
+    }
+    setSentTo(target);
+    setBusy(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void sendMagicLink();
     }
   };
 
@@ -127,19 +147,56 @@ function LoginScreen() {
           <span className="text-navi-magenta font-semibold">NAVISOCIETY</span>.
         </p>
 
-        <button
-          onClick={signInWithGoogle}
-          disabled={busy}
-          className="mt-10 w-full flex items-center justify-center gap-3 bg-navi-cyan hover:brightness-110 text-black font-fredoka font-semibold rounded-xl px-6 py-4 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ boxShadow: "0 0 32px rgba(0, 247, 255, 0.25)" }}
-        >
-          {busy ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            <GoogleGlyph />
-          )}
-          {busy ? "Connecting…" : "Continue with Google"}
-        </button>
+        {sentTo ? (
+          <div className="mt-10 w-full rounded-xl border border-navi-cyan/40 bg-[#0A0A0A] px-6 py-6 text-center">
+            <Sparkles className="mx-auto w-7 h-7 text-navi-cyan" />
+            <p className="mt-3 text-white font-fredoka">
+              Check{" "}
+              <span className="text-navi-cyan font-semibold">{sentTo}</span> for
+              your magic link.
+            </p>
+            <p className="mt-2 text-gray-500 text-xs font-fredoka">
+              Open it on this device to enter NAVI.
+            </p>
+            <button
+              onClick={() => {
+                setSentTo(null);
+                setError(null);
+              }}
+              className="mt-5 text-navi-cyan/80 hover:text-navi-cyan text-xs font-fredoka uppercase tracking-wider transition-colors"
+            >
+              Use a different email
+            </button>
+          </div>
+        ) : (
+          <div className="mt-10 w-full flex flex-col gap-3">
+            <input
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              placeholder="prophetdian@gmail.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={busy}
+              className="w-full bg-[#0A0A0A] border border-navi-cyan/30 text-white placeholder-gray-600 rounded-xl px-5 py-4 text-base font-fredoka focus:border-navi-cyan focus:outline-none focus:ring-2 focus:ring-navi-cyan/20 transition-all disabled:opacity-50"
+              style={{ boxShadow: "0 0 24px rgba(0, 247, 255, 0.08)" }}
+            />
+            <button
+              onClick={sendMagicLink}
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-3 bg-navi-cyan hover:brightness-110 text-black font-fredoka font-semibold rounded-xl px-6 py-4 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ boxShadow: "0 0 32px rgba(0, 247, 255, 0.25)" }}
+            >
+              {busy ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Sparkles className="w-5 h-5" />
+              )}
+              {busy ? "Sending…" : "Send magic link"}
+            </button>
+          </div>
+        )}
 
         {error && (
           <p className="mt-4 text-navi-magenta text-sm font-fredoka">{error}</p>
@@ -197,13 +254,13 @@ function ChatScreen({ session }: { session: Session }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Restore the last 20 messages on load (in-session memory).
+  // Restore the last 20 messages on load (ordered oldest -> newest).
   useEffect(() => {
     let active = true;
     (async () => {
       const { data, error } = await supabase
         .from("messages")
-        .select("id, role, content, created_at")
+        .select("id, role, content, status, created_at")
         .order("created_at", { ascending: false })
         .limit(20);
       if (!active) return;
@@ -214,6 +271,14 @@ function ChatScreen({ session }: { session: Session }) {
           content: (m.content as string) ?? "",
         }));
         setMessages(ordered);
+        // If the most recent message is a pending user message, NAVI still owes
+        // a reply — show the thinking indicator until it arrives via Realtime.
+        const last = data[0] as
+          | { role?: string; status?: string }
+          | undefined;
+        if (last && last.role === "user" && last.status === "pending") {
+          setIsLoading(true);
+        }
       }
     })();
     return () => {
@@ -221,89 +286,83 @@ function ChatScreen({ session }: { session: Session }) {
     };
   }, []);
 
+  // Subscribe to Realtime INSERTs for this user's messages. When an assistant
+  // row arrives, append it and clear the "thinking" indicator.
+  useEffect(() => {
+    const channel = supabase
+      .channel(`messages:${session.user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as {
+            id: string;
+            role: "user" | "assistant";
+            content: string;
+          };
+          if (row.role !== "assistant") return;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === row.id)) return prev;
+            return [
+              ...prev,
+              { id: row.id, role: "assistant", content: row.content ?? "" },
+            ];
+          });
+          setIsLoading(false);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [session.user.id]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  const persist = useCallback(
-    async (role: "user" | "assistant", content: string) => {
-      try {
-        await supabase
-          .from("messages")
-          .insert({ user_id: session.user.id, role, content });
-      } catch {
-        // Persistence is best-effort; a failure shouldn't break the chat.
-      }
-    },
-    [session.user.id]
-  );
-
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isLoading) return;
 
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-    };
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
+    // Optimistically render the user bubble.
+    const optimisticId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      { id: optimisticId, role: "user", content: text },
+    ]);
     setInput("");
     setIsLoading(true);
     setNotice(null);
-    void persist("user", text);
 
-    // Recent history for in-session memory (last 10 turns).
-    const history = nextMessages.slice(-10).map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const { error } = await supabase.from("messages").insert({
+      user_id: session.user.id,
+      role: "user",
+      content: text,
+      status: "pending",
+    });
 
-    try {
-      const { data, error } = await supabase.functions.invoke("chat", {
-        body: { message: text, history },
-      });
-
-      let reply = "";
-      if (error) {
-        reply =
-          "I couldn't reach my voice just now. Please try again in a moment.";
-        setNotice(error.message);
-      } else if (data?.error) {
-        reply =
-          data.reply ||
-          "I'm online, but my connection to Claude needs configuring.";
-        setNotice(data.error as string);
-      } else {
-        reply = (data?.reply as string) || "…";
-      }
-
-      const naviMsg: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: reply,
-      };
-      setMessages((m) => [...m, naviMsg]);
-      void persist("assistant", reply);
-    } catch (e) {
-      const reply =
-        "Something interrupted me. Please try again.";
-      setMessages((m) => [
-        ...m,
-        { id: crypto.randomUUID(), role: "assistant", content: reply },
-      ]);
-      setNotice(e instanceof Error ? e.message : String(e));
-    } finally {
+    if (error) {
+      setNotice(error.message);
       setIsLoading(false);
-      inputRef.current?.focus();
+      // Roll back the optimistic bubble so the user can retry.
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      setInput(text);
     }
-  };
+
+    inputRef.current?.focus();
+  }, [input, isLoading, session.user.id]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
@@ -385,21 +444,16 @@ function ChatScreen({ session }: { session: Session }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={isLoading}
             className="w-full bg-[#0A0A0A] border border-navi-cyan/30 text-white placeholder-gray-600 rounded-xl pl-5 pr-14 py-4 text-base font-fredoka focus:border-navi-cyan focus:outline-none focus:ring-2 focus:ring-navi-cyan/20 transition-all disabled:opacity-50"
             style={{ boxShadow: "0 0 24px rgba(0, 247, 255, 0.08)" }}
           />
           <button
             onClick={handleSend}
-            disabled={isLoading || !input.trim()}
+            disabled={!input.trim()}
             aria-label="Send"
             className="absolute right-2 top-1/2 -translate-y-1/2 bg-navi-cyan hover:brightness-110 text-black rounded-lg px-3 py-2.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
+            <Send className="w-4 h-4" />
           </button>
         </div>
         <p className="text-center text-gray-600 text-xs mt-3 font-fredoka">
@@ -433,28 +487,5 @@ function NaviAvatar({ size = "md" }: { size?: "md" | "lg" }) {
         draggable={false}
       />
     </div>
-  );
-}
-
-function GoogleGlyph() {
-  return (
-    <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="#4285F4"
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.76c-.98.66-2.24 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.05l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"
-      />
-    </svg>
   );
 }

@@ -5,4 +5,7 @@ dist
 .env
 .env.*
 !.env.example
+navi-brain/.env
+navi-brain/.env.*
+*.local
 package-lock.json
