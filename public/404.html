@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>NAVI</title>
+    <script>
+      // SPA fallback for GitHub Pages: send unknown routes back to the app
+      // root, preserving the path so client-side routing can handle it.
+      sessionStorage.setItem("spa-redirect", location.pathname + location.search + location.hash);
+      location.replace("/");
+    </script>
+  </head>
+  <body></body>
+</html>

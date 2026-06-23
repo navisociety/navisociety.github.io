@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navi-cyan: #00f7ff;
+  --navi-magenta: #ff00e5;
+  --navi-lime: #b6ff00;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: 'Fredoka', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
