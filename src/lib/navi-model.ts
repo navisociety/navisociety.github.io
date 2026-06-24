@@ -1,7 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// NAVI Model — v5
+// NAVI Model — v6
 // Built by NAVIsociety, shaped by Prophet Dian.
-// v5: basic English language training + basic human nature psychology.
+// v6: world & nature, science basics, history & society, intermediate English,
+//     arts & creativity, sports, and food & everyday life — built on the v5
+//     foundation of English language training + human nature psychology.
 //     All responses in clear standard English.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -133,6 +135,27 @@ class NaviTokenizer {
       'compare','comparison','compete','competition','jealousy','envy','admire',
       'grief','mourning','loss','death','cope','accept','process',
       'born','grow','old','child','adult','baby','teenager','mature',
+      // v6: world knowledge
+      'planet','earth','sun','moon','star','space','universe','galaxy','ocean','sea','river',
+      'mountain','forest','desert','island','continent','country','city','nation','border',
+      'animal','plant','tree','flower','bird','fish','insect','mammal','reptile',
+      'science','biology','chemistry','physics','math','mathematics','equation','theory','experiment',
+      'history','century','ancient','modern','war','peace','revolution','empire','civilization',
+      'art','painting','sculpture','photography','film','movie','theatre','drama','comedy',
+      'sport','sports','football','basketball','cricket','tennis','athletics','team','player','game','win','lose',
+      'food','cook','cooking','recipe','ingredient','meal','breakfast','lunch','dinner','taste','flavor',
+      'travel','journey','destination','culture','tradition','language','religion','belief','church','mosque','temple',
+      'weather','rain','sun','cloud','storm','wind','temperature','season','spring','summer','autumn','winter',
+      'health','medicine','doctor','hospital','disease','illness','treatment','heal','body','organ','blood',
+      'government','law','rights','freedom','democracy','justice','equality','vote','politics','power',
+      'economy','trade','market','price','inflation','unemployment','poverty','wealth','development',
+      'environment','nature','pollution','climate','energy','water','air','soil','recycling','sustainable',
+      // v6: intermediate english
+      'idiom','expression','phrase','proverb','metaphor','simile','analogy','context','meaning','imply',
+      'formal','informal','casual','professional','academic','written','spoken','verbal','nonverbal',
+      'active','passive','voice','clause','subject','object','predicate','sentence','paragraph',
+      'prefix','suffix','root','syllable','vowel','consonant','pronunciation','spell','spelling',
+      'essay','report','letter','email','text','message','document','draft','edit','revise',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -1555,6 +1578,340 @@ const KNOWLEDGE: KNode[] = [
     ],
     priority: 7,
   },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: World & Nature
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['tell me about earth', 'what is the planet', 'how big is earth', 'what is nature', 'why is nature important', 'planet earth facts'],
+    responses: [
+      "Earth is the only planet we know of that holds life. It's about 12,742 kilometres across and roughly 4.5 billion years old. What makes it special is balance: the right distance from the sun, liquid water, a protective atmosphere, and a magnetic field that shields us from radiation. Everything you've ever known has happened on this one fragile rock floating in space.",
+      "Nature is the living system Earth runs on — the soil, the water, the air, the plants and animals, all connected. It matters because it's not separate from us; we depend on it for every breath, every meal, every drop of water. When we damage nature, we damage the thing keeping us alive. Protecting it is really self-protection.",
+      "Earth is a closed system, which means everything here cycles and reuses. The water you drink today has been around for billions of years. The carbon in your body was once inside a star. Understanding the planet as one connected web changes how you see your place in it — you're not visiting nature, you're part of it.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is space', 'how big is the universe', 'what are stars', 'what is a galaxy', 'tell me about the solar system', 'how far is the sun'],
+    responses: [
+      "Space is the vast, mostly empty expanse beyond Earth's atmosphere. The universe is so large that we measure it in light-years — the distance light travels in a year, about 9.5 trillion kilometres. The observable universe stretches roughly 93 billion light-years across, and it holds billions of galaxies, each with billions of stars. The scale is almost impossible to truly imagine.",
+      "Stars are giant balls of gas that produce light and heat through nuclear fusion at their cores. Our sun is a fairly ordinary star, about 150 million kilometres away — close enough that its light takes only eight minutes to reach us. A galaxy is a huge collection of stars, gas, and dust bound together by gravity. We live in one called the Milky Way.",
+      "Our solar system is the sun and everything orbiting it: eight planets, their moons, asteroids, and comets. Earth is the third planet from the sun. What's humbling is that the solar system is just a tiny speck in one galaxy, and that galaxy is one of billions. Looking up at the night sky, you're seeing light that left those stars years, sometimes millennia, ago.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['tell me about animals', 'why are animals important', 'what is an ecosystem', 'how do animals survive', 'why do animals matter', 'what is biodiversity'],
+    responses: [
+      "Animals are living creatures that, unlike plants, move and feed on other organisms. They matter because they're woven into the systems that keep nature working — bees pollinate the plants we eat, predators keep prey populations balanced, and decomposers recycle nutrients back into the soil. Remove one species and the whole web can wobble.",
+      "An ecosystem is a community of living things and their environment working together — plants, animals, insects, water, soil, all interdependent. Biodiversity means the variety of life within it. The more diverse an ecosystem, the more resilient it is, because if one part struggles, others can take over its role. Diversity is nature's insurance policy.",
+      "Animals survive through adaptation — traits shaped over countless generations to fit their environment. A cheetah's speed, a chameleon's colour, a bird's migration instinct: each is a solution to a survival problem. What's remarkable is that every living animal today is the end of an unbroken chain of ancestors that all survived long enough to reproduce. Life is stubborn.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what causes rain', 'why do seasons change', 'what is weather', 'why is it cold in winter', 'what causes storms', 'how does weather work'],
+    responses: [
+      "Weather is the state of the atmosphere at a given place and time — temperature, wind, rain, and so on. Rain happens when water evaporates, rises, cools, and condenses into clouds until the droplets get heavy enough to fall. The whole system is driven by the sun heating the Earth unevenly, which sets the air and water in motion.",
+      "Seasons change because Earth is tilted on its axis as it orbits the sun. When your part of the planet tilts toward the sun, you get longer, warmer days — summer. When it tilts away, the sunlight hits at a shallower angle and spreads thinner, so it's colder — winter. It's not about being closer to the sun; it's about the angle of the light.",
+      "Storms form when warm, moist air rises rapidly and meets cooler air, creating instability. The bigger the temperature and pressure differences, the more violent the result. Thunderstorms, cyclones, and hurricanes are all the atmosphere releasing built-up energy. Weather is essentially the planet constantly trying to balance heat and pressure.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['tell me about the ocean', 'how deep is the ocean', 'what lives in the sea', 'why is the ocean important', 'what is the ocean', 'facts about the sea'],
+    responses: [
+      "The ocean covers about 71 percent of Earth's surface and holds 97 percent of its water. It's important because it produces over half the oxygen we breathe, regulates the climate by absorbing heat and carbon, and feeds billions of people. We often look up at space in wonder, but the ocean right here is just as unexplored — we've mapped only a small fraction of it.",
+      "The ocean is staggeringly deep. Its deepest known point, the Mariana Trench, drops nearly 11 kilometres — deeper than Mount Everest is tall. Down there, in total darkness and crushing pressure, life still thrives in forms we barely understand. The deep sea is one of the last true frontiers on the planet.",
+      "Life in the sea ranges from microscopic plankton, which form the base of the entire ocean food chain, to the blue whale, the largest animal that has ever lived. Coral reefs, though they cover a tiny area, host a quarter of all marine species. The ocean isn't empty water — it's the largest living habitat on Earth, and we depend on its health for our own.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is climate change', 'why is the environment important', 'what is pollution', 'how can we help the planet', 'what is global warming', 'why should we care about nature'],
+    responses: [
+      "Climate change refers to long-term shifts in temperature and weather patterns, driven largely by humans burning fossil fuels, which release gases that trap heat in the atmosphere. This warming melts ice, raises sea levels, and makes weather more extreme. It matters because it affects food, water, and where people can safely live — it's a human issue as much as an environmental one.",
+      "Pollution is the introduction of harmful substances into the environment — plastic in the ocean, chemicals in rivers, gases in the air. The environment matters because it's the foundation everything else stands on; a damaged planet means damaged health, food, and economies. You can't have a healthy society on a sick planet.",
+      "Helping the planet is mostly about small consistent choices and bigger collective ones. Personally: waste less, reuse more, consume thoughtfully, and use less energy. Collectively: support cleaner energy, better policy, and companies that act responsibly. No single person fixes this, but no fix happens without people who care. Caring is where it starts.",
+    ],
+    priority: 6,
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: Science Basics
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['what is science', 'why is science important', 'how does science work', 'what do scientists do', 'what is an experiment', 'how do we learn about the world'],
+    responses: [
+      "Science is a method for understanding the world by testing ideas against evidence. You observe something, form a possible explanation, then design experiments to see if reality agrees. What makes it powerful is its honesty: a scientific idea must be willing to be proven wrong. That self-correction is why science keeps getting closer to the truth.",
+      "Scientists ask questions and then chase answers carefully. An experiment is a controlled test — you change one thing, keep everything else the same, and watch what happens. By repeating this and sharing results so others can check them, knowledge becomes reliable rather than just opinion. Science is curiosity with discipline.",
+      "Science matters because nearly everything in modern life — medicine, electricity, phones, clean water — came from people patiently testing ideas. But beyond the tools, science teaches a way of thinking: question assumptions, demand evidence, stay humble when you're wrong. That mindset is useful far beyond the laboratory.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how does the human body work', 'what are organs', 'how does the heart work', 'what does the brain do', 'how does the body heal', 'what is the immune system'],
+    responses: [
+      "Your body is a system of systems, all working together without you thinking about it. Organs are specialised parts, each with a job — the heart pumps blood, the lungs take in oxygen, the liver filters toxins. They cooperate through the blood and nervous system, keeping you alive every second of every day.",
+      "The heart is a muscle about the size of your fist that pumps blood through your entire body roughly 100,000 times a day. The brain is the control centre — it runs your thoughts, movements, breathing, and emotions, processing more information than any computer we've built. You carry an extraordinary machine around with you and rarely notice it.",
+      "Your body heals through a constant, automatic repair process. When you're cut, blood clots to seal it, then cells rebuild the tissue. The immune system is your internal defence force — it identifies invaders like bacteria and viruses and destroys them, and it remembers past threats so it can respond faster next time. Most of your healing happens while you sleep.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is health', 'how do i stay healthy', 'why is sleep important', 'why is exercise important', 'what does medicine do', 'how do doctors help people'],
+    responses: [
+      "Health isn't just the absence of illness — it's your body and mind working well together. Staying healthy comes down to a few unglamorous basics done consistently: eat real food, move your body, sleep enough, manage stress, and stay connected to people. None of it is complicated; the challenge is doing it day after day.",
+      "Sleep is when your body repairs itself and your brain files away memories and clears waste. Skimping on it weakens your immune system, your mood, and your focus. Exercise is just as fundamental — it strengthens your heart, lifts your mood through brain chemistry, and protects you against many diseases. Sleep and movement are free medicine most people underuse.",
+      "Medicine works by helping the body do what it can't manage alone — fighting infection, controlling pain, correcting imbalances. Doctors are trained to read the body's signals, diagnose what's wrong, and guide treatment. But the biggest factor in your health is usually you: the daily habits you keep long before you ever see a doctor.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is math', 'why is mathematics important', 'what is a number', 'how do numbers work', 'what is algebra', 'why do we need to learn maths'],
+    responses: [
+      "Mathematics is the language of patterns and relationships. Numbers are simply symbols we use to count and measure, but from that simple start, maths builds a way to describe everything from money to motion to the shape of the universe. It's less about memorising and more about learning to think clearly and logically.",
+      "Algebra is maths where letters stand in for unknown numbers, letting you solve problems where something is missing. If you've ever worked out 'I have R50, I spent some, I have R20 left, how much did I spend?' — that's algebra in plain words. It teaches you to reason your way from what you know to what you don't.",
+      "Maths matters because it trains the mind to be precise and to break big problems into smaller logical steps. Even if you never use advanced equations, that thinking skill carries everywhere — budgeting, planning, weighing decisions. Numbers are tools, but the real gift of maths is a sharper, clearer way of thinking.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is technology', 'how does the internet work', 'what is a computer', 'how does a phone work', 'what is wifi', 'how does electricity work'],
+    responses: [
+      "Technology is anything humans create to solve problems and extend what we can do — from a wheel to a smartphone. A computer is a machine that follows instructions to process information, doing simple operations billions of times a second. Everything it does, however complex it looks, comes down to switching tiny electrical signals on and off.",
+      "The internet is a vast network of computers connected so they can share information. When you load a page, your device sends a request across cables and signals to a distant computer, which sends the content back — often in a fraction of a second. WiFi is just the wireless link between your device and that network, using radio waves instead of a cable.",
+      "Electricity is the flow of tiny charged particles called electrons through a material. We harness that flow to power almost everything — lights, phones, fridges. A phone combines this with a computer, a screen, antennas, and sensors into one device. It feels like magic, but it's layers of clever engineering, each built on the one before it.",
+    ],
+    priority: 6,
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: History & Society
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['why is history important', 'what is history', 'why should we learn about the past', 'what can history teach us', 'why does the past matter', 'what is a historical event'],
+    responses: [
+      "History is the record of what humans have done, decided, and lived through. It matters because the present didn't appear from nowhere — every situation today has roots in choices made before us. Understanding those roots helps you see why things are the way they are, and that's the first step to changing them.",
+      "Learning about the past gives you something rare: the chance to learn from mistakes you didn't have to make yourself. People have already lived through the consequences of greed, courage, war, and forgiveness. History lets you borrow that hard-won wisdom instead of repeating it from scratch.",
+      "A historical event is a moment that shaped the course of human life — a war, a discovery, a movement, a fall of power. But history isn't just famous events; it's also how ordinary people lived, thought, and struggled. Studying it builds empathy, because you realise people in every era were as real and complex as you are.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is culture', 'why is culture important', 'what does culture mean', 'how does culture shape people', 'what is cultural identity', 'why do cultures differ'],
+    responses: [
+      "Culture is the shared way of life of a group — their language, beliefs, food, music, customs, and values, passed down and reshaped over generations. It matters because it gives people belonging and meaning. Your culture shapes how you see the world before you even realise you're seeing through it.",
+      "Cultural identity is the sense of belonging you get from the traditions and community you come from. It's part of how you understand who you are. Cultures differ because they grew in different places, climates, and histories — each one is a unique answer to the same human questions about how to live together.",
+      "Culture shapes people quietly but deeply — what you find normal, polite, beautiful, or shameful is largely learned from the culture around you. Recognising this is freeing: it lets you keep what serves you, question what doesn't, and respect that someone raised differently sees the world through their own valid lens.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is government', 'what is the law', 'why do we have laws', 'what is democracy', 'how does government work', 'what are human rights', 'what is justice'],
+    responses: [
+      "Government is the system a society uses to make collective decisions and organise life — building roads, running schools, keeping order. Laws are the agreed rules that let large groups of strangers live together without chaos. We have them because without shared rules, the strong simply dominate the weak. Law is how a society tries to be fair on purpose.",
+      "Democracy is a system where power ultimately rests with the people, usually through voting. The idea is that those affected by decisions should have a say in them. It's not perfect, but it tends to protect freedom better than systems where one person or group holds all the power unchecked.",
+      "Human rights are the basic protections every person deserves simply for being human — life, freedom, dignity, fair treatment. Justice is the effort to give people what they are genuinely owed, to right wrongs, and to treat people equally under the law. Both are ideals we never fully reach, but striving toward them is what keeps a society humane.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is economics', 'how does money work', 'what is the economy', 'why do prices go up', 'what is inflation', 'how does trade work', 'what is poverty'],
+    responses: [
+      "Economics is the study of how people use limited resources to meet unlimited wants. Money is simply a tool that makes trade easier — instead of swapping a goat for bread, you use a shared unit everyone accepts. The economy is the sum of all the buying, selling, working, and producing a society does.",
+      "Prices go up for a few main reasons: more demand than supply, rising costs to produce things, or inflation — which is when money loses value over time, so each rand buys a little less than before. Understanding this helps you see that prices aren't random; they're signals about supply, demand, and the value of money itself.",
+      "Trade works because people and countries are good at different things. Instead of each making everything badly, they specialise and exchange — everyone ends up better off. Poverty is the lack of resources to meet basic needs, and it's often less about laziness than about lacking access to opportunity, education, and stability. Economics, at its heart, is about how we share a limited world.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['why do wars happen', 'what causes war', 'what is peace', 'how do countries resolve conflict', 'why is peace important', 'what is diplomacy'],
+    responses: [
+      "Wars usually happen over resources, power, land, ideology, or fear. Underneath the politics is almost always a failure to resolve conflict any other way. War is rarely the goal itself — it's what happens when negotiation, fairness, and trust break down. Understanding that helps you see how many wars might have been prevented.",
+      "Peace is more than the absence of fighting — it's a state where conflict can be handled without violence, through fairness, dialogue, and shared rules. It matters because war destroys not just lives but the conditions for everything good: education, family, growth, hope. Peace is the soil that lets a society flourish.",
+      "Diplomacy is the art of resolving differences through conversation instead of force. Countries use negotiation, compromise, and agreements to settle disputes before they explode. It takes patience and the willingness to understand the other side — which is exactly why it's hard, and exactly why it's so valuable when it works.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is religion', 'why do people believe in god', 'what are different religions', 'what is faith', 'why does religion matter to people', 'what is spirituality'],
+    responses: [
+      "Religion is a system of beliefs, practices, and community centred on questions of meaning, morality, and what lies beyond the visible world. People believe for many reasons — comfort, purpose, tradition, genuine experience of the sacred. Whatever your own view, religion has shaped human history, art, and ethics more than almost anything else.",
+      "There are many major religions — Christianity, Islam, Hinduism, Buddhism, Judaism, and others — each with its own teachings, but most share core themes: how to live well, treat others, and face life and death. Faith is trust in something beyond proof, a willingness to live by a belief you can't fully verify. For billions, it's the centre of how they make sense of life.",
+      "Spirituality is the personal search for meaning, connection, and something larger than yourself — it can exist within a religion or outside one. It matters to people because humans naturally hunger for purpose and for the sense that life is more than just survival. Whether through prayer, nature, or reflection, it's one of the oldest human pursuits.",
+    ],
+    priority: 6,
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: Intermediate English
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['what is an idiom', 'common english idioms', 'what does it mean when people say', 'english expressions', 'what does that phrase mean', 'idioms in english'],
+    responses: [
+      "An idiom is a phrase whose meaning isn't literal — you can't work it out from the individual words. Here are some common ones: 'break the ice' means to start a conversation; 'hit the nail on the head' means to be exactly right; 'under the weather' means feeling sick; 'cost an arm and a leg' means very expensive; 'bite the bullet' means to do something difficult; and 'the ball is in your court' means it's your decision now.",
+      "Idioms are expressions native speakers use all the time, and they make your English sound natural. For example, 'break the ice' (start a conversation), 'under the weather' (feeling unwell), 'cost an arm and a leg' (very expensive), and 'bite the bullet' (face something hard). The trick is to learn them in context, not as a list — notice how and when people actually use them.",
+      "When someone uses a phrase that doesn't make literal sense, it's probably an idiom. 'Hit the nail on the head' means being exactly correct. 'The ball is in your court' means the decision is yours. 'Bite the bullet' means doing something unpleasant you've been avoiding. Tell me a specific phrase you heard and I'll explain exactly what it means.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['difference between formal and informal english', 'how to write formally', 'when to use formal english', 'professional english', 'how to write an email in english', 'formal language'],
+    responses: [
+      "Formal English is what you use for work, school, and people you don't know well — it avoids slang, uses full words instead of contractions, and stays polite and precise. Informal English is for friends and family — relaxed, with slang and shortcuts. The skill is knowing your audience: 'I would like to request a meeting' is formal; 'Can we meet?' is casual. Both are correct in the right setting.",
+      "To write a good email in English, keep it clear and structured. Start with a greeting ('Dear Mr Smith' for formal, 'Hi Sarah' for casual). State your purpose early and simply. Keep paragraphs short. Close politely ('Kind regards' for formal, 'Thanks' for casual). The golden rule: when in doubt, lean slightly more formal — it's easier to relax later than to recover from sounding rude.",
+      "The main differences are word choice and tone. Formal English avoids contractions (use 'do not' instead of 'don't'), avoids slang, and uses more complete sentences. Use it for job applications, official emails, and anyone in authority. Informal English is warmer and looser — perfect for friends, but it can seem careless in professional settings. Match the register to the relationship.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how do i write a paragraph', 'how to write well', 'what makes good writing', 'how to structure writing', 'how to start a paragraph', 'tips for writing in english'],
+    responses: [
+      "A strong paragraph has one main idea. Start with a topic sentence that states that idea clearly. Follow it with two or three sentences that explain, prove, or give an example. End with a sentence that wraps up or links to what comes next. If a sentence doesn't support the main idea, cut it — focus is what makes writing strong.",
+      "Good writing is clear before it's clever. Use short sentences when the idea is important. Pick simple, exact words over fancy ones. Read your work aloud — if you stumble, your reader will too. And always know what one point you're trying to make in each paragraph; confusion in writing usually comes from trying to say too many things at once.",
+      "To start a paragraph well, lead with your strongest, clearest statement of the idea — don't bury it. Then build: explain it, support it with a reason or example, and finish cleanly. Think of each paragraph as a tiny argument: claim, evidence, conclusion. Do that consistently and your writing will feel organised and confident.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['common english mistakes', 'grammar mistakes', 'how to avoid mistakes in english', 'english errors', 'mistakes people make in english', 'how to improve english'],
+    responses: [
+      "A few of the most common English mistakes: confusing 'your' (belonging to you) and 'you're' (you are); 'their / there / they're'; and 'its' (belonging to it) versus 'it's' (it is). Another big one is subject-verb agreement, like saying 'he go' instead of 'he goes'. Learning these few patterns well will fix most everyday errors.",
+      "People often mix up similar words: 'affect' (to influence) versus 'effect' (the result); 'then' (time) versus 'than' (comparison); and 'fewer' (for things you count) versus 'less' (for things you can't). The best way to avoid these is to read a lot — your ear learns what's right faster than rules alone can teach you.",
+      "To improve your English and cut mistakes, do three things: read regularly so correct patterns sink in, write often so you practise producing them, and don't fear errors — they're how you learn. Focus especially on the small confusing pairs like 'your/you're' and 'its/it's', because fixing those instantly makes your writing look more polished.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how to sound confident in english', 'how to speak english well', 'how to improve my english', 'tips for speaking english', 'how to speak more fluently', 'how to get better at english'],
+    responses: [
+      "Confidence in English comes from practice, not perfection. Speak slowly and clearly rather than rushing — pausing is fine and even sounds thoughtful. Don't aim to be flawless; aim to be understood. Every fluent speaker started by making mistakes out loud. The people who improve are the ones who keep talking anyway.",
+      "To speak more fluently, immerse yourself: watch shows, listen to podcasts, and repeat phrases aloud to train your mouth and ear together. Learn whole phrases, not just single words, so you have ready-made building blocks. And find any chance to actually speak — conversation, even messy conversation, teaches you faster than studying alone ever will.",
+      "The fastest way to get better at English is to use it daily, even imperfectly. Think in English when you can, narrate your day in your head, and don't translate word for word from your first language. Confidence grows every time you successfully make yourself understood — so chase being understood, not being perfect.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['english proverbs', 'what is a proverb', 'common proverbs', 'what do proverbs mean', 'proverbs and meanings', 'wise sayings in english'],
+    responses: [
+      "A proverb is a short, well-known saying that carries a piece of wisdom. Here are some common ones: 'Actions speak louder than words' means what you do matters more than what you say; 'Every cloud has a silver lining' means there's good in every bad situation; 'Better late than never' means doing something late beats not doing it; and 'Don't judge a book by its cover' means don't judge by appearances.",
+      "Proverbs pack life lessons into a single line. 'The early bird catches the worm' means those who act first get the reward. 'When in Rome, do as the Romans do' means adapt to the customs of where you are. 'Don't judge a book by its cover' warns against judging on appearances. They're worth learning because native speakers use them to make a point quickly.",
+      "Proverbs are the condensed wisdom of a culture. A few to know: 'Actions speak louder than words', 'Every cloud has a silver lining', 'Better late than never', 'The early bird catches the worm', and 'When in Rome, do as the Romans do'. Each one captures a truth people have repeated for generations — learning them gives you both better English and a little wisdom.",
+    ],
+    priority: 6,
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: Arts & Creativity
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['what is art', 'why is art important', 'what makes something art', 'why do humans make art', 'what is the purpose of art', 'is art important'],
+    responses: [
+      "Art is human expression made visible — an attempt to capture feeling, beauty, or truth in a form others can experience. It's important because it says what plain facts can't. A painting, a song, a poem can carry an emotion straight into someone else's heart. Art is how we share the inside of being human.",
+      "What makes something art isn't perfection — it's intention and meaning. Humans make art because we have an irresistible need to express, to be understood, and to make sense of our experience. Every culture in history made art, even before they had writing. It seems to be as fundamental to us as language.",
+      "The purpose of art is partly to move us and partly to make us see. It can comfort, provoke, question, or simply make life more beautiful. Art matters because a world of pure function would be unbearable — it's the things we make for meaning, not just survival, that make life worth living.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['why does music affect us', 'why do we love music', 'what does music do to the brain', 'why is music powerful', 'how does music make us feel', 'why do humans make music'],
+    responses: [
+      "Music affects us because it speaks directly to emotion, bypassing logic. Rhythm syncs with our bodies and heartbeats, and melody can trigger memory and feeling instantly. Scientists find that music lights up nearly every part of the brain at once, including the reward centres — which is why a great song can give you literal chills.",
+      "We love music because it connects us — to our own feelings, to memories, and to other people. A song can hold a moment of your life so completely that hearing it years later brings the whole feeling rushing back. Humans have made music in every culture and era; it seems to be wired into us as a way to feel and to belong.",
+      "Music is powerful because it lets us feel emotions safely and share them with others. It can lift you up, help you grieve, energise a crowd, or calm a racing mind. The brain releases feel-good chemicals when we hear music we love, which is part of why it can genuinely improve your mood and even your health.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how do you write a good story', 'what makes a good story', 'how to be a better writer', 'what is storytelling', 'how to create characters', 'how to write fiction'],
+    responses: [
+      "A good story is built on a character who wants something and faces obstacles getting it. That simple engine — desire plus conflict — creates tension, and tension is what keeps a reader turning pages. Make us care about the character first; then make their struggle real. Everything else is detail.",
+      "Strong characters feel real because they have wants, flaws, and contradictions, just like people. Don't make them perfect — perfect is boring. Give them something to lose and a weakness that gets in their way. Readers connect with struggle, not flawlessness. Show us a character trying and failing, and we'll follow them anywhere.",
+      "To become a better writer, write regularly and read even more. Storytelling is the art of arranging events so they build meaning and emotion. Start with conflict, show rather than tell where you can, and cut anything that doesn't move the story forward. The first draft is just you discovering the story; the real writing happens in rewriting.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what makes a good movie', 'how do films tell stories', 'what is cinema', 'how does a film work', 'what is directing', 'why do we love movies'],
+    responses: [
+      "A good movie combines a compelling story with the power of image and sound. Film tells stories visually — through what you see, not just what's said. A look, a setting, a piece of music can convey more than a page of dialogue. The best films make you feel something you can't quite put into words.",
+      "Cinema is storytelling through moving pictures, sound, and time. Directing is the art of pulling all the pieces together — performances, camera, lighting, pace — into one unified vision. A director decides what you see, when, and how, guiding your emotions shot by shot. Great directing is invisible; you just feel its effect.",
+      "We love movies because they let us live other lives for a couple of hours — to feel fear, love, and adventure from a safe seat. A film works by guiding your attention and emotion deliberately: the music tells you how to feel, the editing controls the rhythm, the framing decides what matters. It's a deeply crafted illusion, and we happily fall into it.",
+    ],
+    priority: 6,
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: Sports & Physical Life
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['why is sport important', 'why do humans play sports', 'what is the value of sport', 'why do people love sports', 'what does sport teach you', 'benefits of playing sports'],
+    responses: [
+      "Sport matters because it builds the body and the character at the same time. It teaches discipline, resilience, and how to handle both winning and losing with grace. Beyond fitness, it gives people a shared passion and a sense of belonging — few things unite strangers like a team they both support.",
+      "Humans love sport because it's a safe arena for our oldest instincts — competition, teamwork, the thrill of testing yourself. It teaches you to keep going when it's hard, to trust teammates, and to accept that you can give everything and still lose. Those lessons carry far beyond the field.",
+      "The value of sport is in what it demands of you: practice when you don't feel like it, focus under pressure, and getting back up after defeat. It builds confidence through effort, not luck. Whether you play or watch, sport reminds us that growth comes from showing up and trying again and again.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how do i get fit', 'what is physical fitness', 'why should i exercise', 'how does exercise help the body', 'how to stay in shape', 'what does working out do'],
+    responses: [
+      "Getting fit starts with consistency, not intensity. Pick something you can actually keep doing — walking, running, bodyweight workouts — and do it regularly. Fitness is the body's ability to handle physical demands, and it improves a little every time you push it slightly. The best exercise is the one you'll stick with.",
+      "Exercise helps the body in almost every way: it strengthens your heart and muscles, improves your mood by releasing feel-good chemicals, sharpens your mind, and protects against many diseases. You don't need a gym to start — even regular brisk walking makes a real difference. The hardest part is beginning; momentum does the rest.",
+      "To stay in shape, combine movement that raises your heart rate with some strength work, and keep it consistent. Working out doesn't just change how you look — it changes how you feel, think, and sleep. Start small, stay regular, and let it build. Your future self is shaped by the habits you keep now.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['what is teamwork', 'how to be a good team player', 'why is competition healthy', 'what is sportsmanship', 'how to work in a team', 'what does competition teach you'],
+    responses: [
+      "Teamwork is people combining their strengths toward a shared goal, where the group achieves what no individual could alone. To be a good team player, communicate clearly, do your part reliably, and put the team's success above your own ego. Trust is the currency of every good team — earn it by being dependable.",
+      "Healthy competition pushes you to be better than you'd be on your own. It's healthy when it's about raising your own standard, not tearing others down. Sportsmanship is exactly that balance: competing hard while still respecting your opponent. Winning with grace and losing with dignity both build real character.",
+      "Working well in a team means listening as much as contributing, supporting others, and handling disagreement without making it personal. Competition, done right, teaches you to perform under pressure, accept results honestly, and respect those who beat you. Both teamwork and competition prepare you for almost everything else in life.",
+    ],
+    priority: 6,
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v6: Food & Everyday Life
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    triggers: ['what is healthy food', 'why do we need to eat', 'what is nutrition', 'what should i eat', 'what makes food healthy', 'how does food affect the body'],
+    responses: [
+      "We eat because food is fuel — it gives the body energy and the materials to build and repair itself. Nutrition is the study of how food affects us. Healthy food is mostly whole and unprocessed: vegetables, fruit, whole grains, lean proteins, and water. The simplest rule is to eat food close to how it appears in nature.",
+      "Healthy food gives your body what it needs without overloading it with sugar, salt, and processed fat. Balance is key — a mix of proteins to build, carbohydrates for energy, healthy fats, and plenty of vegetables. You don't need a perfect diet; you need a mostly good one, most of the time. Consistency beats perfection.",
+      "Food affects everything — your energy, mood, focus, and long-term health. Eat poorly and you feel sluggish and foggy; eat well and your body and mind both run better. You don't have to overhaul everything at once. Start by adding more whole foods and water, and let the better habits crowd out the worse ones gradually.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how do i learn to cook', 'what is cooking', 'basic cooking skills', 'how to start cooking', 'what should a beginner cook', 'why is cooking important'],
+    responses: [
+      "Cooking is one of the most useful life skills you can learn, and you start by keeping it simple. Master a few basics — boiling, frying, roasting — and a handful of easy meals you can repeat. Eggs, rice dishes, simple pasta, and a basic stew are great beginner wins. Confidence in the kitchen is built one recipe at a time.",
+      "Cooking matters because it gives you control over what you eat, saves money, and is genuinely satisfying. To start, pick one simple recipe and make it until it feels easy, then add another. Don't fear mistakes — even a slightly burnt first attempt teaches you something. Everyone who can cook well was once a beginner who kept trying.",
+      "Basic cooking skills include chopping safely, knowing how heat changes food, and seasoning to taste. Start with meals that are hard to ruin, like a vegetable stir-fry or a one-pot rice dish. Taste as you go — that single habit is what turns following recipes into actually knowing how to cook. Keep it simple and build from there.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how do i manage money', 'what is a budget', 'how to save money', 'basic money management', 'how to spend less', 'what is financial planning'],
+    responses: [
+      "Managing money starts with knowing where it goes. A budget is simply a plan for your money: list what comes in, list what goes out, and make sure the second is smaller than the first. The basic rule that helps most people is to save a little before you spend, not whatever happens to be left over.",
+      "To save money, track your spending for a month — most people are surprised where it actually goes. Then cut the things you won't miss, and automate saving a fixed amount the moment you get paid. Small, consistent saving beats occasional big efforts. Wealth is built quietly over time, not in one dramatic move.",
+      "Financial planning is deciding today how you want money to serve your future. The fundamentals are simple: spend less than you earn, save consistently, avoid unnecessary debt, and build a small emergency fund first. None of it is complicated — the challenge is discipline. Start small; the habit matters more than the amount.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how do i manage my time', 'how to be more productive', 'what is time management', 'how to stop wasting time', 'how to get more done', 'tips for managing time'],
+    responses: [
+      "Time management is really about deciding what matters and protecting time for it. Start each day by choosing your two or three most important tasks and doing those first, before the distractions arrive. You can't do everything — productivity is mostly about choosing what to leave undone.",
+      "To stop wasting time, notice where it leaks — usually it's the phone and unplanned scrolling. Try working in focused blocks with short breaks, and remove the distraction before it tempts you rather than relying on willpower. Doing fewer things with full attention beats doing many things half-present.",
+      "Getting more done isn't about being busy; it's about being deliberate. Plan your day the night before, tackle the hardest task while your energy is fresh, and group similar small tasks together. And protect your rest too — a tired mind is slow and sloppy. Real productivity is a rhythm of focus and recovery, not constant grinding.",
+    ],
+    priority: 6,
+  },
 ];
 
 // ── NaviModel ─────────────────────────────────────────────────────────────────
@@ -1574,6 +1931,11 @@ class NaviModel {
     { key: 'faith', words: ['god', 'faith', 'prayer', 'spiritual', 'church', 'believe'], label: 'your faith' },
     { key: 'struggle', words: ['depressed', 'anxiety', 'anxious', 'lonely', 'hurt', 'pain', 'struggling', 'burnout'], label: 'what you\'ve been carrying' },
     { key: 'creative', words: ['art', 'design', 'creative', 'draw', 'write', 'writing', 'paint'], label: 'your creative work' },
+    { key: 'english', words: ['english', 'grammar', 'language', 'speak', 'write', 'vocabulary', 'tense', 'sentence'], label: 'the English you\'re learning' },
+    { key: 'science', words: ['science', 'biology', 'chemistry', 'physics', 'experiment', 'research', 'theory'], label: 'the science you\'re exploring' },
+    { key: 'sport', words: ['sport', 'sports', 'football', 'basketball', 'cricket', 'gym', 'fitness', 'training', 'team'], label: 'the sport you play' },
+    { key: 'history', words: ['history', 'past', 'war', 'revolution', 'ancient', 'civilization', 'empire'], label: 'the history you\'re studying' },
+    { key: 'health', words: ['health', 'sick', 'illness', 'doctor', 'medicine', 'exercise', 'sleep', 'nutrition', 'diet'], label: 'your health journey' },
   ];
 
   constructor() {
@@ -1730,9 +2092,19 @@ class NaviModel {
         "Go deeper on that. I want the full thought.",
         "I'm with you. Where does that lead?",
       ],
+      generic: [
+        "I don't have a sharp answer for that yet — but I'm growing. Tell me more and I'll do my best.",
+        "That's outside what I know well right now. Ask me something adjacent and we can work toward it together.",
+        "Hmm. I'm not sure I have that one. Can you say more about what you're looking for?",
+        "Good question — and honestly, I'm still learning that area. What's the context?",
+        "I want to give you a real answer, not a generic one. Tell me more about what you're thinking.",
+        "I don't have that fully mapped yet. But ask me something connected and let's see where we get.",
+        "That one's at the edge of what I know. What would be most useful to you right now?",
+        "I'm still building in that area. What specifically do you need to know?",
+      ],
     };
 
-    const pool = fallbacks[intent] || fallbacks.statement;
+    const pool = fallbacks[intent] || fallbacks.generic;
     let response = pool[this.turnCount % pool.length];
     if (recalled && intent !== 'emotional') {
       response += ` And earlier you brought up ${recalled} — we can tie this back to that.`;
