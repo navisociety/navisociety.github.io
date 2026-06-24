@@ -18,10 +18,7 @@ export default function App() {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Boot: initialise NAVI model (pre-computes knowledge embeddings)
   useEffect(() => {
-    // navi singleton initialises synchronously on import
-    // Give a brief boot animation then show greeting
     const t = setTimeout(() => {
       setStatus('ready');
       setMessages([{ id: '0', role: 'assistant', content: "I'm NAVI. What's on your mind?" }]);
@@ -34,7 +31,6 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Typewriter streaming effect
   const stream = useCallback((text: string, msgId: string) => {
     if (timerRef.current) clearInterval(timerRef.current);
     let i = 0;
@@ -44,7 +40,11 @@ export default function App() {
         const last = prev[prev.length - 1];
         if (last?.id !== msgId) return prev;
         const done = i >= text.length;
-        if (done && timerRef.current) { clearInterval(timerRef.current); setStatus('ready'); setTimeout(() => taRef.current?.focus(), 80); }
+        if (done && timerRef.current) {
+          clearInterval(timerRef.current);
+          setStatus('ready');
+          setTimeout(() => taRef.current?.focus(), 80);
+        }
         return [...prev.slice(0, -1), { ...last, content: text.slice(0, i), streaming: !done }];
       });
     }, 14);
@@ -66,10 +66,7 @@ export default function App() {
     setInput('');
     setStatus('thinking');
 
-    // Run NAVI inference (synchronous, fast)
     const response = navi.infer(text, [...history, { role: 'user', content: text }]);
-
-    // Brief thinking delay for UX, then stream the response
     setTimeout(() => stream(response, naviId), 280);
   }, [input, status, messages, stream]);
 
@@ -77,7 +74,6 @@ export default function App() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
-  // ── Boot screen ─────────────────────────────────────────────────────────────
   if (status === 'booting') {
     return (
       <div style={{ minHeight: '100vh', background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2rem', padding: '1.5rem', fontFamily: 'Fredoka, sans-serif' }}>
@@ -98,26 +94,20 @@ export default function App() {
     );
   }
 
-  // ── Chat screen ─────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: '#000', display: 'flex', flexDirection: 'column', maxWidth: '700px', margin: '0 auto', fontFamily: 'Fredoka, sans-serif' }}>
 
-      {/* Header */}
       <header style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', borderBottom: '1px solid #18181b', position: 'sticky', top: 0, background: '#000', zIndex: 10 }}>
         <div style={{ width: '2.25rem', height: '2.25rem', borderRadius: '9999px', border: '1px solid #00F7FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 0 10px #00F7FF28' }}>
           <span style={{ color: '#00F7FF', fontSize: '0.75rem', fontWeight: 700 }}>N</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ color: '#00F7FF', fontSize: '1.2rem', fontWeight: 700 }}>NAVI</span>
-          <span style={{ background: '#00F7FF', color: '#000', fontSize: '0.55rem', fontWeight: 700, padding: '2px 7px', borderRadius: '9999px', letterSpacing: '0.05em' }}>FREE LLM</span>
-        </div>
+        <span style={{ color: '#00F7FF', fontSize: '1.2rem', fontWeight: 700 }}>NAVI</span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <div style={{ width: '0.4rem', height: '0.4rem', borderRadius: '9999px', background: status === 'ready' ? '#00F7FF' : '#facc15', boxShadow: status === 'ready' ? '0 0 6px #00F7FF' : '0 0 6px #facc15', transition: 'background 0.3s' }} />
           <span style={{ color: '#52525b', fontSize: '0.65rem' }}>{status === 'ready' ? 'online' : 'thinking...'}</span>
         </div>
       </header>
 
-      {/* Messages */}
       <main style={{ flex: 1, overflowY: 'auto', padding: '1.5rem 1rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
         {messages.map(msg => (
           <div key={msg.id} style={{ display: 'flex', gap: '0.6rem', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', alignItems: 'flex-start' }}>
@@ -143,7 +133,6 @@ export default function App() {
         <div ref={bottomRef} />
       </main>
 
-      {/* Input */}
       <footer style={{ padding: '0.75rem 1rem 1.25rem', borderTop: '1px solid #18181b', position: 'sticky', bottom: 0, background: '#000' }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', border: '1px solid #27272a', borderRadius: '1.25rem', padding: '0.7rem 0.9rem', transition: 'border-color 0.2s' }}
           onFocus={e => (e.currentTarget.style.borderColor = '#2a3a3b')}
@@ -181,7 +170,7 @@ export default function App() {
           </button>
         </div>
         <p style={{ textAlign: 'center', color: '#27272a', fontSize: '0.58rem', marginTop: '0.5rem' }}>
-          NAVI LLM v1.0 · NAVIsociety · Built by Prophet Dian · Free forever
+          NAVI · NAVIsociety · Built by Prophet Dian
         </p>
       </footer>
 
