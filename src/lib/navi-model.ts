@@ -1,9 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// NAVI Model — v6
+// NAVI Model — v7
 // Built by NAVIsociety, shaped by Prophet Dian.
-// v6: world & nature, science basics, history & society, intermediate English,
-//     arts & creativity, sports, and food & everyday life — built on the v5
-//     foundation of English language training + human nature psychology.
+// v7: a deep expansion into advanced English language (phrasal verbs,
+//     conditionals, transitions, professional writing, public speaking,
+//     punctuation, difficult conversations) and deep human nature &
+//     psychology (attachment, emotional intelligence, cognitive bias,
+//     motivation, self-sabotage, trauma, grief, addiction, meaning, growth) —
+//     built on the v6 foundation of world knowledge, science, history,
+//     intermediate English, and the v5 base of English + human psychology.
 //     All responses in clear standard English.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -156,6 +160,29 @@ class NaviTokenizer {
       'active','passive','voice','clause','subject','object','predicate','sentence','paragraph',
       'prefix','suffix','root','syllable','vowel','consonant','pronunciation','spell','spelling',
       'essay','report','letter','email','text','message','document','draft','edit','revise',
+      // advanced english
+      'phrasal','conditional','clause','tense','passive','active','subjunctive','participle',
+      'however','therefore','moreover','furthermore','although','despite','nevertheless','whereas',
+      'punctuation','comma','apostrophe','semicolon','colon','hyphen','quotation','bracket',
+      'transition','connective','coherent','concise','precise','articulate','fluent','accent',
+      'presentation','speech','audience','persuade','argue','debate','negotiate','interview',
+      'paraphrase','summarize','elaborate','clarify','rephrase','emphasis','tone','register',
+      // psychology depth
+      'attachment','secure','anxious','avoidant','bonding','caregiver','childhood','wound',
+      'emotional','intelligence','empathy','self-awareness','regulation','resilience','trigger',
+      'bias','cognitive','confirmation','sunk','heuristic','rational','irrational','unconscious',
+      'motivation','intrinsic','extrinsic','reward','drive','ambition','willpower','discipline',
+      'trauma','ptsd','wound','healing','therapy','therapist','counselling','support',
+      'sabotage','critic','inner','voice','negative','self-talk','affirmation','reframe',
+      'addiction','dependency','craving','withdrawal','recovery','relapse','habit','loop',
+      'conformity','pressure','peer','social','norm','rebel','authority','obedience','groupthink',
+      'grief','stages','denial','bargaining','depression','acceptance','mourning','loss','cope',
+      'confidence','esteem','worth','value','capable','prove','validate','approval','rejection',
+      'procrastinate','delay','avoidance','overwhelm','perfectionism','done','progress','start',
+      'forgive','resentment','grudge','release','peace','closure','move','forward',
+      'vulnerable','vulnerability','open','guard','wall','trust','risk','seen','known',
+      'meaning','purpose','logotherapy','frankl','existential','void','fulfillment','legacy',
+      'change','transform','uncomfortable','growth','discomfort','new','pattern','rewire',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -1911,6 +1938,298 @@ const KNOWLEDGE: KNode[] = [
       "Getting more done isn't about being busy; it's about being deliberate. Plan your day the night before, tackle the hardest task while your energy is fresh, and group similar small tasks together. And protect your rest too — a tired mind is slow and sloppy. Real productivity is a rhythm of focus and recovery, not constant grinding.",
     ],
     priority: 6,
+  },
+
+  // ── v7: Advanced English language ─────────────────────────────────────────
+  {
+    triggers: ['what are phrasal verbs', 'examples of phrasal verbs', 'common phrasal verbs', 'how to use phrasal verbs', 'what is a phrasal verb', 'english phrasal verbs'],
+    responses: [
+      "A phrasal verb is a verb combined with a preposition or adverb that together create a brand-new meaning. \"Give up\" means to stop trying. \"Look forward to\" means to be excited about something coming. \"Get along with\" means to have a good relationship with someone. The tricky part is that the meaning often has nothing to do with the individual words, so you learn them as whole units.",
+      "Phrasal verbs are everywhere in natural English. A few useful ones: \"run out of\" (to have none left), \"bring up\" (to mention a topic, or to raise a child), \"figure out\" (to understand or solve something), \"put off\" (to delay), and \"come across\" (to find something unexpectedly, or to seem a certain way). The best way to learn them is in context, not from a list.",
+      "Think of a phrasal verb as a verb plus a small word that changes everything. \"Look\" means to see; \"look after\" means to take care of; \"look up\" means to search for information; \"look forward to\" means to anticipate something happily. Same verb, completely different meanings. Notice them when you read and watch, and they'll stick faster than memorizing.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what are conditionals in english', 'how to use if in english', 'conditional sentences', 'how do i say if i were', 'first second third conditional', 'how to talk about hypotheticals'],
+    responses: [
+      "Conditionals are \"if\" sentences, and there are four main types. Zero conditional is for facts that are always true: \"If you heat water to 100°C, it boils.\" First conditional is for likely future situations: \"If it rains, I will stay home.\" Second is for unlikely or imaginary present: \"If I had a million dollars, I would travel.\" Third is for the impossible past, usually regret: \"If I had studied harder, I would have passed.\"",
+      "The four conditionals map to how real the situation is. Always true (zero): \"If you drop it, it falls.\" Likely (first): \"If I finish early, I'll call you.\" Imaginary (second): \"If I were rich, I'd help everyone.\" Impossible past (third): \"If I had known, I would have come.\" A key tip: in the second conditional, use \"were\" for all subjects — \"If I were you,\" not \"If I was you.\"",
+      "Conditionals confuse a lot of learners, but the logic is simple once you see it. The further from reality the situation is, the further back the verb tense goes. Real and likely uses present plus \"will.\" Imaginary present uses past plus \"would.\" Impossible past uses past perfect plus \"would have.\" Remember \"If I were you\" — that \"were\" is the polite, correct form even though it sounds unusual.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to connect sentences in english', 'transition words in english', 'connective words', 'how to link ideas in english', 'words that connect sentences', 'how to make writing flow'],
+    responses: [
+      "Connective words are the glue that makes writing flow. For adding ideas: \"also, moreover, furthermore, in addition.\" For contrast: \"however, although, despite, on the other hand, whereas.\" For cause and effect: \"therefore, as a result, consequently, because of this.\" Pick the one that matches the relationship between your ideas, and your writing instantly feels more connected.",
+      "To link ideas smoothly, learn a few transitions by category. Sequence: \"first, then, next, finally, afterwards.\" Emphasis: \"in fact, indeed, above all, most importantly.\" Contrast: \"however, although, whereas.\" The mistake to avoid is overusing them — one good transition per idea-shift is enough. Too many and the writing feels stuffed.",
+      "Good flow comes from showing the reader how each idea relates to the last. Are you adding (\"moreover\")? Contrasting (\"however\")? Showing a result (\"therefore\")? Listing steps (\"first, then, finally\")? Once you name the relationship in your own head, the right connective becomes obvious. Read your writing aloud — if it jumps, a transition is missing.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to write a professional email', 'email writing in english', 'how to write a formal email', 'professional email structure', 'how to start an email', 'how to end an email professionally'],
+    responses: [
+      "A professional email has clear parts. Subject line: specific, like \"Meeting request — Thursday 2pm.\" Opening: \"Dear [Name],\" for formal, \"Hi [Name],\" for semi-formal. First sentence: state your purpose immediately — \"I am writing to...\" Body: one idea per paragraph, short sentences, no jargon. Close: \"Kind regards,\" or \"Best regards,\" or \"Thank you,\". Then reread before sending.",
+      "Start an email by getting to the point fast. Busy people skim, so your first line should say why you're writing. Keep each paragraph to one idea, use simple words, and avoid long blocks of text. To close, \"Kind regards\" and \"Best regards\" are safe and professional. The golden rule: read it out loud before sending — if it sounds rude spoken, rewrite it warmer.",
+      "Professional emails are about clarity and respect for the reader's time. A clear subject line, a polite greeting, your purpose stated upfront, a tidy body, and a courteous sign-off. \"Dear\" is formal; \"Hi\" is friendlier but still fine for work. End with \"Kind regards\" or \"Thank you.\" And always proofread — a small typo can undercut an otherwise sharp message.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to give a presentation in english', 'how to speak in public in english', 'tips for presenting in english', 'how to structure a speech', 'how to start a presentation', 'public speaking tips in english'],
+    responses: [
+      "A strong presentation has three parts: an opening that grabs attention, a middle with no more than three main points, and a close with a clear summary or call to action. The structure does half the work. Limit yourself to three points because people simply can't hold more than that. Tell them what you'll say, say it, then remind them what you said.",
+      "When presenting, speak slower than feels natural — nerves make us rush, and slowing down sounds confident. Pause for effect; silence is powerful. Make eye contact with individuals, not the wall. And know your very first sentence by heart, so nerves don't sabotage your opening. Once you start strong, momentum carries you.",
+      "Public speaking gets easier with structure and preparation. Open with a hook — a question, a surprising fact, a short story. Cover your three key points clearly. Close by telling people what to do or think next. Practical tips: breathe, slow down, pause, and look at faces. The audience wants you to succeed, so let yourself believe that.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to express an opinion in english', 'how to disagree without being rude', 'polite way to share your view', 'how to say i disagree professionally', 'how to debate in english', 'how to argue your point politely'],
+    responses: [
+      "To express an opinion politely, soften it with a phrase: \"In my view...\", \"From my perspective...\", \"I believe that...\", or \"It seems to me that...\". These signal it's your view, not an absolute fact, which makes people more open to hearing it. The same idea can land as arrogant or thoughtful depending entirely on the phrase you choose.",
+      "Disagreeing without being rude is a skill. Acknowledge first, then push back: \"I see your point, however...\", \"That's a fair point, but I think...\", \"I respectfully disagree because...\", or \"With respect, I see it differently.\" The rule is simple — make the person feel heard before you challenge their idea, and they'll actually listen.",
+      "In a debate or discussion, the most persuasive people don't steamroll — they acknowledge then redirect. Start with \"You make a good point\" or \"I understand why you'd think that,\" then offer your view with a reason: \"...but I'd argue that, because...\". Attacking the idea is fine; attacking the person never is. Stay on the argument, keep your tone calm.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to understand what i read', 'how to improve reading comprehension', 'i read but dont understand', 'how to read better', 'tips for reading in english', 'how to understand english texts'],
+    responses: [
+      "Reading comprehension improves with technique, not just effort. Read the title and headings first to predict what's coming. Read once for the general meaning without stopping at every word. Then read again for detail. Only look up words that actually block your understanding, not every unknown word. And summarize each paragraph in one sentence after you finish it.",
+      "If you read but don't understand, you're probably stopping too often. Let your eyes flow through a passage once to catch the gist, even if you miss some words — context fills in a lot. Then go back for detail. Looking up every single unfamiliar word breaks your momentum and your comprehension. Trust yourself to ride past the gaps the first time.",
+      "To read better, practice daily with material just one level above your comfort zone — challenging but not impossible. Predict from the title, read for meaning first, reread for detail, and try summing up each paragraph in your own words. That last step is the secret: if you can summarize it, you understood it. If you can't, read it again.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['difference between british and american english', 'british vs american english', 'uk vs us english', 'which english should i learn', 'american spelling vs british spelling', 'british or american english'],
+    responses: [
+      "British and American English differ in spelling, vocabulary, and pronunciation, but both are completely correct. Spelling: colour/color, favour/favor, realise/realize. Vocabulary: lift/elevator, biscuit/cookie, flat/apartment, boot/trunk, queue/line. My advice: pick one variety and be consistent. Both are understood everywhere, so clarity matters far more than which one you choose.",
+      "The main differences are spelling (British keeps the \"u\" in colour, neighbour; American drops it), some everyday words (British \"flat\" vs American \"apartment,\" British \"queue\" vs American \"line\"), and accent. Neither is better. If you're learning, choose the one that fits your goals or surroundings, stay consistent, and don't stress — both are global and respected.",
+      "There's no \"right\" English between British and American — they're two valid standards. You'll notice spelling shifts (organise/organize), word swaps (lorry/truck, holiday/vacation), and pronunciation. The most important thing is being understood, so be consistent within one variety rather than mixing them. People around the world communicate fine in both every day.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what are question tags', 'how to use question tags', 'isnt it right', 'question tags in english', 'how do you add a question at the end', 'tag questions in english'],
+    responses: [
+      "A question tag is a short question added to the end of a statement, like \"isn't it?\" The rule is opposites: a positive statement takes a negative tag, and a negative statement takes a positive tag. \"It's cold today, isn't it?\" \"You've been here before, haven't you?\" \"She doesn't know, does she?\" The verb in the tag matches the verb in the statement.",
+      "Question tags turn statements into questions to check or invite agreement. Positive sentence, negative tag: \"They finished, didn't they?\" Negative sentence, positive tag: \"He can't swim, can he?\" The key is matching the auxiliary verb — \"is\" pairs with \"isn't,\" \"have\" with \"haven't,\" \"did\" with \"didn't.\" Get the verb right and the tag falls into place.",
+      "Tags like \"isn't it?\" or \"don't you?\" are how English speakers nudge for agreement. The trick is the flip: if the statement is positive, the tag goes negative, and vice versa. \"You're coming, aren't you?\" \"She isn't ready, is she?\" Match the verb and the subject, flip the polarity, and you've got it.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how do i learn english faster', 'tips to improve english quickly', 'best way to learn english', 'how to get better at english fast', 'how long does it take to learn english', 'what is the fastest way to learn english'],
+    responses: [
+      "The fastest way to learn English is immersion, not just study. Surround yourself with it — shows, music, podcasts, reading. Speak from day one, even badly, because mistakes teach you faster than perfect silence. Focus first on the 1000 most common words; they cover about 80% of everyday speech. And above all, be consistent — a little every day beats a lot once a week.",
+      "To improve quickly, make English part of your daily life rather than a subject you sit down to. Find a reason to use it every day: a journal, a friend, an online community. Make mistakes on purpose — they're the fastest teachers. Learn the most frequent words first. Consistency beats intensity every single time; ten minutes daily outperforms three hours once a week.",
+      "There's no magic shortcut, but there is a fastest path: immerse, speak early, and stay consistent. Watch and read things you enjoy in English, talk even when you're not ready, and don't fear errors — they're proof you're trying. Concentrate on common vocabulary you'll actually use. The people who improve fastest are simply the ones who use English every day.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to use punctuation in english', 'when to use a comma', 'how to use an apostrophe', 'punctuation rules in english', 'common punctuation mistakes', 'how does punctuation work'],
+    responses: [
+      "Punctuation guides the reader. A comma separates items in a list, joins two sentences with a conjunction, and follows an introductory phrase. An apostrophe shows possession (\"the girl's book\") or marks a missing letter (\"don't\" = \"do not\"). A full stop ends a sentence; a question mark ends a direct question. The most common mistake is using an apostrophe to make a plural — \"apple's\" when you mean \"apples\" is wrong.",
+      "The big rules: commas create pauses and separate ideas — lists, joined sentences, after intro phrases. Apostrophes do two jobs: possession (\"Dian's idea\") and contractions (\"can't\" = \"cannot\"). They never make a word plural. Full stops close statements, question marks close questions. Master those few and your writing instantly reads cleaner.",
+      "Punctuation is mostly about clarity. Use a comma to separate list items or to pause between linked ideas. Use an apostrophe for ownership or to show letters are missing — never to make something plural. End sentences with a full stop, questions with a question mark. The single most common error is the apostrophe in plurals: \"banana's\" for sale should just be \"bananas.\"",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to have a difficult conversation in english', 'how to say something hard in english', 'how to bring up a sensitive topic', 'how to talk about problems in english', 'how to confront someone politely in english', 'how to address a conflict in english'],
+    responses: [
+      "Start a difficult conversation with your feeling, not an accusation. Say \"I feel worried when...\" instead of \"You always...\". Use \"I\" statements, name the specific behavior rather than attacking their character, and ask questions to understand before you defend yourself. End with what you actually need or want to change. The hardest part is starting, so prepare your first sentence word for word.",
+      "When something is hard to say, structure protects the relationship. Lead with how you feel, point to one specific thing they did rather than a sweeping \"you never,\" and stay curious — ask before you assume. \"I felt hurt when the plan changed without a heads-up\" lands far better than \"You don't respect me.\" Same concern, completely different outcome.",
+      "Confronting someone politely is about being honest without being cruel. Use \"I\" statements so it doesn't feel like an attack. Describe the specific behavior, not their whole character. Listen as much as you talk. And remember the goal isn't to win — it's to be understood and to understand. Plan your opening line in advance; once you start, the rest gets easier.",
+    ],
+    priority: 7,
+  },
+
+  // ── v7: Deep human nature & psychology ──────────────────────────────────────
+  {
+    triggers: ['what is attachment style', 'secure anxious avoidant attachment', 'why do i cling to people', 'why do i push people away', 'how does childhood affect relationships', 'what is attachment theory'],
+    responses: [
+      "Attachment theory, from John Bowlby, says we develop a relationship \"template\" from our earliest bonds with caregivers. Secure attachment means you're comfortable with both closeness and independence. Anxious attachment fears abandonment and craves reassurance. Avoidant attachment is uncomfortable with closeness and values independence to a fault. These patterns run unconsciously in adult relationships.",
+      "If you cling to people or push them away, attachment style may explain it. Anxious types fear being left and seek constant reassurance; avoidant types feel smothered by closeness and pull back. There's also a disorganized style that mixes both fear and need. None of this is your fault — it formed early. But understanding your pattern is the first real step to changing it.",
+      "Childhood shapes how we love. The bond with our earliest caregivers becomes a blueprint: secure if our needs were reliably met, anxious if love felt unpredictable, avoidant if closeness felt unsafe. As adults we replay these patterns without noticing. The hopeful part is that attachment styles can shift — through awareness, safe relationships, and sometimes therapy.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is emotional intelligence', 'how to develop emotional intelligence', 'what is eq', 'why is emotional intelligence important', 'how to understand emotions better', 'what does emotionally intelligent mean'],
+    responses: [
+      "Emotional intelligence, or EQ, has four pillars: self-awareness (knowing what you feel and why), self-regulation (managing those feelings), empathy (understanding what others feel), and social skill (handling relationships well). Research consistently shows EQ predicts success in life better than IQ. And unlike IQ, you can develop it — it starts with the simple habit of pausing before you react.",
+      "Being emotionally intelligent means you notice your own emotions, manage them instead of being run by them, sense what others are feeling, and navigate people skillfully. It matters because relationships and self-control shape almost everything — work, love, leadership. The good news is EQ is a skill, not a fixed trait. Awareness is where it begins.",
+      "EQ is the ability to understand and work with emotions — yours and other people's. The four parts are self-awareness, self-regulation, empathy, and social skill. It's important because raw intelligence doesn't help much if you can't manage your reactions or read a room. Build it by pausing, naming what you feel, and getting curious about what others feel too.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is a cognitive bias', 'why do people make irrational decisions', 'common cognitive biases', 'why do humans think irrationally', 'what is confirmation bias', 'why do we have biases'],
+    responses: [
+      "Cognitive biases are mental shortcuts your brain uses to save energy — they work most of the time but fail in predictable ways. Confirmation bias makes you notice evidence that supports what you already believe and ignore what contradicts it. The sunk cost fallacy keeps you in something bad because you've already invested in it. Knowing they exist doesn't make you immune, but it makes you more careful.",
+      "Humans think irrationally because the brain evolved for speed, not perfect accuracy. The availability heuristic makes us overestimate things we can easily recall — we fear plane crashes more than car accidents, though cars are far deadlier. Confirmation bias keeps us locked in our existing views. These aren't flaws of intelligence; they're built into how every human mind works.",
+      "A cognitive bias is a systematic error in thinking. Confirmation bias: you seek out what proves you right. Sunk cost: you keep going because of what you've already spent. Anchoring: the first number you hear skews your judgment. Everyone has them, including the smartest people. The defense isn't to eliminate them — that's impossible — but to slow down on important decisions and question your gut.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is intrinsic motivation', 'intrinsic vs extrinsic motivation', 'why do people lose motivation', 'what is the best type of motivation', 'how to stay motivated', 'why does reward sometimes kill motivation'],
+    responses: [
+      "Intrinsic motivation comes from inside — you do something because it's interesting, meaningful, or genuinely enjoyable. Extrinsic motivation comes from outside — money, grades, praise, avoiding punishment. Research by Deci and Ryan found that leaning too hard on external rewards can actually kill the inner drive, an effect called overjustification. The most sustainable motivation comes from within.",
+      "The best motivation is usually intrinsic. When you do something for its own sake, you last; when you do it only for the reward, the drive fades the moment the reward stops. Surprisingly, paying people for something they already loved can make them enjoy it less. So the better question isn't \"what will I get?\" but \"what genuinely matters to me?\"",
+      "People lose motivation when the why disappears. Extrinsic rewards — money, praise, approval — work in short bursts but don't sustain effort, and can even crowd out the natural enjoyment that drove you in the first place. To stay motivated long-term, connect the task to something you actually care about. Purpose outlasts pressure every time.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do i sabotage myself', 'what is self-sabotage', 'why do i mess up good things', 'why do i ruin things for myself', 'how to stop self-sabotaging', 'why do i get in my own way'],
+    responses: [
+      "Self-sabotage is your brain trying to protect you from a threat — usually fear of failure, fear of success, or a deep sense of not being worthy. When something good is happening, an old inner voice whispers \"you don't deserve this\" or \"it'll fall apart anyway,\" so unconsciously you make it fall apart first. It feels like protection. The fix is awareness: notice the pattern and ask what you're really afraid of.",
+      "If you ruin good things for yourself, it's rarely random — it's protection in disguise. Part of you expects loss or disappointment, so it pulls the plug early to avoid being blindsided. The way out is to catch it in the act: name it (\"I'm sabotaging this\"), then sit with the fear underneath instead of acting on it. The fear is always the real issue, not the thing you're wrecking.",
+      "Self-sabotage happens when an old survival instinct collides with a new opportunity. Success or closeness can feel unsafe if some part of you doesn't believe you deserve it, so you create the very failure you feared. It's not weakness; it's a misfiring protection. To stop it, slow down when things are going well, notice the urge to retreat, and ask: what am I scared of losing here?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is the inner critic', 'why do i talk badly to myself', 'how to stop negative self-talk', 'that voice in my head that says i am not good enough', 'how to silence the inner critic', 'negative self-talk'],
+    responses: [
+      "The inner critic is the voice inside that judges, attacks, and doubts you. It usually developed as a survival mechanism — in childhood, criticizing yourself first could prevent punishment or rejection by beating others to it. But it doesn't stop being cruel just because you've grown up. The goal isn't to silence it completely; it's to stop mistaking it for the truth.",
+      "That voice saying \"you're not good enough\" isn't fact — it's fear wearing a costume. It often formed early as a way to stay safe, and now it runs on autopilot. You probably won't delete it entirely, but you can change your relationship with it. When it speaks, recognize it as an old protective voice, not an accurate judge. Then talk back, the way you'd defend a friend.",
+      "Negative self-talk feels like the truth because it's familiar, but familiar isn't the same as true. The inner critic learned its job long ago and never updated. You can't always quiet it, but you can stop obeying it. Name it (\"that's my critic talking\"), question it (\"is this actually true?\"), and answer it with the kindness you'd give someone you love.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how does trauma affect behaviour', 'what is trauma', 'why do traumatic experiences stay with us', 'how does trauma show up', 'what does trauma do to a person', 'how to heal from trauma'],
+    responses: [
+      "Trauma is what happens inside a person after an overwhelming experience — it's less about the event itself and more about the nervous system's response to it. It can show up as hypervigilance (always waiting for something bad), emotional numbness, difficulty trusting, explosive reactions to small triggers, or physical symptoms. Healing is possible, but it needs safety, time, and often professional support.",
+      "Traumatic experiences stay with us because the brain stores them differently — they remain activated, so the past can feel like the present. A small trigger can launch a full-body reaction that doesn't match the current moment. This isn't weakness or overreaction; it's a wound that hasn't healed. With safety and support, the nervous system can learn that the danger has passed.",
+      "Trauma reshapes how a person feels and reacts. It might look like being constantly on guard, shutting down emotionally, struggling to trust, or reacting intensely to small things. The body remembers what the mind tries to forget. Healing isn't about erasing what happened — it's about helping the nervous system finally feel safe. That usually takes time and, for deep trauma, professional help.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why is it so hard to change', 'why cant i change', 'how do i actually change', 'why do people resist change', 'why do bad habits keep coming back', 'how does lasting change happen'],
+    responses: [
+      "Change is hard because your brain is wired to save energy and crave predictability. Old patterns are neural highways — fast, automatic, well-worn. New behavior is a dirt track — slow and effortful. Real change means being uncomfortable repeatedly until the new path becomes familiar. Willpower alone rarely lasts; changing your environment and your identity works far better.",
+      "Bad habits come back because the old wiring is still there, waiting, and because the habit was meeting some real need — comfort, escape, connection. If you remove the habit without addressing the need, the need finds another outlet. Lasting change happens when you make the new behavior easier than the old one and when you start to see yourself as the kind of person who does it.",
+      "People resist change because the brain treats the unknown as a threat. Even a bad-but-familiar situation can feel safer than an unfamiliar better one. To actually change, expect discomfort and keep going through it — that's the path becoming a habit. Two things help most: designing your environment so the good choice is the easy choice, and shifting your identity to \"I am someone who...\".",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is vulnerability', 'why is it important to be vulnerable', 'how do i open up to people', 'why is vulnerability hard', 'why do people guard themselves', 'what does it mean to be vulnerable'],
+    responses: [
+      "Brené Brown's research found that vulnerability — the willingness to show up without guarantees — is the birthplace of connection, creativity, belonging, and love. The wall you build to protect yourself is the same wall that keeps real connection out. Being vulnerable doesn't mean oversharing with everyone; it means being honest and present with the right people.",
+      "Vulnerability is hard because it means risking rejection with no promise of acceptance. So people guard themselves — they keep things light, hide what they really feel, stay behind the wall. But that wall blocks the very closeness they want. Opening up doesn't mean dumping everything on everyone; it means letting the right people actually see you. The courage to be seen is deeply human.",
+      "To be vulnerable is to let yourself be seen without armor — to say the honest thing, admit the fear, show the real feeling. It's frightening because it could lead to rejection. Yet it's also the only doorway to genuine connection; no one can love a version of you they never meet. Start small, with people who've earned your trust, and let it grow from there.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['stages of grief', 'what are the stages of grief', 'how does grief work', 'why do people grieve differently', 'how long does grief last', 'is what i am feeling normal grief'],
+    responses: [
+      "Elisabeth Kübler-Ross identified five stages of grief: denial (this can't be real), anger (why did this happen), bargaining (if only I had...), depression (the weight of what's lost), and acceptance (finding a way to live with it). They're not linear — you can move back and forth, skip some, or stay in one a long time. Whatever you're feeling is likely a normal part of it.",
+      "Grief works differently for everyone, and that's normal. The five well-known stages — denial, anger, bargaining, depression, acceptance — aren't a tidy sequence you complete and finish. People loop through them in their own order and on their own timeline. There's no \"right\" way and no deadline. Grief is love with nowhere to go, and it takes as long as it takes.",
+      "What you're feeling is almost certainly normal. Grief applies to any loss — a person, a relationship, a dream, even a version of yourself — and it moves in waves, not a straight line. Some days are denial, some are anger, some are acceptance, and then it circles back. Don't let anyone rush you. There's no timeline on grief, and there doesn't need to be.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is addiction', 'why do people get addicted', 'how does addiction work', 'why is addiction so hard to beat', 'what causes addiction', 'is addiction a choice'],
+    responses: [
+      "Addiction involves the brain's reward circuit being hijacked. Dopamine — the \"wanting\" chemical — fires when you encounter something that promises reward. With addictive substances or behaviors, that signal becomes so powerful it overrides rational thinking. Over time the brain adjusts, so you need more to feel the same effect and the absence feels unbearable. It's a brain disorder, not a moral failure.",
+      "Addiction is hard to beat because it rewires the brain's reward system. What started as a choice becomes a compulsion as the brain adapts — needing more, tolerating the substance, and dreading its absence. It's usually rooted in pain, trauma, or an unmet need, which is why willpower alone rarely fixes it. The deeper question isn't \"why the addiction?\" but \"why the pain?\"",
+      "Addiction isn't simply a choice or a weakness; it's a brain disorder. The reward circuit gets hijacked so the craving feels like survival, not preference. Many addictions grow from trying to numb something painful, so treating only the behavior misses the root. Real recovery usually addresses the underlying wound — and it almost always needs support, not just shame.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do people conform', 'what is peer pressure', 'why do humans follow the crowd', 'what is social conformity', 'how does peer pressure work', 'why do people do things because others do them'],
+    responses: [
+      "Solomon Asch's famous experiments showed people would give obviously wrong answers just to match the group. Why? Because social rejection activates the same brain regions as physical pain. Belonging was a survival need for our ancestors — going against the group felt dangerous at a neurological level. The courage to be different isn't natural; it has to be developed.",
+      "Peer pressure works because we're wired to belong. For most of human history, being cast out of the group meant death, so the brain treats social rejection as a real threat. That's why people follow the crowd even when the crowd is wrong — fitting in feels safer than being right alone. A strong internal compass and self-awareness are the best defenses against it.",
+      "Humans conform because belonging once meant survival, and our brains haven't forgotten. Going against the group triggers genuine discomfort — the same circuitry as physical pain. That's why peer pressure is so powerful and so hard to resist in the moment. Standing apart takes deliberate courage, especially when the group asks you to betray what you actually believe.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is empathy', 'how to be more empathetic', 'difference between empathy and sympathy', 'how to understand other people better', 'how do i develop empathy', 'why is empathy important'],
+    responses: [
+      "Empathy is the ability to feel with someone — to enter their experience rather than observe it from outside. Sympathy says \"I feel sorry for you\"; empathy says \"I feel with you, I'm in it too.\" You build it by asking more questions and talking less, suspending judgment, and genuinely trying to understand someone's reality before offering your own.",
+      "The difference between empathy and sympathy matters. Sympathy looks at someone's pain from a distance; empathy steps in beside them. Empathy is a skill, not a fixed trait, and you develop it by getting curious about people who are different from you, listening to understand rather than to reply, and resisting the urge to fix or judge.",
+      "Empathy means understanding another person's experience from the inside. It's important because it's the foundation of every real relationship — people open up to those who truly get them. To grow it: ask, listen, and hold back your judgment. Try to picture how the world looks from where they stand. The more curious you are about others, the more empathetic you become.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to build self confidence', 'how to be more confident', 'what is self confidence', 'why do i lack confidence', 'how do i believe in myself', 'how to stop feeling insecure'],
+    responses: [
+      "Real confidence isn't the absence of doubt — it's acting in spite of it. It's built through evidence: small actions, promises kept to yourself, challenges attempted and survived. The people who look most confident often still carry doubt; they've just practiced not letting it make their decisions. The path is simple but not easy — do the thing you fear, see that you survive, repeat.",
+      "You lack confidence because you're waiting to feel ready before you act — but confidence works the other way around. You act first, even scared, and the proof you can handle things builds the belief. There's no shortcut where you suddenly feel certain. Every confident person got there by stacking small wins, one uncomfortable step at a time.",
+      "Self-confidence is trust in your ability to handle what comes, and it's earned, not granted. Each time you keep a promise to yourself or face something hard and come through, the evidence grows. Stop waiting to feel confident before you start; start, and the feeling follows. Confidence is the result of courage, not a prerequisite for it.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is the meaning of life', 'why do humans need meaning', 'how to find meaning', 'what is logotherapy', 'what did viktor frankl say', 'how to live a meaningful life', 'why does life feel meaningless'],
+    responses: [
+      "Viktor Frankl survived the Nazi concentration camps and came out with one core conviction: meaning is the primary human drive. In \"Man's Search for Meaning\" he argued that people can endure almost any how if they have a why. Meaning can be found in work, in love, and even in suffering — by choosing your response to unavoidable pain. You don't find meaning like a lost key; you create it.",
+      "Logotherapy, Frankl's approach, is built on the idea that the deepest human need is for meaning, not pleasure or power. He found meaning in three places: in what you create or accomplish, in whom you love and connect with, and in the stance you take toward unavoidable suffering. If life feels meaningless, the question to ask is what you can give your life to, not just get from it.",
+      "Humans need meaning because, unlike other creatures, we ask why. When the why is missing, even comfort feels empty. Frankl taught that meaning isn't handed to you — it's created through what you devote yourself to: work, love, and the courage you bring to hardship. A meaningful life isn't the one with the least pain; it's the one where the pain and the joy both point to something that matters.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how do i forgive someone', 'what is forgiveness', 'why should i forgive', 'does forgiving mean accepting what happened', 'how to forgive and let go', 'why is forgiveness important'],
+    responses: [
+      "Forgiveness is not saying what happened was okay — it's releasing the grip that resentment has on you. Research consistently shows that holding onto anger damages the person holding it far more than the person who caused the harm. Forgiveness is something you do for yourself. It doesn't require the other person to apologize, change, or even still be in your life.",
+      "Forgiving doesn't mean accepting the wrong or pretending it didn't hurt. It means deciding to stop letting the past keep wounding you in the present. The resentment you carry is a weight on you, not on them. You can forgive and still keep boundaries, still walk away. Letting go is the gift you give yourself, regardless of whether they ever earn it.",
+      "Forgiveness matters because bitterness is a slow poison — it keeps the person who hurt you living rent-free in your mind. To forgive is not to excuse; it's to release your own grip on the anger so it stops running your life. It can be a process, not a single moment, and it asks nothing of the other person. It's about your freedom, not their pardon.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do i procrastinate', 'how to stop procrastinating', 'what causes procrastination', 'why do i keep putting things off', 'procrastination psychology', 'why is it hard to start things'],
+    responses: [
+      "Procrastination isn't laziness — it's emotion regulation. You avoid a task because it's tied to a negative feeling: fear of failure, fear of judgment, perfectionism, overwhelm, or boredom. Your brain picks short-term comfort over long-term results. The fix is to make starting ridiculously small — two minutes, one sentence, one push-up. You're not battling the task; you're battling the feeling attached to it.",
+      "You procrastinate because starting brings up an uncomfortable emotion, and avoiding the task makes that feeling go away — for now. It's a coping move, not a character flaw. Perfectionism is a sneaky cause: if you can't do it perfectly, you don't start at all. Beat it by shrinking the first step until it's almost too easy. Start before you feel ready; the feeling rarely arrives on its own.",
+      "The cause of procrastination is emotional, not practical. The task carries dread, so you reach for anything that relieves the dread — your phone, snacks, busywork. Knowing this changes the fix: instead of demanding more willpower, lower the threshold to begin. Tell yourself you'll do just two minutes. Action reduces the fear faster than thinking ever will.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['difference between loneliness and being alone', 'why do i feel lonely even around people', 'what is loneliness', 'can you be lonely with people around you', 'why does loneliness hurt so much', 'how to deal with loneliness'],
+    responses: [
+      "Being alone is a physical state — no one else is present. Loneliness is an emotional state — a gap between the connection you have and the connection you need. You can be surrounded by people and profoundly lonely, or completely alone and at peace. The most painful loneliness is being misunderstood in company — present but invisible.",
+      "You can feel lonely around people because loneliness isn't about headcount; it's about being truly seen. Being in a crowd that doesn't know the real you can feel lonelier than solitude. The cure isn't more people — it's deeper connection with a few who actually understand you. One real conversation beats a room full of small talk.",
+      "Loneliness hurts because humans are built for connection, and the brain registers its absence as a kind of pain. But notice the distinction: solitude can be peaceful and restoring, while loneliness is the ache of a gap between what you have and what you need. So the answer isn't simply being around more people — it's finding the few who let you be fully known.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why does rejection hurt so much', 'how to deal with rejection', 'why is rejection so painful', 'how to handle being rejected', 'rejection and self-worth', 'why do humans fear rejection so much'],
+    responses: [
+      "Rejection activates the same brain regions as physical pain — that's not a metaphor, it's neuroscience. It hurts so much because social acceptance was a survival need for our ancestors; exclusion from the group could mean death, and your nervous system hasn't updated for the modern world. The secret about rejection: it almost never means what you think it means.",
+      "Rejection is painful by design — we're wired to need belonging, so being turned away triggers real, physical hurt. But here's what helps: most rejection is about fit, timing, or the other person's own story, not your worth. A no from one person, job, or relationship is information about a match, not a verdict on your value. Feel it, then put it in its proper place.",
+      "To handle rejection, first understand why it stings: your brain treats social exclusion like a wound because, for our ancestors, it nearly was one. Then separate the event from your worth. You were not weighed and found lacking as a human; something simply didn't fit. The people who recover fastest don't pretend it doesn't hurt — they refuse to let it define them.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why does growth require discomfort', 'why is growth uncomfortable', 'how to embrace discomfort', 'how do people grow', 'why do we need challenges to grow', 'what is growth mindset'],
+    responses: [
+      "Your comfort zone isn't where growth happens — it's where you maintain. Growth requires entering the discomfort zone: doing things before you feel ready, failing and trying again, sitting with uncertainty. The brain literally builds new neural pathways through challenge. The discomfort isn't a sign you're doing it wrong; it's a sign you're doing it.",
+      "Carol Dweck's research on growth mindset showed that people who believe their abilities can be developed through effort dramatically outperform those who think talent is fixed. Growth feels uncomfortable because it means leaving the familiar and risking failure — but that struggle is exactly where the brain rewires and strengthens. Lean into the discomfort; that's the work doing its job.",
+      "People grow by stretching past what's comfortable. Challenge, effort, and even failure are what force the mind and skills to expand — comfort just keeps you where you are. So when something feels hard and uncertain, don't read it as a stop sign. Read it as the feeling of growth in progress. The goal isn't to avoid discomfort; it's to learn to move with it.",
+    ],
+    priority: 7,
   },
 ];
 
