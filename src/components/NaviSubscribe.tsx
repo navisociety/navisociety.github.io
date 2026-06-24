@@ -16,7 +16,6 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
   const [error, setError] = useState('');
 
   const price = mode === 'mini' ? '$10' : '$20';
-  const compute = mode === 'mini' ? '$5' : '$10';
   const accent = mode === 'mini' ? '#FA00FF' : '#00F7FF';
   const label = mode === 'mini' ? 'NAVI Mini' : 'NAVI Max';
 
@@ -28,7 +27,6 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
     setLoading(false);
     if (err) { setError(err); return; }
 
-    // Check if already subscribed
     const sub = await getSubscriptionStatus(email.trim());
     if (sub.active && (sub.tier === mode || (mode === 'mini' && sub.tier === 'max'))) {
       const session: NaviSession = { email: email.trim(), access_token: '' };
@@ -63,9 +61,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
           <>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '28px', fontWeight: 700, color: accent }}>{label}</div>
-              <div style={{ color: '#888', fontSize: '15px', marginTop: '6px' }}>
-                {price}/month · {compute} compute
-              </div>
+              <div style={{ color: '#888', fontSize: '15px', marginTop: '6px' }}>{price}/month</div>
             </div>
             <div style={{ color: '#ccc', fontSize: '14px', lineHeight: 1.6, textAlign: 'center' }}>
               {mode === 'mini'
@@ -113,11 +109,10 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
             <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.7, textAlign: 'center' }}>
               Verified as <span style={{ color: '#fff' }}>{email}</span>.
             </div>
-            <div style={{ background: '#111', border: `1px solid ${accent}33`, borderRadius: '12px', padding: '20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ background: '#111', border: `1px solid ${accent}33`, borderRadius: '12px', padding: '20px', textAlign: 'center' }}>
               <div style={{ color: accent, fontWeight: 700, fontSize: '22px' }}>
                 {price}<span style={{ fontSize: '13px', color: '#888', fontWeight: 400 }}>/month</span>
               </div>
-              <div style={{ color: '#666', fontSize: '12px' }}>{compute} monthly compute · Hard limit enforced</div>
             </div>
             <button
               disabled
