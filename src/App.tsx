@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
+import ChatsScreen from './components/ChatsScreen';
 
 type Message = {
   id: string;
@@ -38,6 +39,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [chatsOpen, setChatsOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,6 +99,11 @@ export default function App() {
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  };
+
+  const handleMenuSelect = (item: string) => {
+    setMenuOpen(false);
+    if (item === 'Chats') setChatsOpen(true);
   };
 
   if (status === 'booting') {
@@ -231,7 +238,8 @@ export default function App() {
         textarea::placeholder { color:#555; }
       `}</style>
 
-      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} />}
+      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} />}
+      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} />}
     </div>
   );
 }
