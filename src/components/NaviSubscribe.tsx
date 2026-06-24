@@ -7,7 +7,7 @@ interface NaviSubscribeProps {
   onClose: () => void;
 }
 
-type Step = 'email' | 'sent' | 'subscribe';
+type Step = 'email' | 'upgrade';
 
 export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSubscribeProps) {
   const [step, setStep] = useState<Step>('email');
@@ -35,7 +35,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
       storeSession(session);
       onAuthenticated(session);
     } else {
-      setStep('sent');
+      setStep('upgrade');
     }
   }
 
@@ -96,40 +96,44 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
                 opacity: loading || !email.trim() ? 0.6 : 1,
               }}
             >
-              {loading ? 'Sending...' : 'Continue'}
+              {loading ? 'Checking...' : 'Upgrade Now'}
+            </button>
+            <button
+              onClick={onClose}
+              style={{ background: 'none', border: 'none', color: '#555', fontSize: '14px', fontFamily: 'Fredoka, sans-serif', cursor: 'pointer', textDecoration: 'underline', padding: '4px 0', alignSelf: 'center' }}
+            >
+              Continue with Free NAVI
             </button>
           </>
         )}
 
-        {step === 'sent' && (
+        {step === 'upgrade' && (
           <>
-            <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 700, color: accent }}>Check your email</div>
+            <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 700, color: accent }}>Upgrade to {label}</div>
             <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.7, textAlign: 'center' }}>
-              We sent a link to <span style={{ color: '#fff' }}>{email}</span>.<br />
-              Click it to verify, then subscribe to {label}.
+              Verified as <span style={{ color: '#fff' }}>{email}</span>.
             </div>
-            <div style={{ background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
-              <div style={{ color: accent, fontWeight: 700, fontSize: '18px', marginBottom: '6px' }}>{label}</div>
-              <div style={{ color: '#888', fontSize: '13px' }}>{price}/month</div>
-              <div style={{ color: '#666', fontSize: '12px', marginTop: '8px' }}>
-                {compute} monthly compute · Hard limit enforced
+            <div style={{ background: '#111', border: `1px solid ${accent}33`, borderRadius: '12px', padding: '20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ color: accent, fontWeight: 700, fontSize: '22px' }}>
+                {price}<span style={{ fontSize: '13px', color: '#888', fontWeight: 400 }}>/month</span>
               </div>
-              <div style={{ color: '#00F7FF', fontSize: '13px', marginTop: '16px' }}>
-                To subscribe, email <strong>prophetdian@gmail.com</strong> with subject "{label} Subscription"
-              </div>
-              <div style={{ color: '#555', fontSize: '11px', marginTop: '6px' }}>
-                PayPal payments coming soon
-              </div>
+              <div style={{ color: '#666', fontSize: '12px' }}>{compute} monthly compute · Hard limit enforced</div>
             </div>
             <button
-              onClick={onClose}
+              disabled
               style={{
-                background: 'none', border: `1.5px solid ${accent}`, borderRadius: '10px',
-                color: accent, padding: '12px', fontSize: '15px', fontWeight: 700,
-                fontFamily: 'Fredoka, sans-serif', cursor: 'pointer',
+                background: '#1a1a1a', color: '#555', border: '1.5px solid #333',
+                borderRadius: '10px', padding: '13px', fontSize: '16px', fontWeight: 700,
+                fontFamily: 'Fredoka, sans-serif', cursor: 'not-allowed',
               }}
             >
-              Got it
+              Pay with PayPal · Coming Soon
+            </button>
+            <button
+              onClick={onClose}
+              style={{ background: 'none', border: 'none', color: '#555', fontSize: '14px', fontFamily: 'Fredoka, sans-serif', cursor: 'pointer', textDecoration: 'underline', padding: '4px 0', alignSelf: 'center' }}
+            >
+              Continue with Free NAVI
             </button>
           </>
         )}
