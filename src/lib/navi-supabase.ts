@@ -129,7 +129,10 @@ export async function loadChatHistory(email: string): Promise<ChatMessage[]> {
     const r = await fetch(`${SUPABASE_URL}/functions/v1/navi-chats?email=${encodeURIComponent(email)}`);
     if (!r.ok) return [];
     const data = await r.json();
-    return (data.messages ?? []) as ChatMessage[];
+    // The navi-chats "load" action returns a bare JSON array of messages.
+    // Fall back to legacy { messages: [...] } shape just in case.
+    if (Array.isArray(data)) return data as ChatMessage[];
+    return ((data?.messages ?? []) as ChatMessage[]);
   } catch {
     return [];
   }
