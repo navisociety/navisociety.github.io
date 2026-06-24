@@ -10,6 +10,8 @@ export interface SubscriptionStatus {
   active: boolean;
   tier: 'mini' | 'max' | null;
   expires_at: string | null;
+  canAccessMini: boolean;
+  canAccessMax: boolean;
 }
 
 export interface UsageStatus {
@@ -84,10 +86,21 @@ export function clearSession() {
 }
 
 export async function getSubscriptionStatus(email: string): Promise<SubscriptionStatus> {
+  const inactive: SubscriptionStatus = { active: false, tier: null, expires_at: null, canAccessMini: false, canAccessMax: false };
   const rows = await sbGet(`navi_subscriptions?email=eq.${encodeURIComponent(email)}&status=eq.active&order=created_at.desc&limit=1`);
-  if (!Array.isArray(rows) || rows.length === 0) return { active: false, tier: null, expires_at: null };
-  const row = rows[0] as { tier: 'mini' | 'max'; expires_at: string };
-  return { active: true, tier: row.tier, expires_at: row.expires_at };
+  if (!Array.isArray(rows) || rows.length === 0) return inactive;
+  const row = rows[0] as { tier: 'mini' | 'max'; expires_at: string | null };
+
+  // Expired subscriptions fall back to free, even if the row is still marked active.
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return inactive;
+
+  // Tier access hierarchy:
+  //   max  -> can access both Mini and Max modes
+  //   mini -> can access Mini only (Max is gated behind an upgrade)
+  const canAccessMax = row.tier === 'max';
+  const canAccessMini = row.tier === 'mini' || row.tier === 'max';
+
+  return { active: true, tier: row.tier, expires_at: row.expires_at, canAccessMini, canAccessMax };
 }
 
 export async function getUsageStatus(email: string, tier: 'mini' | 'max'): Promise<UsageStatus> {
