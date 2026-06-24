@@ -294,7 +294,7 @@ export default function App() {
         textarea::placeholder { color:#555; }
       `}</style>
 
-      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} />}
+      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} />}
       {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
