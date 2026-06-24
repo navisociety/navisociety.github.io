@@ -11,6 +11,28 @@ type Message = {
 
 type Status = 'booting' | 'ready' | 'thinking';
 
+// NAVI now lives on Supabase as an Edge Function (server-side inference).
+// The function is public (no JWT required); we intentionally send no auth
+// header — the Supabase gateway rejects the publishable key as an invalid JWT.
+const NAVI_API = 'https://nmxwsjvmhoxjvkhgqmic.supabase.co/functions/v1/navi-chat';
+
+async function naviRespond(message: string, history: NaviMessage[]): Promise<string> {
+  try {
+    const res = await fetch(NAVI_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history }),
+    });
+    if (!res.ok) throw new Error(`NAVI API ${res.status}`);
+    const data = await res.json();
+    if (typeof data?.response === 'string' && data.response.trim()) return data.response;
+    throw new Error('empty response');
+  } catch {
+    // Fallback: run NAVI client-side so the site never goes down.
+    return navi.infer(message, history);
+  }
+}
+
 export default function App() {
   const [status, setStatus] = useState<Status>('booting');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -52,7 +74,7 @@ export default function App() {
     }, 14);
   }, []);
 
-  const send = useCallback(() => {
+  const send = useCallback(async () => {
     const text = input.trim();
     if (!text || status !== 'ready') return;
 
@@ -68,8 +90,9 @@ export default function App() {
     setInput('');
     setStatus('thinking');
 
-    const response = navi.infer(text, [...history, { role: 'user', content: text }]);
-    setTimeout(() => stream(response, naviId), 280);
+    // Ask NAVI on Supabase (falls back to client-side inference on failure).
+    const response = await naviRespond(text, [...history, { role: 'user', content: text }]);
+    stream(response, naviId);
   }, [input, status, messages, stream]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
