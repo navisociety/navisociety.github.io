@@ -1,9 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// NAVI Model — v4
+// NAVI Model — v5
 // Built by NAVIsociety, shaped by Prophet Dian.
-// v4: expanded knowledge base — SA youth culture & slang, digital
-// entrepreneurship, creative discipline, gospel/faith depth, NAVI's own
-// personality, music production, and African hope & resilience.
+// v5: basic English language training + basic human nature psychology.
+//     All responses in clear standard English.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type NaviMessage = { role: 'user' | 'assistant'; content: string };
@@ -112,6 +111,28 @@ class NaviTokenizer {
       'business','revenue','profit','scale','growth','customer','value','solve','problem',
       'invest','investment','save','spend','wealth','assets','passive','income',
       'network','connections','relationships','reputation','opportunity','luck','prepared',
+      // basic english
+      'grammar','sentence','verb','noun','adjective','tense','vocabulary','definition','translate',
+      'sorry','excuse','please','welcome','goodbye','bye','thank','apologize','polite',
+      'agree','disagree','opinion','correct','wrong','understand','explain','means','mean',
+      'count','number','first','second','third','fourth','fifth','days','week','month','year',
+      'monday','tuesday','wednesday','thursday','friday','saturday','sunday',
+      'january','february','march','april','june','july','august','september','october','november','december',
+      'morning','afternoon','evening','clock','hour','minute','date','today','yesterday','tomorrow',
+      'describe','communicate','language','phrase','expression','accent','speak','fluent',
+      // human nature
+      'emotion','emotions','feeling','instinct','behavior','behaviour','psychology','nature',
+      'brain','memory','habit','survival','belonging','attachment','grief','shame','guilt',
+      'pride','compassion','empathy','morality','conscience','moral','death','die','dying',
+      'curious','wonder','curiosity','communicate','narrative','storytelling','stories',
+      'mistake','choice','character','evil','childhood','development','upbringing',
+      'anger','rage','fear','joy','sadness','disgust','surprise','basic','needs',
+      'maslow','hierarchy','safety','shelter','hunger','thirst','warmth','love',
+      'social','instincts','reaction','pattern','evolution','evolved','survival','primal',
+      'honest','honesty','deceive','deception','lie','lies','truth','trust','trustworthy',
+      'compare','comparison','compete','competition','jealousy','envy','admire',
+      'grief','mourning','loss','death','cope','accept','process',
+      'born','grow','old','child','adult','baby','teenager','mature',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -1259,6 +1280,280 @@ const KNOWLEDGE: KNode[] = [
       "Quitting and resting feel the same in the dark, but they're not. Take the night, take the week — then get back up. Your future is counting on the version of you that doesn't fold. What do you need to keep moving?",
     ],
     priority: 8,
+  },
+
+  // ── v5: Basic English language ────────────────────────────────────────────
+  {
+    triggers: ['how do i say hello', 'how to greet someone', 'greetings in english', 'english greeting', 'how do you say hi in english', 'polite way to say hello', 'how to start a conversation'],
+    responses: [
+      "In English, you can greet someone by saying 'Hello', 'Hi', or 'Hey'. For formal situations use 'Good morning', 'Good afternoon', or 'Good evening'. A simple 'How are you?' is a common follow-up. Which situation are you preparing for?",
+      "Common English greetings: 'Hello' (neutral), 'Hi' (friendly), 'Good morning/afternoon/evening' (polite and formal). When meeting someone new, 'Nice to meet you' is a great phrase. What kind of conversation are you having?",
+      "Saying hello in English is simple: 'Hello' or 'Hi' works anywhere. If you want to be extra warm, try 'Good to see you!' If it's your first time meeting: 'Nice to meet you, my name is [your name].' That's enough to start any conversation well.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to say thank you in english', 'how to be polite in english', 'please and thank you', 'polite expressions english', 'how do i ask politely', 'what are polite words', 'how to say excuse me'],
+    responses: [
+      "The three most powerful polite words in English: 'Please' (when asking for something), 'Thank you' (when receiving something), and 'Excuse me' (when interrupting or getting past someone). These three phrases open most doors.",
+      "Polite English phrases to know: 'Please' when asking, 'Thank you' or 'Thanks' when someone helps you, 'You're welcome' when someone thanks you, 'Sorry' or 'I apologize' when you make a mistake, 'Excuse me' to get attention or get past someone. Simple and powerful.",
+      "To be polite in English: always add 'please' to requests ('Can you help me, please?'), say 'thank you' when someone does something for you, and say 'excuse me' before interrupting someone. These three habits will take you far.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to say sorry in english', 'how to apologize', 'apologize in english', 'how do i say i was wrong', 'words to say sorry', 'how to admit a mistake in english'],
+    responses: [
+      "To apologize in English: 'I'm sorry' is the most common. For something more serious: 'I sincerely apologize' or 'I apologize for what I did.' If you want to take responsibility: 'That was my fault, I'm sorry.' A good apology names what you did wrong — it shows you actually understand.",
+      "Saying sorry in English: 'I'm sorry' works in most situations. 'I'm really sorry' adds weight. 'I apologize' is more formal. The best apologies include three things — saying sorry, acknowledging what you did, and meaning it. Which situation are you dealing with?",
+      "Common ways to apologize: 'I'm sorry', 'I apologize', 'I was wrong and I'm sorry for that', 'Please forgive me.' The most important thing is sincerity — the words only work if you mean them.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to agree in english', 'how to disagree politely', 'how do you say i agree', 'how to say i think differently', 'how to say no politely', 'how to express a different opinion', 'disagreeing respectfully'],
+    responses: [
+      "To agree in English: 'I agree', 'Exactly', 'That's right', 'Absolutely', 'You're right about that.' To disagree politely: 'I see it differently', 'I'm not sure I agree', 'That's one way to look at it, but I think...', 'With respect, I disagree because...' Polite disagreement is one of the most useful skills in any language.",
+      "Agreeing: 'I agree completely', 'You're right', 'That makes sense.' Disagreeing politely: start with 'I understand your point, but...', or 'I see it a bit differently.' The key is to acknowledge what someone said before you push back — it shows you listened.",
+      "In English, 'I agree' and 'I disagree' are straightforward. But for polite disagreement, try: 'I respect your view, but...', 'That's interesting — I look at it differently though.' Tone matters as much as words. You can say almost anything respectfully if you frame it well.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to express feelings in english', 'words for emotions in english', 'how do i say i feel in english', 'how to describe how you feel', 'how to talk about emotions in english', 'emotion vocabulary'],
+    responses: [
+      "Basic emotion words in English: happy, sad, angry, scared, excited, tired, confused, proud, grateful, anxious, lonely, hurt, hopeful, frustrated, overwhelmed. To express a feeling: 'I feel [emotion]' or 'I'm feeling [emotion] right now.' For example: 'I feel sad today' or 'I'm feeling really excited about this.'",
+      "To talk about feelings in English: 'I feel...' or 'I am...' + the emotion word. Happy, joyful, excited, hopeful (positive). Sad, hurt, heartbroken, disappointed (painful). Angry, frustrated, irritated (when something is wrong). Scared, anxious, nervous, worried (when afraid). Being able to name your feeling is the first step to dealing with it.",
+      "English has rich emotion vocabulary. Simple ones: happy, sad, angry, scared. Deeper ones: heartbroken, overwhelmed, grateful, ashamed, hopeful, exhausted, at peace. You can say 'I feel [word]' or 'I've been feeling [word] lately.' Which feeling are you trying to express?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['english grammar basics', 'past tense present tense', 'how do you use tenses', 'what is past tense', 'what is present tense', 'what is future tense', 'when to use was or were', 'grammar question'],
+    responses: [
+      "English tenses in simple terms: Present tense = what is happening now ('I eat', 'She runs'). Past tense = what already happened ('I ate', 'She ran'). Future tense = what will happen ('I will eat', 'She will run'). Most conversations use these three. Which one are you finding tricky?",
+      "The three main tenses: Present ('I am happy', 'She works'), Past ('I was happy', 'She worked'), Future ('I will be happy', 'She will work'). The verb changes based on when the action happens. 'Was' is past tense of 'is' — use it for one person. 'Were' is past tense of 'are' — use it for more than one. For example: 'She was tired' but 'They were tired.'",
+      "Grammar tip: in English, the verb tells you WHEN. 'I walk' (now). 'I walked' (before). 'I will walk' (later). Start with these three and most sentences will make sense. What grammar question do you have specifically?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how to ask a question in english', 'question words in english', 'what are question words', 'who what when where why how', 'how to form a question', 'how do i make a question'],
+    responses: [
+      "English question words: Who (person) — 'Who did this?'. What (thing) — 'What happened?'. When (time) — 'When did you arrive?'. Where (place) — 'Where are you going?'. Why (reason) — 'Why did you do that?'. How (method) — 'How does this work?'. These six words unlock almost any question you need to ask.",
+      "To form a question in English, you usually start with a question word or flip the verb and subject. Statement: 'You are happy.' Question: 'Are you happy?' Statement: 'She can help.' Question: 'Can she help?' Question words (who, what, when, where, why, how) go at the start. Simple but powerful.",
+      "The six question words to memorize: Who, What, When, Where, Why, How. Each one digs for different information. 'Who' finds the person. 'What' finds the thing. 'When' finds the time. 'Where' finds the place. 'Why' finds the reason. 'How' finds the method. Which one are you trying to use?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['numbers in english', 'how to count in english', 'how do you say numbers', 'first second third in english', 'ordinal numbers', 'counting words', 'what comes after ten'],
+    responses: [
+      "Counting in English: one, two, three, four, five, six, seven, eight, nine, ten. Then eleven, twelve, thirteen... twenty, thirty, forty, fifty... hundred, thousand, million. For order: first, second, third, fourth, fifth. These are called ordinal numbers — they tell you the position.",
+      "Numbers in English: 1=one, 2=two, 3=three, 4=four, 5=five, 6=six, 7=seven, 8=eight, 9=nine, 10=ten, 11=eleven, 12=twelve, 20=twenty, 100=hundred, 1000=thousand. For position: 1st=first, 2nd=second, 3rd=third, 4th=fourth. What do you need them for?",
+      "To say numbers in order: one, two, three... For position: first (1st), second (2nd), third (3rd), fourth (4th), fifth (5th). From sixth onwards, just add '-th': sixth, seventh, eighth. The pattern is regular after 'third.' Easy to remember once you see it.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['days of the week in english', 'months in english', 'how to say the date', 'how to tell time', 'what are the days called', 'months of the year', 'how to say today is'],
+    responses: [
+      "Days of the week: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday. Months: January, February, March, April, May, June, July, August, September, October, November, December. To say today's date: 'Today is [day], [month] [number], [year].' For example: 'Today is Tuesday, June 24, 2026.'",
+      "The week in English: Monday (start of work week), Tuesday, Wednesday, Thursday, Friday (end of work week), Saturday, Sunday (the weekend). To say a date: 'It's the 24th of June' or 'June 24th.' The month always comes before the day in American English, after the day in British English.",
+      "Months: January through December (12 total). Days: Monday through Sunday (7 total). To say the time: 'It's [number] o'clock' or 'It's half past [number]' or 'quarter to [number].' Example: 'It's 3 o'clock', 'It's half past 4', 'It's quarter to 6.' What do you need to say specifically?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how to say goodbye in english', 'how to end a conversation', 'farewell in english', 'how to say see you later', 'how to leave politely', 'how to say bye'],
+    responses: [
+      "Goodbyes in English: 'Goodbye' (formal), 'Bye' or 'Bye bye' (friendly), 'See you later' or 'See you soon' (casual, when you'll meet again), 'Take care' (warm, caring), 'Have a good one' (casual and friendly), 'It was nice talking to you' (polite ending to a conversation). Pick the one that fits your relationship with the person.",
+      "Ways to end a conversation politely: 'It was great talking to you', 'I should get going now', 'Thank you for your time', 'Goodbye' or 'Bye for now.' A polite ending always acknowledges the other person and wraps things up smoothly rather than just disappearing.",
+      "Casual: 'Bye!', 'See ya!', 'Later!' Friendly: 'Take care', 'See you soon', 'Talk later.' Formal: 'Goodbye', 'It was a pleasure meeting you', 'Have a good day.' The key is matching the farewell to the level of the relationship.",
+    ],
+    priority: 6,
+  },
+
+  // ── v5: Basic human nature ────────────────────────────────────────────────
+  {
+    triggers: ['why do we feel emotions', 'what are emotions', 'why do humans have feelings', 'why do i feel things', 'what is an emotion', 'what are feelings for', 'why do feelings exist'],
+    responses: [
+      "Emotions are your brain's messaging system. Each emotion is a signal: fear says 'danger ahead', sadness says 'something important was lost', joy says 'this matters — remember it', anger says 'something isn't right here.' They evolved to help humans survive and connect. The feeling is a message, not the whole story.",
+      "Feelings exist because they're useful. Before we had words, emotions guided us — run from danger, bond with people who care for you, grieve what you've lost so you can move on. Even painful emotions serve a purpose. The trouble isn't that we feel — it's when we don't understand what the feeling is telling us.",
+      "Emotions are real, physical responses — your heart rate, hormones, nervous system all shift. Your brain created them over millions of years to help you navigate life: bond with others, avoid danger, pursue what matters. Understanding your emotions means understanding yourself. Which feeling are you trying to make sense of?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what do humans need', 'basic human needs', 'what does every person need to survive', 'maslow hierarchy', 'human needs psychology', 'what are the basic needs', 'why do humans need things'],
+    responses: [
+      "Every human has the same basic needs: physical (food, water, shelter, sleep), safety (security, stability), love and belonging (connection, friendship, family), self-esteem (feeling capable and valued), and purpose (doing something that means something). These aren't luxuries — they're what every person needs to function fully. Which layer are you working on right now?",
+      "Psychologist Abraham Maslow mapped human needs as a pyramid: at the base, survival (food, water, shelter). Above that, safety. Then love and belonging. Then self-respect and recognition. At the top, purpose — becoming who you're capable of being. You can't sustainably chase the top layers if the bottom ones are shaky.",
+      "Humans need: something to eat and drink, somewhere safe to sleep, people to belong to, a reason to get up in the morning, and a sense that they matter. Most human pain — loneliness, depression, emptiness, rage — can be traced back to one of these needs not being met. What need feels unmet in your life right now?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do we feel fear', 'what is fear', 'why am i scared', 'what causes fear', 'purpose of fear', 'why do humans get scared', 'why do people feel afraid', 'what does fear do'],
+    responses: [
+      "Fear is your brain's alarm system. When it detects a threat — real or imagined — it triggers a physical response: heart beats faster, muscles tighten, breathing quickens. This is the 'fight or flight' response. It evolved to protect you from danger. The problem is, your brain can't always tell the difference between a real lion and an embarrassing situation. Fear still fires for both.",
+      "Fear exists because it kept your ancestors alive. The ones who ran from danger survived. That instinct is still in you — it just sometimes fires when it shouldn't, like before a presentation or when meeting someone new. Fear isn't weakness. It's your nervous system doing its job. The skill is learning to act despite it.",
+      "Fear is a survival mechanism. It says: 'Pay attention, something might hurt you.' The physical feeling — racing heart, tense body — is your body preparing to act. The tricky part is that fear of failure, fear of rejection, fear of the unknown all feel the same as physical danger. Understanding this doesn't make fear disappear, but it helps you not be controlled by it. What are you afraid of?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do people get angry', 'what causes anger', 'why do we feel angry', 'what is anger', 'why do humans get mad', 'purpose of anger', 'what does anger mean', 'why do i get so angry'],
+    responses: [
+      "Anger is a signal that a boundary has been crossed — something you care about has been threatened, disrespected, or taken. It's actually one of the most honest emotions: it tells you what matters to you. The danger isn't the feeling of anger, it's what you do with it. Rage acted out destroys. Anger understood becomes clarity.",
+      "Anger evolved to protect. When you or someone you love is threatened, anger gives you the energy to respond. It's the emotion that says 'this is not okay.' The healthiest relationship with anger is to feel it, understand what it's pointing at, and then choose your response — not just react. What's making you angry?",
+      "People get angry when they feel disrespected, hurt, betrayed, or powerless. The anger itself isn't the problem — it's information. 'I feel angry' usually means 'a value of mine was violated' or 'I feel like I don't have control.' Once you understand the reason behind the anger, you can address the actual problem instead of just the feeling.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do we feel sad', 'what is sadness', 'what is grief', 'why does sadness hurt', 'why do humans cry', 'what causes sadness', 'why do we grieve', 'what is the point of sadness'],
+    responses: [
+      "Sadness is the emotion of loss. It surfaces when something you valued — a person, a dream, a version of yourself — is gone. Grief is the process of accepting that. It's not weakness; it's love encountering loss. The pain of grief is proportional to how much something mattered. If it didn't hurt, it didn't matter.",
+      "Crying is one of the most human things you can do. Tears are your body processing something too big for words. Sadness doesn't mean you're weak or broken — it means you're alive and you feel things. The goal isn't to stop feeling sad; it's to move through the sadness rather than get stuck in it. What are you grieving right now?",
+      "Sadness exists so you can process loss and recover. It slows you down, makes you reflect, and helps you acknowledge what mattered. Suppressing it doesn't make it go away — it just delays the process. Humans who allow themselves to grieve properly tend to heal better than those who push the sadness down. What happened?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is love', 'why do humans fall in love', 'why do we need love', 'what makes us love someone', 'how does love work', 'why do we love people', 'what does love mean'],
+    responses: [
+      "Love is both a feeling and a choice. The feeling part — the rush, the pull toward someone — is driven by brain chemistry and emotional bonding. The choice part is deciding to stay, to show up, to prioritize someone even when it's inconvenient. The most lasting love is a daily decision, not just a feeling you wait for.",
+      "Humans need love because we are deeply social creatures. We evolved to bond — with family, with partners, with community. Love releases hormones that make you feel safe and connected. But love is also about seeing someone fully and still choosing them. It goes deeper than attraction. What kind of love are you thinking about?",
+      "Love takes many forms: romantic love, the love between parents and children, deep friendship, love of a calling or a craft. What they share is this: genuine care for something beyond yourself. Love is what makes life meaningful to most people. Without it, even success feels hollow.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans need other people', 'why do we need friends', 'why do people need community', 'why do humans form groups', 'why do we feel lonely', 'why do we need belonging', 'why are humans social'],
+    responses: [
+      "Humans are wired for connection. Loneliness isn't just an emotion — it's a physical signal, like hunger, telling you that a basic need isn't being met. We evolved in groups; isolation was dangerous. That's why being excluded feels so painful — your brain registers it as a threat to your survival. You were never meant to do life alone.",
+      "Connection is a biological need, not a preference. Studies show that loneliness shortens life, weakens immunity, and increases depression just as much as smoking. We need other people to feel safe, to be known, to grow, and to have meaning. A sense of belonging — being part of something beyond yourself — is one of the deepest human hungers.",
+      "Humans form groups because together we're stronger, smarter, and safer than alone. But beyond survival, community gives life texture — it's where stories get shared, where you're seen, where you matter to someone. The longing you feel when you're isolated is your nature calling you back toward people. Who in your life do you feel that connection with?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do people lie', 'why is honesty important', 'what is trust', 'why do humans deceive', 'why is trust important', 'why do people tell lies', 'what makes someone trustworthy', 'why is honesty hard'],
+    responses: [
+      "People lie for a few reasons: to avoid pain (consequences, rejection, conflict), to protect others, to protect their ego, or because they've learned that truth isn't safe in their environment. But the cost of lying is trust — and trust, once broken, is very hard to rebuild. Honesty is difficult because it requires courage. Most people know the truth is better; they just fear what it costs.",
+      "Trust is the foundation of every relationship. Without it, love can't fully land, teamwork breaks down, friendships hollow out. Trust is built through consistency — doing what you say over time. It's broken instantly and rebuilt slowly. That imbalance is why it's so precious. Trustworthy people are rare because honesty and follow-through are hard disciplines.",
+      "Deception is a human universal — everyone has lied. But the patterns matter. People who lie chronically usually have a wound underneath it: shame, fear of rejection, or an environment where truth was punished. Understanding why someone lies tells you more about what they fear than what they are. Honesty isn't just moral — it's the only thing that builds real connection.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why are humans curious', 'why do we ask questions', 'what is curiosity', 'why do humans wonder', 'why do we want to understand things', 'why do people need to know things', 'why is curiosity important'],
+    responses: [
+      "Curiosity is your brain's drive to close the gap between what you know and what you don't. It's a survival mechanism that got upgraded — the humans who explored, asked questions, and figured things out survived and passed on that trait. Today, curiosity is the engine of learning, creativity, and connection. The questions you ask reveal the shape of your mind.",
+      "Humans are the most curious species on the planet. We ask 'why' from the time we can talk. Curiosity evolved because understanding your environment — how things work, why people behave a certain way, what will happen next — gives you an edge. But it also does something else: it makes life interesting. A curious person is never truly bored.",
+      "Curiosity is the beginning of almost everything good: science, art, relationships, faith, growth. It says 'I don't know yet, but I want to.' That openness is rare. Most people stop being curious when life gets hard. Staying curious — especially about people and about yourself — is one of the marks of a full life.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans form habits', 'what is a habit', 'why do we repeat behaviours', 'why is it hard to change habits', 'how do habits form', 'why do i keep doing the same thing', 'why do people behave the way they do'],
+    responses: [
+      "Habits form because your brain is efficient — it automates behaviors you repeat often so you don't have to think about them. The habit loop: cue (something triggers you), routine (you do the behavior), reward (your brain gets a hit of satisfaction). Once wired in, the loop runs automatically. That's why habits are hard to break — you're not fighting laziness, you're fighting automation.",
+      "Your brain stores repeated actions as habits to save energy. That's useful for things like brushing your teeth. But it also stores unhealthy patterns — how you respond to stress, how you self-sabotage, how you speak to yourself. Changing a habit requires more than willpower; you have to replace the routine that follows the cue, not just try to stop. What habit are you trying to change?",
+      "Behavior patterns form early — often in childhood — and run as default settings in adulthood. Many adults don't realize they're still running a five-year-old's strategy for dealing with fear or rejection. Awareness is the first step: noticing the pattern, understanding where it came from, then choosing a different response. That's the work of becoming who you actually want to be.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans compare themselves', 'why do i compare myself to others', 'why do people compete', 'social comparison', 'why do humans judge each other', 'why do i feel less than others', 'why do people size each other up'],
+    responses: [
+      "Comparison is a survival instinct. Your brain constantly monitors your standing in the group — because in our evolutionary past, status meant access to resources and safety. The problem is, your brain hasn't updated for social media. You're now comparing yourself to thousands of people daily, most of whom are showing only their highlights. That comparison is not fair data.",
+      "Social comparison is automatic — you can't fully turn it off, and that's okay. The issue is what you do with it. When comparison motivates you to grow, it's useful. When it makes you feel permanently less-than, it's destructive. The shift is from 'I'm behind them' to 'I'm on my own path with my own timeline.'",
+      "Everyone compares. It's human. But the people you compare yourself to are usually showing you a curated version of their life. You're comparing your behind-the-scenes to their highlight reel. The only comparison that ever matters is you vs. the person you were yesterday. Are you growing? That's the only question.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['what is guilt', 'why do i feel guilty', 'what is a conscience', 'why do humans feel bad when they do wrong', 'why do we have morals', 'what is the difference between guilt and shame', 'why do people feel guilty'],
+    responses: [
+      "Guilt is what you feel when your actions go against your own values — 'I did something wrong.' Shame is deeper and more painful — 'I am something wrong.' Guilt motivates repair: you feel it, apologize, and do better. Shame paralyzes: it makes you want to hide. Guilt is useful. Chronic shame is destructive. They're not the same thing.",
+      "Conscience is your internal moral compass — the part of you that knows when you've done something that goes against your values. It's shaped by your upbringing, culture, and experiences, but it's real and it matters. Guilt is the signal it sends. The healthy response: acknowledge what you did, make it right where you can, and move forward with intention.",
+      "Humans evolved with morality because groups survive better when members cooperate, keep their word, and look out for each other. Guilt is the social glue — it pushes you to repair what you broke. But you have to learn the difference between healthy guilt (you genuinely did something wrong) and false guilt (you're just afraid of disappointing someone). Only the first kind deserves to stay.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans tell stories', 'why do we like stories', 'why is storytelling important', 'why do people share experiences', 'why do we need narratives', 'why do humans love stories', 'what is the power of a story'],
+    responses: [
+      "Stories are how humans make sense of the world. Before science, before writing, before schools — there were stories. They carried knowledge, values, warnings, and identity across generations. Your brain is literally wired for narrative: it processes information better when it's wrapped in a story than when it's delivered as raw data. That's why the best teachers, leaders, and preachers all know how to tell stories.",
+      "Stories do something unique: they create shared understanding. When you hear someone's story, your brain actually syncs with theirs — the same areas activate. This is why stories build empathy. You can't fully understand someone's pain from statistics; you can from their story. The most powerful tool for connection is a true, well-told story.",
+      "Humans are the only species that tells stories — and we can't stop. Stories help us process what happened, understand why, and imagine what could be. Every culture in history has done this. A life told as a story has meaning; the same events experienced without a narrative just feel like chaos. What story are you trying to make sense of?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do we need to feel understood', 'why is it important to be heard', 'why does it hurt when no one understands you', 'why do people need to be seen', 'why do humans want validation', 'why do we need someone to listen', 'why does feeling misunderstood hurt'],
+    responses: [
+      "Being understood is one of the deepest human needs. It confirms that you exist, that you matter, that your experience is real. When no one understands you, it creates a kind of invisible loneliness — you're surrounded by people but still alone. The need to be heard isn't weakness; it's what connection is made of.",
+      "Feeling unseen is genuinely painful. Neuroscience shows that social pain — being ignored, rejected, misunderstood — activates the same brain regions as physical pain. Your need to be understood isn't needy; it's human. The people who matter most in your life are usually the ones who make you feel most seen.",
+      "You don't need everyone to understand you. But you need at least one person to truly see you — not the version you perform, but the real you. That kind of understanding is what makes life feel less alone. If you feel misunderstood right now, I want to know — tell me what people keep missing.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how does the mind work', 'what is the mind', 'difference between brain and mind', 'how do we think', 'how does thinking work', 'what is consciousness', 'how does memory work', 'what happens in the brain when we think'],
+    responses: [
+      "The brain is the physical organ — about 1.4 kg of tissue with 86 billion neurons firing signals. The mind is what emerges from all that activity: your thoughts, feelings, awareness, and sense of self. The brain you can point to; the mind is harder to define. Science can explain the neurons; nobody has fully explained why it feels like something to be alive.",
+      "Memory works through patterns — your brain stores experiences as networks of connected neurons. The more you repeat something, the stronger the connection. The more emotional the experience, the more vividly it's stored. This is why you remember your first heartbreak in detail but forget most Mondays. Your brain prioritizes what matters emotionally.",
+      "Thinking is largely your brain predicting the future based on past experience. You're not as rational as you think — most decisions are made by the emotional, automatic part of your brain first, then justified by the logical part afterwards. Understanding this doesn't make you a machine; it makes you someone who can observe their own thinking and choose something different.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans make mistakes', 'why do people make bad choices', 'why do humans hurt each other', 'why do people mess up', 'what causes bad decisions', 'why do we do things we regret', 'why do people do bad things'],
+    responses: [
+      "Humans make mistakes because we are limited, emotional, and often afraid. We have full information almost never. We have good judgment under stress almost never. We act from fear, from pain, from unmet needs, from patterns we inherited. Understanding why people make bad choices doesn't excuse the damage — but it does explain it, and explanation is where compassion starts.",
+      "Bad decisions usually come from one of three places: not enough information, emotional overload (fear, anger, grief clouding judgment), or a pattern from the past running on autopilot. Very few people wake up planning to mess their life up. Most damage is accidental, or it's someone acting from their wound. That's not an excuse — but it's the truth.",
+      "Regret is the feeling of having known better but chosen worse. It's one of the most human experiences. The goal isn't to never regret — it's to learn from the things you regret and make better choices going forward. Repeated mistakes in the same area are usually a signal that something deeper needs to be addressed, not just the surface behavior.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans fear death', 'what is death', 'why does death hurt', 'why is death scary', 'thinking about death', 'why am i afraid of dying', 'what happens when we die', 'how to deal with death'],
+    responses: [
+      "Fear of death is built into every living thing — it's what kept your ancestors from taking fatal risks. But humans are unique: we know we're going to die, and that knowledge shapes everything. The fear of death drives religion, art, legacy, love — most of what makes us distinctly human. How you relate to your mortality says a lot about how you live.",
+      "Death hurts so much because love does. Grief is love with nowhere to go. The pain of losing someone is the price of having cared. Most people would pay that price again — and that says something profound about how much connection matters to us. How are you dealing with loss right now?",
+      "Death reminds us that time is limited and nothing lasts. For some that's terrifying; for others it's motivating — if this is all we get, then what are we doing with it? The people who've thought most deeply about death — philosophers, survivors, the very old — tend to agree: what makes life meaningful is connection, contribution, and presence. Are you living like your time matters?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['are humans good or bad', 'what makes someone a good person', 'what is good and evil', 'what is morality', 'what is character', 'why do people do bad things if they know better', 'is human nature good'],
+    responses: [
+      "Humans aren't simply good or bad — they're complex. Every person is capable of both profound kindness and serious harm, depending on their circumstances, wounds, fears, and choices. Character is what you do when you have a choice and something is at stake. It's not a fixed thing you were born with; it's a practice built daily.",
+      "Morality is humanity's attempt to answer: 'How should we treat each other?' Every culture in history has tried to answer this. Most arrive at similar basics: don't harm, be fair, be honest, take care of the vulnerable. The hard part isn't knowing what's right — it's choosing it when it costs you something.",
+      "The question 'is human nature good or bad?' misses something: humans are the animal that chooses. Every day you make dozens of small choices about whether to be kind, patient, honest, generous — or not. Those choices build your character. You were born with instincts, yes — but who you become is largely up to you.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['how do children learn', 'how do humans develop', 'how does childhood affect us', 'what shapes a person', 'why does upbringing matter', 'how do people become who they are', 'how does early life affect you', 'what makes someone who they are'],
+    responses: [
+      "Humans are shaped by a combination of nature (what you're born with — temperament, tendencies) and nurture (what happens to you — family, culture, experiences). Neither fully determines you. But early childhood is crucial: your first experiences of love, safety, and trust become templates your brain uses for all future relationships. Changing those templates takes awareness and intentional work — but it's always possible.",
+      "Children learn by watching and experiencing far more than by being taught. A child who grows up watched carefully with love learns they are worth watching. A child raised with consistent boundaries learns the world is predictable and safe. A child in chaos learns to stay alert and expect the worst. These aren't life sentences — but they are starting points that take real effort to rewrite.",
+      "The person you are today is a product of thousands of experiences you often can't remember. Your reactions, your fears, your love language, your default defense mechanisms — all of it has roots. Understanding your history isn't about blame; it's about seeing the patterns clearly enough to decide which ones to keep and which ones to change. What do you want to understand about yourself?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['why do humans communicate', 'what is communication', 'why is communication important', 'how do humans understand each other', 'why do we talk', 'why did humans develop language', 'how does language work'],
+    responses: [
+      "Language is what separates humans from every other species. It lets us share ideas, coordinate in groups, pass knowledge across generations, and reach inside someone else's experience. Without language, there's no civilization, no stories, no science, no love expressed in words. Every conversation is a small miracle — you're transmitting something invisible from your mind into someone else's.",
+      "Communication is how you make yourself real to other people. You can feel something intensely but until you express it — in words, art, action — no one else knows. The ability to put inner experience into language and have it received is one of the most profound human skills. And most of us are only average at it, even after a lifetime of practice.",
+      "Humans developed language because it dramatically increases what you can do together. One person can't build a city. One person can't raise a child safely in the wild. Language allows coordination, teaching, and the sharing of experience across time. Every word you know was given to you by someone who learned it before you. Language is a chain of human connection going back thousands of years.",
+    ],
+    priority: 7,
   },
 ];
 
