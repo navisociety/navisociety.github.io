@@ -55,7 +55,8 @@ export function extractSessionFromHash(): NaviSession | null {
 }
 
 export async function sendMagicLink(email: string): Promise<{ error?: string }> {
-  const r = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
+  const redirectTo = encodeURIComponent('https://navisociety.github.io');
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/otp?redirect_to=${redirectTo}`, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, create_user: true }),
