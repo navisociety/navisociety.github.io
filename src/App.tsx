@@ -2,6 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
 import ChatsScreen from './components/ChatsScreen';
+import NaviSubscribe from './components/NaviSubscribe';
+import {
+  callNaviPro,
+  getStoredSession,
+  storeSession,
+  getSubscriptionStatus,
+  type NaviSession,
+} from './lib/navi-supabase';
 
 type Message = {
   id: string;
@@ -40,6 +48,10 @@ export default function App() {
   const [input, setInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [chatsOpen, setChatsOpen] = useState(false);
+  const [mode, setMode] = useState<'free' | 'mini' | 'max'>('free');
+  const [naviSession, setNaviSession] = useState<NaviSession | null>(null);
+  const [showSubscribe, setShowSubscribe] = useState(false);
+  const [subscribeMode, setSubscribeMode] = useState<'mini' | 'max'>('mini');
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -56,6 +68,24 @@ export default function App() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Restore a stored NAVI Mini/Max session on mount and re-check its subscription.
+  useEffect(() => {
+    const stored = getStoredSession();
+    if (!stored) return;
+    setNaviSession(stored);
+    getSubscriptionStatus(stored.email).then(sub => {
+      if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
+    });
+  }, []);
+
+  async function handleAuth(session: NaviSession) {
+    storeSession(session);
+    setNaviSession(session);
+    setShowSubscribe(false);
+    const sub = await getSubscriptionStatus(session.email);
+    if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
+  }
 
   const stream = useCallback((text: string, msgId: string) => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -92,10 +122,35 @@ export default function App() {
     setInput('');
     setStatus('thinking');
 
-    // Ask NAVI on Supabase (falls back to client-side inference on failure).
-    const response = await naviRespond(text, [...history, { role: 'user', content: text }]);
+    const fullHistory = [...history, { role: 'user' as const, content: text }];
+
+    // Mini/Max route to the server-side NAVI tiers; free stays on navi-chat.
+    if ((mode === 'mini' || mode === 'max') && naviSession) {
+      const endpoint = mode === 'mini' ? 'navi-mini' : 'navi-max';
+      const result = await callNaviPro(endpoint, text, history, naviSession.email);
+      if (result.response) {
+        stream(result.response, naviId);
+        return;
+      }
+      if (result.code === 'no_subscription') {
+        setSubscribeMode(mode);
+        setShowSubscribe(true);
+        stream(await naviRespond(text, fullHistory), naviId);
+        return;
+      }
+      if (result.code === 'limit_reached') {
+        stream("You've reached your monthly limit. Your compute resets next month.", naviId);
+        return;
+      }
+      // Any other error → fall back to free NAVI.
+      stream(await naviRespond(text, fullHistory), naviId);
+      return;
+    }
+
+    // Free tier: ask NAVI on Supabase (falls back to client-side inference on failure).
+    const response = await naviRespond(text, fullHistory);
     stream(response, naviId);
-  }, [input, status, messages, stream]);
+  }, [input, status, messages, stream, mode, naviSession]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -145,10 +200,10 @@ export default function App() {
         </div>
         {/* Row 2: Mini (left) + Max (right) */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+          <button onClick={() => { setSubscribeMode('mini'); setShowSubscribe(true); }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', opacity: mode === 'mini' ? 1 : 0.45 }}>
             <span style={{ color: '#FA00FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Mini</span>
           </button>
-          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+          <button onClick={() => { setSubscribeMode('max'); setShowSubscribe(true); }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', opacity: mode === 'max' ? 1 : 0.45 }}>
             <span style={{ color: '#00F7FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Max</span>
           </button>
         </div>
@@ -240,6 +295,7 @@ export default function App() {
 
       {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} />}
       {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} />}
+      {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
   );
 }
