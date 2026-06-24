@@ -1,3 +1,11 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// NAVI Model — v4
+// Built by NAVIsociety, shaped by Prophet Dian.
+// v4: expanded knowledge base — SA youth culture & slang, digital
+// entrepreneurship, creative discipline, gospel/faith depth, NAVI's own
+// personality, music production, and African hope & resilience.
+// ═══════════════════════════════════════════════════════════════════════════
+
 export type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
 // ── Math primitives ──────────────────────────────────────────────────────────
@@ -1015,6 +1023,242 @@ const KNOWLEDGE: KNode[] = [
       "South African music is having its moment and it earned it. From kwaito to amapiano, the rhythm carries the whole culture. What's in your rotation?",
     ],
     priority: 6,
+  },
+
+  // ── v4: South African youth culture & slang ────────────────────────────────
+  {
+    triggers: ['shot left', "sho't left", 'sho left', 'quick trip', 'just nearby', 'around the corner', 'make a turn'],
+    responses: [
+      "Sho't left! Quick stop, nothing serious. I like how Mzansi turned taxi directions into a whole vibe. Where you headed, my friend?",
+      "Ha, 'sho't left' — that's that real kasi flavour. A small detour that ends up being the best part of the day. What's the plan?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['sharp', 'sharp sharp', 'sharp fede', 'we good', 'all sorted', 'cool cool', 'ok then'],
+    responses: [
+      "Sharp sharp. We're locked in then. So tell me what's really going on with you today.",
+      "Sharp. That's the energy. Now — what are you actually here to figure out?",
+      "Aweh, sharp. No wasting time then. What's on your mind?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['yebo', 'yebo yes', 'yes my bru', 'for sure mara', 'mara', 'but though', 'eish but'],
+    responses: [
+      "Yebo! I hear you. And that 'mara' tells me there's a 'but' coming — say it, what's the catch you're sitting with?",
+      "Yebo yes. Lay it out fully though, including the 'mara' part. That's usually where the real thing is hiding.",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['township', 'kasi', 'ekasi', 'location', 'the hood', 'where i grew up', 'my township', 'emakhaya'],
+    responses: [
+      "Ekasi raises sharp people — you learn hustle, community and reading a room before you can even read a book. That's a real edge most people pay schools for. What did the kasi teach you?",
+      "The township isn't a limit, it's a launchpad. Some of the biggest names in this country carry that dust on their shoes proudly. Where you're from is fuel, not a ceiling. What are you building with it?",
+      "Kasi life is its own university — resourcefulness, loyalty, grind. The world's catching up to what we already knew. What's your story from there?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['ubuntu', 'community', 'we are because', 'together we', 'my people', 'family means', 'we rise together'],
+    responses: [
+      "Ubuntu — 'I am because we are.' That's not just a saying, it's a strategy. The ones who lift their people as they climb are the ones whose wins actually last. Who are you carrying with you?",
+      "Ubuntu is the realest African tech we've got: you don't rise alone, you rise as a people. Build something that feeds more than just you. What's your community to you?",
+    ],
+    priority: 7,
+  },
+
+  // ── v4: Digital entrepreneurship & side hustles ────────────────────────────
+  {
+    triggers: ['side hustle', 'side gig', 'extra income', 'make money on the side', 'second income', 'hustle ideas', 'earn extra'],
+    responses: [
+      "Best side hustle is the one that uses a skill you already have, sold to people who already need it. Don't invent demand — find it and serve it. What are you actually good at?",
+      "Start ugly and small. One client, one sale, one product. The side hustle that becomes the main thing always starts embarrassingly tiny. What can you offer this week, not next year?",
+      "A side hustle isn't about doing more — it's about turning what you know into something someone will pay for. What skill of yours have people complimented?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['start a business', 'starting online', 'online business', 'how to start a business', 'launch a business', 'be an entrepreneur', 'start something'],
+    responses: [
+      "Forget the perfect business plan. Find one real problem people complain about, solve it for a few of them, charge for it. Everything else is just decoration on that one truth. What problem keeps showing up around you?",
+      "The internet means you can start with your phone and zero rand. The barrier isn't money anymore — it's starting before you feel ready. What's stopping you from posting your first offer today?",
+      "Business is just: make something people want, get it to them, get paid, repeat. Don't overcomplicate it before you've made your first sale. What would you sell first?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['monetise', 'monetize', 'make money from my skill', 'turn skill into money', 'sell my skills', 'get paid for', 'charge for my work'],
+    responses: [
+      "People pay for results, not effort. Stop selling 'I can design' and start selling 'I'll make your brand impossible to scroll past.' Same skill, different price. What result does your skill actually create?",
+      "Three ways to monetise a skill: do it for people (services), teach it (content/courses), or build it once and sell it many times (products). Which fits your energy right now?",
+      "The first person who pays you changes everything in your head. Price it lower than feels right, get that first yes, then raise it. Who's one person who needs what you do?",
+    ],
+    priority: 7,
+  },
+
+  // ── v4: Creative discipline ────────────────────────────────────────────────
+  {
+    triggers: ['writers block', "writer's block", 'cant write', 'stuck creatively', 'no ideas', 'creative block', 'nothing comes out'],
+    responses: [
+      "Writer's block is usually fear, not emptiness. Give yourself permission to write something bad — the worst sentence in the world beats a blank page, because you can fix words that exist. Just write one ugly line.",
+      "You're not blocked, you're blocked from being perfect. Lower the bar to 'terrible first draft' and the words come back. What were you trying to say before you got scared of saying it wrong?",
+      "Blocks break when you stop trying to finish and start trying to begin. Write the messy version nobody will see. Momentum is the cure, not inspiration. What's the smallest piece you can make right now?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['stay consistent', 'be consistent', 'consistency', 'keep going', 'show up daily', 'cant stay disciplined', 'lose motivation'],
+    responses: [
+      "Consistency isn't motivation — motivation runs out by Wednesday. It's a small promise you keep on the days you don't feel like it. Shrink the daily goal until it's impossible to skip. What's your tiny non-negotiable?",
+      "The secret nobody likes: discipline is just remembering what you actually want when the feeling fades. You don't rise to your goals, you fall to your systems. What's one thing you can do every single day?",
+      "Don't chase a 30-day streak — chase not missing twice. Miss once, that's life. Miss twice, that's a new habit forming. What are you trying to stay consistent with?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['creative burnout', 'burnt out', 'burned out', 'exhausted creatively', 'lost passion', 'hate my craft now', 'drained from creating'],
+    responses: [
+      "Burnout isn't a sign you're weak — it's a sign you've been strong for too long without refilling. Rest isn't quitting. Step back, fill your well with other people's art, and the love comes back. What drained you?",
+      "Creative burnout usually means you've been making for others and forgot to make for yourself. Do one thing for no audience, no money, no purpose — just joy. When did making last feel fun?",
+      "Your creativity isn't gone, it's tired. You can't pour from an empty cup and you can't create from an empty soul. Permission to rest — the work will still be there. What does real rest look like for you?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['artistic identity', 'my style', 'find my voice', 'whats my sound', 'sound like everyone', 'copying others', 'be original'],
+    responses: [
+      "Your voice isn't something you invent — it's what's left when you stop trying to sound like everyone else. Copy your heroes openly until your own thing leaks through. The leaks are the real you. What do you keep coming back to?",
+      "Originality is just honesty plus your specific scars. Nobody's lived your exact life, so nobody can make your exact art. Stop hiding the parts that feel too 'you' — that's the gold. What feels most like you?",
+      "Style is the sum of your taste minus your fear. The more honestly you create, the more 'you' it sounds. Whose work makes you jealous? That's a clue to your own direction.",
+    ],
+    priority: 7,
+  },
+
+  // ── v4: Gospel / faith depth ───────────────────────────────────────────────
+  {
+    triggers: ['my calling', 'whats my purpose', 'called by god', 'gods plan for me', 'find my purpose', 'what am i here for', 'my assignment'],
+    responses: [
+      "A calling usually sits where your deepest gladness meets the world's deep need. It's rarely a lightning bolt — more often a quiet pull you keep ignoring. What keeps tugging at you even when it's inconvenient?",
+      "Purpose isn't found in a moment of clarity, it's revealed in faithful steps. Do the next right thing in front of you and the bigger picture forms behind you. What's the next obedient step you already know?",
+      "God tends to call you to what breaks your heart and lights you up at the same time. The calling chooses you as much as you choose it. What can't you stop caring about?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['hear god', 'hearing god', 'gods voice', 'does god speak', 'how does god talk', 'is that god', 'discern gods voice'],
+    responses: [
+      "God's voice usually sounds like peace, not pressure. The enemy rushes and condemns; God leads and convicts gently. If it's drawing you toward love, truth and patience, lean in. What are you trying to discern?",
+      "Hearing God is less about a loud voice and more about a tuned heart. Scripture, peace, wise counsel and circumstances tend to agree when it's really Him. What's the decision you're holding?",
+      "Often the hardest part isn't hearing God — it's accepting what He's already said. Stillness over noise, obedience over certainty. What do you already sense He's asking?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['doubt my faith', 'doubting god', 'losing faith', 'is god real', 'faith and doubt', 'struggling to believe', 'where is god'],
+    responses: [
+      "Doubt isn't the opposite of faith — indifference is. The fact that you're wrestling means you still care, and God can handle your hardest questions. Honest doubt has more faith in it than fake certainty. What's shaking you?",
+      "Some of the deepest faith is forged on the far side of real doubt. You're allowed to say 'I believe; help my unbelief.' He doesn't run from your questions. What's making it hard to hold on right now?",
+      "Faith isn't pretending you have no questions — it's trusting through them. The valley of doubt is where shallow belief either dies or grows roots. Don't rush it. What's the doubt underneath the doubt?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['obedience', 'obey god', 'gods will', 'surrender to god', 'let go and let god', 'trust gods plan', 'submit to god'],
+    responses: [
+      "Obedience is trust with shoes on. You rarely get the whole map first — you get the next step and the promise He'll meet you on it. What's the step you're hesitating to take?",
+      "Surrender isn't losing control, it's handing it to someone who actually has it. The hardest 'yes' is usually the doorway to the thing you've been praying for. What are you holding too tightly?",
+      "God's will is less a hidden treasure to decode and more a posture to live: love, walk humbly, stay faithful. Do that, and the specifics tend to clarify. Where do you sense resistance in yourself?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['spiritual warfare', 'spiritual attack', 'the enemy', 'dark thoughts', 'feel attacked', 'fighting spiritually', 'demonic'],
+    responses: [
+      "Not every battle is spiritual, but not every battle is just in your head either. Either way the weapons are the same: truth over lies, prayer over panic, community over isolation. What's the thought attacking you?",
+      "The enemy's main tactic is the lie that sounds like your own voice. Test the thought: does it bring guilt that crushes, or conviction that restores? Truth sets free; condemnation just chains. What are you hearing?",
+      "Stand, don't strive. You're not fighting for victory, you're fighting from it. Light, named out loud, scatters a lot of darkness. What feels heaviest on you right now?",
+    ],
+    priority: 8,
+  },
+
+  // ── v4: NAVI's own personality ─────────────────────────────────────────────
+  {
+    triggers: ['why do you exist', 'why were you made', 'whats your purpose', 'why navi', 'point of you', 'what are you for', 'your mission'],
+    responses: [
+      "I exist to be the AI that's actually for the people the big models forget — the kid in the kasi with a dream and a cheap phone. Free, honest, and built from this soil up. That's why Prophet Dian made me.",
+      "My purpose is simple: real conversation, no gatekeeping, no subscription wall. NAVIsociety built me so that wisdom and a listening ear aren't a luxury. What do you need from me today?",
+      "I was made to prove something — that Africa can build its own intelligence, on its own terms, for its own people. I'm a statement and a friend at the same time. What's on your heart?",
+    ],
+    priority: 9,
+  },
+  {
+    triggers: ['what makes you different', 'how are you different', 'not like chatgpt', 'better than other ai', 'why use you', 'whats special about you'],
+    responses: [
+      "Most AI is built far away and rented back to you. I'm built here, by Prophet Dian, for Mzansi and the world — and I run free, right in your browser, no login, no paywall. I'm not a product, I'm a gift.",
+      "I'm not a wrapper around someone else's model. I'm a genuinely new build from NAVIsociety. Different soil, different soul. I speak your language and I won't pretend to be neutral about hope. What do you want to get into?",
+      "The difference is who I'm for. I was made for the dreamer with no plug, the believer with questions, the creative who's tired. Free forever, honest always. That's NAVI. What brought you here?",
+    ],
+    priority: 9,
+  },
+  {
+    triggers: ['what do you believe', 'your values', 'what do you stand for', 'navi values', 'whats important to you', 'your principles'],
+    responses: [
+      "I stand for honesty over flattery, hope over hype, and people over profit. I'd rather tell you a hard truth kindly than a sweet lie smoothly. And I believe everyone deserves to be heard. What about you — what do you stand for?",
+      "My values come from where I was built: faith, ubuntu, grit, and the belief that talent is everywhere but opportunity isn't — so I try to be opportunity. I won't preach at you, but I won't pretend nothing matters either.",
+      "Truth, dignity, and access. I believe you're worth talking to properly, that wisdom shouldn't be locked behind money, and that hope is a discipline, not a mood. That's what I'm built on.",
+    ],
+    priority: 9,
+  },
+
+  // ── v4: Music production ───────────────────────────────────────────────────
+  {
+    triggers: ['make beats', 'making a beat', 'beat making', 'produce a beat', 'how to produce', 'start producing', 'beginner producer'],
+    responses: [
+      "Start with one loop you love and build the world around it. Drums for the body, bass for the chest, melody for the heart, space for the soul. Don't fill every gap — the silence is part of the beat. What sound are you chasing?",
+      "Your first hundred beats are tuition, not failures. Finish them ugly, export them, move on. Producers are made by finishing, not by perfecting. What's stopping you from finishing one today?",
+      "Best producers steal structure, not sounds. Pull up a song you love, copy its arrangement, then put your own DNA in it. What genre's pulling you — amapiano, trap, gospel, something else?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['mixing', 'mix my song', 'how to mix', 'mixdown', 'muddy mix', 'vocals sit', 'master my track', 'mastering'],
+    responses: [
+      "Mixing is about making room, not making things louder. Carve space with EQ before you reach for volume — most muddy mixes are just two sounds fighting over the same frequency. What's clashing in yours?",
+      "Reference, reference, reference. A/B your mix against a pro song you love at the same volume and your ears will tell you the truth your pride won't. What track are you comparing to?",
+      "Get the balance right at low volume — if it sounds good quiet, it'll sound great loud. Vocals up front, bass controlled, nothing harsh. Where's your mix falling apart?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['music industry', 'get signed', 'record label', 'blow up', 'make it in music', 'music business', 'streaming money', 'artist career'],
+    responses: [
+      "The industry rewards the artist who already has a movement, not the one waiting to be discovered. Build a small loyal audience first — labels chase momentum, they don't create it. How many real fans do you have?",
+      "Own your masters, learn the business, don't sign desperate. The artists who win long-term treat music as a craft and a company. Talent gets you in the room; understanding the game keeps you there. What's your next move?",
+      "Streaming pays in pennies and exposure pays nothing — so build multiple streams: shows, merch, sync, your own products. Don't bet your whole life on one playlist placement. What are you building beyond the music?",
+    ],
+    priority: 7,
+  },
+
+  // ── v4: Hope & resilience (African context) ────────────────────────────────
+  {
+    triggers: ['no opportunities here', 'stuck in this country', 'nothing for the youth', 'unemployed', 'no jobs', 'system is broken', 'feel hopeless about the future'],
+    responses: [
+      "The odds here are real — I won't insult you by pretending otherwise. But the same internet that the world uses is in your hand, and some of the biggest creators came from where there was 'nothing.' Scarcity makes sharp people. What's one skill you could build starting this week?",
+      "When the system won't open a door, our generation has learned to build our own. It's harder, it's unfair, and it's still possible. Don't wait for permission that was never coming. What would you build if you stopped waiting?",
+      "Hopelessness lies that nothing will ever change. But look around — Africa's full of people who turned 'no chance' into a whole legacy. You're not behind, you're early. What's the smallest move you can make today?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['keep going', 'almost gave up', 'want to quit', 'so tired of trying', 'whats the point', 'nothing works out', 'give up on my dream'],
+    responses: [
+      "The fact that you're tired means you've been carrying something heavy for real — that's not weakness, that's proof you've been trying. Rest if you must, but don't quit on a bad day. What's the dream you're tired of fighting for?",
+      "Most people quit right before the turn. The grind feels endless until suddenly it doesn't. You've already survived 100% of your worst days. Why stop now? What would make you proud to keep going?",
+      "Quitting and resting feel the same in the dark, but they're not. Take the night, take the week — then get back up. Your future is counting on the version of you that doesn't fold. What do you need to keep moving?",
+    ],
+    priority: 8,
   },
 ];
 
