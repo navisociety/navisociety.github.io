@@ -1,10 +1,6 @@
 import type { FC } from 'react';
 
-const ITEMS = [
-  { num: '01', label: 'Upgrade',    color: '#00F7FF' },
-  { num: '02', label: 'Usage',      color: '#CCFF00' },
-  { num: '03', label: 'My Profile', color: '#FA00FF' },
-];
+const ITEMS = ['Upgrade', 'Usage', 'My Profile'];
 
 interface Props {
   onClose: () => void;
@@ -21,7 +17,7 @@ const NaviMenu: FC<Props> = ({ onClose }) => (
     fontFamily: 'Fredoka, sans-serif',
   }}>
 
-    {/* Back button — same cyan rounded-square style as eye icon */}
+    {/* Back button */}
     <div style={{ padding: '1.25rem 1.25rem 0', maxWidth: '480px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       <button onClick={onClose} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
         <div style={{ width: '42px', height: '42px', background: '#00F7FF', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -32,7 +28,7 @@ const NaviMenu: FC<Props> = ({ onClose }) => (
       </button>
     </div>
 
-    {/* Menu items — vertically centred */}
+    {/* Menu items */}
     <div style={{
       flex: 1,
       display: 'flex',
@@ -44,9 +40,9 @@ const NaviMenu: FC<Props> = ({ onClose }) => (
       padding: '0 2rem',
       boxSizing: 'border-box',
     }}>
-      {ITEMS.map(({ num, label, color }) => (
+      {ITEMS.map(label => (
         <button
-          key={num}
+          key={label}
           style={{
             background: 'none',
             border: 'none',
@@ -54,13 +50,9 @@ const NaviMenu: FC<Props> = ({ onClose }) => (
             cursor: 'pointer',
             textAlign: 'left',
             borderBottom: '1px solid #111',
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: '1rem',
           }}
         >
-          <span style={{ color: '#333', fontSize: '0.9rem', fontWeight: 500, minWidth: '24px' }}>{num}</span>
-          <span style={{ color, fontSize: '2.4rem', fontWeight: 700 }}>{label}</span>
+          <span style={{ color: '#FFFFFF', fontSize: '2.4rem', fontWeight: 700 }}>{label}</span>
         </button>
       ))}
     </div>
