@@ -3,13 +3,7 @@ import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
-import {
-  callNaviPro,
-  getStoredSession,
-  storeSession,
-  getSubscriptionStatus,
-  type NaviSession,
-} from './lib/navi-supabase';
+import { callNaviPro, getStoredSession, storeSession, getSubscriptionStatus, extractSessionFromHash, saveMessage, type NaviSession, } from './lib/navi-supabase';
 
 type Message = {
   id: string;
@@ -69,12 +63,14 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Restore a stored NAVI Mini/Max session on mount and re-check its subscription.
+  // On mount: handle magic link redirect OR restore stored session.
   useEffect(() => {
-    const stored = getStoredSession();
-    if (!stored) return;
-    setNaviSession(stored);
-    getSubscriptionStatus(stored.email).then(sub => {
+    const fromHash = extractSessionFromHash();
+    const session = fromHash ?? getStoredSession();
+    if (!session) return;
+    if (fromHash) storeSession(fromHash);
+    setNaviSession(session);
+    getSubscriptionStatus(session.email).then(sub => {
       if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
     });
   }, []);
@@ -150,6 +146,10 @@ export default function App() {
 
     // Free tier: ask NAVI on Supabase (falls back to client-side inference on failure).
     const response = await naviRespond(text, fullHistory);
+    if (naviSession) {
+      saveMessage(naviSession.email, 'user', text, 'free');
+      saveMessage(naviSession.email, 'assistant', response, 'free');
+    }
     stream(response, naviId);
   }, [input, status, messages, stream, mode, naviSession]);
 
@@ -295,7 +295,7 @@ export default function App() {
       `}</style>
 
       {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} />}
-      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} />}
+      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
   );
