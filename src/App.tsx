@@ -1,491 +1,197 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { Loader2, LogOut, Send, ShieldAlert, Sparkles } from "lucide-react";
-import {
-  ALLOWED_EMAIL,
-  isSupabaseConfigured,
-  SITE_URL,
-  supabase,
-} from "@/lib/supabase";
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { navi, type NaviMessage } from './lib/navi-model';
 
-/**
- * NAVI — AI companion for NAVISOCIETY, created by Prophet Dian.
- *
- * Static SPA deployed to GitHub Pages. Access is gated to a single account
- * (prophetdian@gmail.com) at three layers: this UI, magic-link email auth,
- * and RLS on the `messages` table.
- *
- * Chat model: messages are written straight to the `messages` table. NAVI
- * (a local Claude Code agent) polls for pending user messages and writes an
- * assistant row back. This UI subscribes to Realtime INSERTs and renders the
- * assistant reply when it lands. The last 20 messages are restored on load.
- */
-
-interface ChatMessage {
+type Message = {
   id: string;
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string;
-}
+  streaming?: boolean;
+};
 
-type AuthState = "loading" | "signed-out" | "denied" | "ready";
+type Status = 'booting' | 'ready' | 'thinking';
 
 export default function App() {
-  const [authState, setAuthState] = useState<AuthState>("loading");
-  const [session, setSession] = useState<Session | null>(null);
+  const [status, setStatus] = useState<Status>('booting');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Resolve auth on mount and subscribe to changes.
+  // Boot: initialise NAVI model (pre-computes knowledge embeddings)
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setAuthState("signed-out");
-      return;
-    }
-
-    let active = true;
-
-    const resolve = (s: Session | null) => {
-      if (!active) return;
-      if (!s) {
-        setSession(null);
-        setAuthState("signed-out");
-        return;
-      }
-      const email = s.user.email?.toLowerCase() ?? "";
-      if (email !== ALLOWED_EMAIL) {
-        setSession(s);
-        setAuthState("denied");
-        // Sign the unauthorized user out; UI already shows Access Denied.
-        void supabase.auth.signOut();
-        return;
-      }
-      setSession(s);
-      setAuthState("ready");
-    };
-
-    supabase.auth.getSession().then(({ data }) => resolve(data.session));
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      resolve(s);
-    });
-
-    return () => {
-      active = false;
-      sub.subscription.unsubscribe();
-    };
+    // navi singleton initialises synchronously on import
+    // Give a brief boot animation then show greeting
+    const t = setTimeout(() => {
+      setStatus('ready');
+      setMessages([{ id: '0', role: 'assistant', content: "I'm NAVI. What's on your mind?" }]);
+      setTimeout(() => taRef.current?.focus(), 200);
+    }, 1200);
+    return () => clearTimeout(t);
   }, []);
 
-  if (authState === "loading") return <SplashScreen />;
-  if (authState === "denied") return <AccessDeniedScreen />;
-  if (authState === "signed-out" || !session) return <LoginScreen />;
-  return <ChatScreen session={session} />;
-}
-
-/* ------------------------------------------------------------------ */
-/* Screens                                                            */
-/* ------------------------------------------------------------------ */
-
-function SplashScreen() {
-  return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center gap-4">
-      <NaviAvatar size="lg" />
-      <div className="flex items-center gap-2 text-navi-cyan">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        <span className="font-fredoka text-sm uppercase tracking-widest">
-          Waking NAVI…
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function LoginScreen() {
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sentTo, setSentTo] = useState<string | null>(null);
-
-  const sendMagicLink = async () => {
-    if (!isSupabaseConfigured) {
-      setError("NAVI is not configured yet. Backend setup is required.");
-      return;
-    }
-    const target = email.trim();
-    if (!target) {
-      setError("Enter your email to receive a magic link.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: target,
-      options: { emailRedirectTo: SITE_URL },
-    });
-    if (error) {
-      setError(error.message);
-      setBusy(false);
-      return;
-    }
-    setSentTo(target);
-    setBusy(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void sendMagicLink();
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-md flex flex-col items-center text-center animate-fade-in">
-        <NaviAvatar size="lg" />
-        <h1 className="mt-8 text-4xl md:text-5xl font-fredoka font-bold text-white">
-          Meet <span className="text-navi-cyan">NAVI</span>
-        </h1>
-        <p className="mt-3 text-gray-400 font-fredoka">
-          Your intelligent companion from{" "}
-          <span className="text-navi-magenta font-semibold">NAVISOCIETY</span>.
-        </p>
-
-        {sentTo ? (
-          <div className="mt-10 w-full rounded-xl border border-navi-cyan/40 bg-[#0A0A0A] px-6 py-6 text-center">
-            <Sparkles className="mx-auto w-7 h-7 text-navi-cyan" />
-            <p className="mt-3 text-white font-fredoka">
-              Check{" "}
-              <span className="text-navi-cyan font-semibold">{sentTo}</span> for
-              your magic link.
-            </p>
-            <p className="mt-2 text-gray-500 text-xs font-fredoka">
-              Open it on this device to enter NAVI.
-            </p>
-            <button
-              onClick={() => {
-                setSentTo(null);
-                setError(null);
-              }}
-              className="mt-5 text-navi-cyan/80 hover:text-navi-cyan text-xs font-fredoka uppercase tracking-wider transition-colors"
-            >
-              Use a different email
-            </button>
-          </div>
-        ) : (
-          <div className="mt-10 w-full flex flex-col gap-3">
-            <input
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              placeholder="prophetdian@gmail.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={busy}
-              className="w-full bg-[#0A0A0A] border border-navi-cyan/30 text-white placeholder-gray-600 rounded-xl px-5 py-4 text-base font-fredoka focus:border-navi-cyan focus:outline-none focus:ring-2 focus:ring-navi-cyan/20 transition-all disabled:opacity-50"
-              style={{ boxShadow: "0 0 24px rgba(0, 247, 255, 0.08)" }}
-            />
-            <button
-              onClick={sendMagicLink}
-              disabled={busy}
-              className="w-full flex items-center justify-center gap-3 bg-navi-cyan hover:brightness-110 text-black font-fredoka font-semibold rounded-xl px-6 py-4 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ boxShadow: "0 0 32px rgba(0, 247, 255, 0.25)" }}
-            >
-              {busy ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Sparkles className="w-5 h-5" />
-              )}
-              {busy ? "Sending…" : "Send magic link"}
-            </button>
-          </div>
-        )}
-
-        {error && (
-          <p className="mt-4 text-navi-magenta text-sm font-fredoka">{error}</p>
-        )}
-
-        <p className="mt-8 text-gray-600 text-xs font-fredoka">
-          Access is restricted to authorized members.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function AccessDeniedScreen() {
-  return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-md flex flex-col items-center text-center animate-fade-in">
-        <div className="relative">
-          <div
-            className="absolute inset-0 rounded-full blur-2xl"
-            style={{
-              background:
-                "radial-gradient(circle, rgba(255,0,229,0.4), transparent 70%)",
-            }}
-          />
-          <ShieldAlert className="relative w-20 h-20 text-navi-magenta" />
-        </div>
-        <h1 className="mt-8 text-3xl md:text-4xl font-fredoka font-bold text-white">
-          Access Denied
-        </h1>
-        <p className="mt-3 text-gray-400 font-fredoka">
-          This account is not authorized for NAVI. Only the owner of
-          NAVISOCIETY may enter.
-        </p>
-        <button
-          onClick={() => {
-            void supabase.auth.signOut();
-            window.location.reload();
-          }}
-          className="mt-10 flex items-center gap-2 border border-navi-cyan/40 text-navi-cyan font-fredoka rounded-xl px-6 py-3 hover:bg-navi-cyan/10 transition-all"
-        >
-          <LogOut className="w-4 h-4" />
-          Back to sign in
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ChatScreen({ session }: { session: Session }) {
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
-
-  // Restore the last 20 messages on load (ordered oldest -> newest).
   useEffect(() => {
-    let active = true;
-    (async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("id, role, content, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (!active) return;
-      if (!error && data) {
-        const ordered = [...data].reverse().map((m) => ({
-          id: m.id as string,
-          role: (m.role as "user" | "assistant") ?? "assistant",
-          content: (m.content as string) ?? "",
-        }));
-        setMessages(ordered);
-        // If the most recent message is a pending user message, NAVI still owes
-        // a reply — show the thinking indicator until it arrives via Realtime.
-        const last = data[0] as
-          | { role?: string; status?: string }
-          | undefined;
-        if (last && last.role === "user" && last.status === "pending") {
-          setIsLoading(true);
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Typewriter streaming effect
+  const stream = useCallback((text: string, msgId: string) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    let i = 0;
+    timerRef.current = setInterval(() => {
+      i += 5;
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.id !== msgId) return prev;
+        const done = i >= text.length;
+        if (done && timerRef.current) { clearInterval(timerRef.current); setStatus('ready'); setTimeout(() => taRef.current?.focus(), 80); }
+        return [...prev.slice(0, -1), { ...last, content: text.slice(0, i), streaming: !done }];
+      });
+    }, 14);
   }, []);
 
-  // Subscribe to Realtime INSERTs for this user's messages. When an assistant
-  // row arrives, append it and clear the "thinking" indicator.
-  useEffect(() => {
-    const channel = supabase
-      .channel(`messages:${session.user.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `user_id=eq.${session.user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as {
-            id: string;
-            role: "user" | "assistant";
-            content: string;
-          };
-          if (row.role !== "assistant") return;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === row.id)) return prev;
-            return [
-              ...prev,
-              { id: row.id, role: "assistant", content: row.content ?? "" },
-            ];
-          });
-          setIsLoading(false);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [session.user.id]);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
-
-  const handleSend = useCallback(async () => {
+  const send = useCallback(() => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || status !== 'ready') return;
 
-    // Optimistically render the user bubble.
-    const optimisticId = crypto.randomUUID();
-    setMessages((prev) => [
-      ...prev,
-      { id: optimisticId, role: "user", content: text },
-    ]);
-    setInput("");
-    setIsLoading(true);
-    setNotice(null);
+    const history: NaviMessage[] = messages
+      .slice(-10)
+      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
-    const { error } = await supabase.from("messages").insert({
-      user_id: session.user.id,
-      role: "user",
-      content: text,
-      status: "pending",
-    });
+    const userMsg: Message = { id: `u${Date.now()}`, role: 'user', content: text };
+    const naviId = `n${Date.now()}`;
+    const naviMsg: Message = { id: naviId, role: 'assistant', content: '', streaming: true };
 
-    if (error) {
-      setNotice(error.message);
-      setIsLoading(false);
-      // Roll back the optimistic bubble so the user can retry.
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-      setInput(text);
-    }
+    setMessages(prev => [...prev, userMsg, naviMsg]);
+    setInput('');
+    setStatus('thinking');
 
-    inputRef.current?.focus();
-  }, [input, isLoading, session.user.id]);
+    // Run NAVI inference (synchronous, fast)
+    const response = navi.infer(text, [...history, { role: 'user', content: text }]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
+    // Brief thinking delay for UX, then stream the response
+    setTimeout(() => stream(response, naviId), 280);
+  }, [input, status, messages, stream]);
+
+  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
-  return (
-    <div className="min-h-screen bg-black flex flex-col px-4 py-6 md:py-10">
-      {/* Header */}
-      <header className="w-full max-w-2xl mx-auto mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-navi-cyan" />
-          <span className="font-fredoka font-semibold tracking-wide text-navi-cyan uppercase text-sm md:text-base">
-            NAVISOCIETY
-          </span>
+  // ── Boot screen ─────────────────────────────────────────────────────────────
+  if (status === 'booting') {
+    return (
+      <div style={{ minHeight: '100vh', background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2rem', padding: '1.5rem', fontFamily: 'Fredoka, sans-serif' }}>
+        <div style={{ width: '6rem', height: '6rem', borderRadius: '9999px', border: '2px solid #00F7FF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 40px #00F7FF30, 0 0 80px #00F7FF14' }}>
+          <span style={{ color: '#00F7FF', fontSize: '2.5rem', fontWeight: 700 }}>N</span>
         </div>
-        <button
-          onClick={() => {
-            void supabase.auth.signOut();
-          }}
-          className="flex items-center gap-1.5 text-gray-500 hover:text-navi-magenta transition-colors text-xs font-fredoka uppercase tracking-wider"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign out
-        </button>
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={{ color: '#00F7FF', fontSize: '3.5rem', fontWeight: 700, letterSpacing: '0.2em', margin: 0 }}>NAVI</h1>
+          <p style={{ color: '#3f3f46', fontSize: '0.8rem', letterSpacing: '0.35em', marginTop: '0.3rem' }}>NAVISOCIETY</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {[0, 1, 2].map(i => (
+            <div key={i} style={{ width: '0.4rem', height: '0.4rem', borderRadius: '9999px', background: '#00F7FF', animation: `naviBounce 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+          ))}
+        </div>
+        <style>{`@keyframes naviBounce { 0%,80%,100%{transform:scale(0.6);opacity:0.3} 40%{transform:scale(1.1);opacity:1} }`}</style>
+      </div>
+    );
+  }
+
+  // ── Chat screen ─────────────────────────────────────────────────────────────
+  return (
+    <div style={{ minHeight: '100vh', background: '#000', display: 'flex', flexDirection: 'column', maxWidth: '700px', margin: '0 auto', fontFamily: 'Fredoka, sans-serif' }}>
+
+      {/* Header */}
+      <header style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', borderBottom: '1px solid #18181b', position: 'sticky', top: 0, background: '#000', zIndex: 10 }}>
+        <div style={{ width: '2.25rem', height: '2.25rem', borderRadius: '9999px', border: '1px solid #00F7FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 0 10px #00F7FF28' }}>
+          <span style={{ color: '#00F7FF', fontSize: '0.75rem', fontWeight: 700 }}>N</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ color: '#00F7FF', fontSize: '1.2rem', fontWeight: 700 }}>NAVI</span>
+          <span style={{ background: '#00F7FF', color: '#000', fontSize: '0.55rem', fontWeight: 700, padding: '2px 7px', borderRadius: '9999px', letterSpacing: '0.05em' }}>FREE LLM</span>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <div style={{ width: '0.4rem', height: '0.4rem', borderRadius: '9999px', background: status === 'ready' ? '#00F7FF' : '#facc15', boxShadow: status === 'ready' ? '0 0 6px #00F7FF' : '0 0 6px #facc15', transition: 'background 0.3s' }} />
+          <span style={{ color: '#52525b', fontSize: '0.65rem' }}>{status === 'ready' ? 'online' : 'thinking...'}</span>
+        </div>
       </header>
 
-      {/* Main */}
-      <main className="flex-1 flex flex-col items-center w-full max-w-2xl mx-auto">
-        <NaviAvatar size="md" />
-        <h1 className="mt-5 text-3xl md:text-4xl font-fredoka font-bold text-white text-center">
-          Meet <span className="text-navi-cyan">NAVI</span>
-        </h1>
-        <p className="mt-2 text-center text-gray-400 text-sm md:text-base font-fredoka">
-          Your AI companion. Ask anything.
-        </p>
-
-        {/* Conversation */}
-        <div className="w-full mt-8 space-y-3">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${
-                msg.role === "user" ? "justify-end" : "justify-start"
-              } animate-fade-in`}
-            >
-              <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm md:text-base leading-relaxed whitespace-pre-wrap font-fredoka ${
-                  msg.role === "user"
-                    ? "bg-navi-cyan text-black font-medium"
-                    : "bg-[#0A0A0A] border border-navi-cyan/30 text-white"
-                }`}
-              >
-                {msg.content}
+      {/* Messages */}
+      <main style={{ flex: 1, overflowY: 'auto', padding: '1.5rem 1rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        {messages.map(msg => (
+          <div key={msg.id} style={{ display: 'flex', gap: '0.6rem', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', alignItems: 'flex-start' }}>
+            {msg.role === 'assistant' && (
+              <div style={{ width: '1.75rem', height: '1.75rem', borderRadius: '9999px', border: '1px solid #00F7FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: '2px', boxShadow: '0 0 6px #00F7FF20' }}>
+                <span style={{ color: '#00F7FF', fontSize: '0.6rem', fontWeight: 700 }}>N</span>
               </div>
+            )}
+            <div style={{
+              maxWidth: '78%', padding: '0.7rem 1rem', fontSize: '0.92rem', lineHeight: '1.6', whiteSpace: 'pre-wrap',
+              borderRadius: msg.role === 'user' ? '1rem 1rem 0.2rem 1rem' : '1rem 1rem 1rem 0.2rem',
+              background: msg.role === 'user' ? '#18181b' : 'rgba(0,247,255,0.025)',
+              border: msg.role === 'user' ? '1px solid #27272a' : '1px solid #0c1f20',
+              color: msg.role === 'user' ? '#f4f4f5' : '#d4d4d8',
+            }}>
+              {msg.content}
+              {msg.streaming && (
+                <span style={{ display: 'inline-block', width: '0.32rem', height: '0.85rem', background: '#00F7FF', marginLeft: '2px', verticalAlign: 'middle', borderRadius: '1px', animation: 'naviBlink 0.7s step-end infinite' }} />
+              )}
             </div>
-          ))}
-          {isLoading && (
-            <div className="flex justify-start animate-fade-in">
-              <div className="flex items-center gap-2 text-navi-cyan bg-[#0A0A0A] border border-navi-cyan/30 rounded-2xl px-4 py-3">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm font-fredoka">NAVI is thinking…</span>
-              </div>
-            </div>
-          )}
-          <div ref={endRef} />
-        </div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
       </main>
 
       {/* Input */}
-      <footer className="w-full max-w-2xl mx-auto mt-8">
-        {notice && (
-          <p className="text-center text-navi-magenta/80 text-xs mb-2 font-fredoka">
-            {notice}
-          </p>
-        )}
-        <div className="relative">
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Talk to NAVI"
+      <footer style={{ padding: '0.75rem 1rem 1.25rem', borderTop: '1px solid #18181b', position: 'sticky', bottom: 0, background: '#000' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', border: '1px solid #27272a', borderRadius: '1.25rem', padding: '0.7rem 0.9rem', transition: 'border-color 0.2s' }}
+          onFocus={e => (e.currentTarget.style.borderColor = '#2a3a3b')}
+          onBlur={e => (e.currentTarget.style.borderColor = '#27272a')}
+        >
+          <textarea
+            ref={taRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="w-full bg-[#0A0A0A] border border-navi-cyan/30 text-white placeholder-gray-600 rounded-xl pl-5 pr-14 py-4 text-base font-fredoka focus:border-navi-cyan focus:outline-none focus:ring-2 focus:ring-navi-cyan/20 transition-all disabled:opacity-50"
-            style={{ boxShadow: "0 0 24px rgba(0, 247, 255, 0.08)" }}
+            onChange={e => {
+              setInput(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = Math.min(e.target.scrollHeight, 128) + 'px';
+            }}
+            onKeyDown={onKey}
+            placeholder={status === 'ready' ? 'Message NAVI...' : 'NAVI is thinking...'}
+            disabled={status !== 'ready'}
+            rows={1}
+            style={{ flex: 1, background: 'transparent', color: '#f4f4f5', border: 'none', outline: 'none', resize: 'none', fontFamily: 'Fredoka, sans-serif', fontSize: '0.9rem', lineHeight: 1.5, minHeight: '22px' }}
           />
           <button
-            onClick={handleSend}
-            disabled={!input.trim()}
-            aria-label="Send"
-            className="absolute right-2 top-1/2 -translate-y-1/2 bg-navi-cyan hover:brightness-110 text-black rounded-lg px-3 py-2.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={send}
+            disabled={status !== 'ready' || !input.trim()}
+            style={{
+              width: '2rem', height: '2rem', borderRadius: '9999px', border: 'none', flexShrink: 0,
+              cursor: input.trim() && status === 'ready' ? 'pointer' : 'not-allowed',
+              background: input.trim() && status === 'ready' ? '#00F7FF' : '#27272a',
+              boxShadow: input.trim() && status === 'ready' ? '0 0 14px #00F7FF50' : 'none',
+              opacity: status !== 'ready' || !input.trim() ? 0.35 : 1,
+              transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
           >
-            <Send className="w-4 h-4" />
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+              <path d="M1 7h12M7.5 1.5L13 7l-5.5 5.5" stroke={input.trim() && status === 'ready' ? '#000' : '#71717a'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
           </button>
         </div>
-        <p className="text-center text-gray-600 text-xs mt-3 font-fredoka">
-          Press Enter to send · navisociety.github.io
+        <p style={{ textAlign: 'center', color: '#27272a', fontSize: '0.58rem', marginTop: '0.5rem' }}>
+          NAVI LLM v1.0 · NAVIsociety · Built by Prophet Dian · Free forever
         </p>
       </footer>
-    </div>
-  );
-}
 
-/* ------------------------------------------------------------------ */
-/* Pieces                                                             */
-/* ------------------------------------------------------------------ */
-
-function NaviAvatar({ size = "md" }: { size?: "md" | "lg" }) {
-  const dim =
-    size === "lg" ? "w-40 h-40 md:w-52 md:h-52" : "w-28 h-28 md:w-36 md:h-36";
-  return (
-    <div className="relative">
-      <div
-        className="absolute inset-0 rounded-full blur-2xl animate-pulse-glow"
-        style={{
-          background:
-            "radial-gradient(circle, rgba(0,247,255,0.35), rgba(255,0,229,0.15) 50%, transparent 72%)",
-        }}
-      />
-      <img
-        src="navi.png"
-        alt="NAVI"
-        className={`relative ${dim} object-contain drop-shadow-[0_0_24px_rgba(0,247,255,0.45)]`}
-        draggable={false}
-      />
+      <style>{`
+        @keyframes naviBlink { 0%,100%{opacity:1} 50%{opacity:0} }
+        html,body,#root { background:#000; margin:0; padding:0; }
+        ::-webkit-scrollbar { width:3px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:rgba(0,247,255,0.12); border-radius:2px; }
+      `}</style>
     </div>
   );
 }
