@@ -97,13 +97,10 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: '#000', display: 'flex', flexDirection: 'column', maxWidth: '480px', margin: '0 auto', fontFamily: 'Fredoka, sans-serif' }}>
 
-      {/* ── Top bar: Mini + Max ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.25rem 0', flexShrink: 0 }}>
-        {/* Left: Mini + menu icon */}
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
-          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
-            <span style={{ color: '#FA00FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Mini</span>
-          </button>
+      {/* ── Top bar ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', padding: '1.25rem 1.25rem 0', flexShrink: 0, gap: '0.6rem' }}>
+        {/* Row 1: menu icon — top left */}
+        <div>
           <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
             <div style={{ width: '42px', height: '42px', background: '#00F7FF', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="22" height="16" viewBox="0 0 28 20" fill="none">
@@ -114,10 +111,15 @@ export default function App() {
             </div>
           </button>
         </div>
-        {/* Right: Max */}
-        <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
-          <span style={{ color: '#00F7FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Max</span>
-        </button>
+        {/* Row 2: Mini (left) + Max (right) */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+            <span style={{ color: '#FA00FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Mini</span>
+          </button>
+          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+            <span style={{ color: '#00F7FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Max</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Scrollable content ── */}
