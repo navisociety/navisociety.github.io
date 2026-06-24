@@ -134,6 +134,7 @@ export default function App() {
       }
       if (result.code === 'no_subscription') {
         setSubscribeMode(mode);
+        setMode('free');
         setShowSubscribe(true);
         stream(await naviRespond(text, fullHistory), naviId);
         return;
