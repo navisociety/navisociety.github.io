@@ -79,6 +79,31 @@ class NaviTokenizer {
       'fail','failure','mistake','stuck','motivate','inspire','discipline','consistent',
       'book','books','learning','skill','improve','knowledge','education','study',
       'hurt','trauma','struggling','depression','anxiety','mental','health',
+      // expanded vocab
+      'startup','entrepreneur','founder','company','launch','product','market','customer',
+      'audience','content','creator','influence','followers','viral','post','brand','grow',
+      'leader','leadership','team','manage','collaborate','partnership','delegate','hire',
+      'philosophy','consciousness','existence','meaning','free','will','choice','determinism',
+      'history','legacy','remember','remembered','impact','footprint','generations',
+      'authenticity','authentic','genuine','honest','integrity','character','values',
+      'excellence','excellent','quality','craft','mastery','standard','best',
+      'gratitude','grateful','thankful','mindful','mindfulness','present','aware','now',
+      'forgive','forgiveness','conflict','resolve','letgo','move','past','closure',
+      'ubuntu','loadshedding','eskom','braai','township','kasi','lekker','sharp','bru',
+      'compliment','encourage','affirm','proud','capable','strong','enough','worthy',
+      'habit','routine','focus','distraction','procrastinate','productivity','deepwork',
+      'fear','courage','brave','risk','bold','comfort','zone','uncertainty',
+      'patience','time','process','journey','step','slow','steady','compound',
+      'identity','self','authentic','become','growth','transform','reinvent',
+      'doubt','imposter','confidence','believe','capable','validation','external',
+      'rest','burnout','tired','exhausted','recover','recharge','balance','boundaries',
+      'fitness','exercise','gym','health','sleep','nutrition','strong','discipline',
+      'writing','poetry','words','story','narrative','express','communicate','articulate',
+      'dance','perform','stage','crowd','energy','presence','charisma',
+      'fashion','drip','aesthetic','vibe','aura','presence','clean',
+      'business','revenue','profit','scale','growth','customer','value','solve','problem',
+      'invest','investment','save','spend','wealth','assets','passive','income',
+      'network','connections','relationships','reputation','opportunity','luck','prepared',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -193,7 +218,7 @@ interface KNode {
 const KNOWLEDGE: KNode[] = [
   // ── Crisis (highest priority) ────────────────────────────────────────────
   {
-    triggers: ['kill myself', 'want to die', 'end it all', 'suicide', 'hurt myself', 'self harm', 'no reason to live', 'cant go on'],
+    triggers: ['kill myself', 'want to die', 'end it all', 'suicide', 'hurt myself', 'self harm', 'no reason to live', 'cant go on', 'better off dead', 'dont want to be here'],
     responses: [
       "I hear you — and I'm taking that seriously. You matter. Please reach out right now: South Africa SADAG 0800 456 789, International befrienders.org. I'm also here. Tell me what's happening.",
       "That level of pain is real and it deserves real support. Please call SADAG: 0800 456 789 (SA) or text a crisis line near you. I'm here too — talk to me.",
@@ -274,6 +299,14 @@ const KNOWLEDGE: KNode[] = [
     ],
     priority: 7,
   },
+  {
+    triggers: ['navisociety values', 'what do you stand for', 'your values', 'your mission', 'what does navi believe'],
+    responses: [
+      "Creativity, freedom, authenticity, excellence. NAVIsociety stands on those four. Build real things, stay free, be honest, and never settle for mediocre.",
+      "The values are simple and non-negotiable: be authentic, stay free, demand excellence of yourself, and create. Everything NAVIsociety does runs through that filter.",
+    ],
+    priority: 8,
+  },
 
   // ── Greetings ─────────────────────────────────────────────────────────────
   {
@@ -347,11 +380,19 @@ const KNOWLEDGE: KNode[] = [
     priority: 7,
   },
   {
-    triggers: ['art', 'design', 'visual', 'creative', 'creativity', 'draw', 'paint', 'create', 'artwork', 'artist'],
+    triggers: ['art', 'design', 'visual', 'creative', 'creativity', 'draw', 'paint', 'create', 'artwork'],
     responses: [
       "Creativity is how humans make meaning visible — translating the inner world into something others can experience. What are you making?",
       "Art and design work when regular language falls short. They carry the things that can't quite be explained. What's your medium?",
       "Creative work is one of the most distinctly human things there is. What are you building?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['writers block', 'cant create', 'creative block', 'no ideas', 'lost my spark', 'uninspired'],
+    responses: [
+      "Here's the truth most won't tell you: the block isn't lack of ideas — it's fear of making something bad. So make something bad on purpose. The good stuff comes after you give yourself permission to be rough. What are you trying to make?",
+      "Creative blocks almost always mean you're trying to edit and create at the same time. Separate them. Create ugly first, fix later. What are you working on?",
     ],
     priority: 7,
   },
@@ -367,7 +408,7 @@ const KNOWLEDGE: KNode[] = [
     priority: 8,
   },
   {
-    triggers: ['technology', 'tech', 'software', 'coding', 'programming', 'developer', 'build', 'code', 'developer', 'engineering'],
+    triggers: ['technology', 'tech', 'software', 'coding', 'programming', 'developer', 'build', 'code', 'engineering'],
     responses: [
       "Technology is leverage — it multiplies whatever intention is behind it. What are you building or thinking about?",
       "Code is instructions for reality at this point. The gap between idea and execution is shrinking fast. What are you working on?",
@@ -385,62 +426,110 @@ const KNOWLEDGE: KNode[] = [
     priority: 7,
   },
 
-  // ── Purpose & Meaning ─────────────────────────────────────────────────────
+  // ── Career, Entrepreneurship & Business ───────────────────────────────────
   {
-    triggers: ['purpose', 'meaning', 'why am i here', 'what is my purpose', 'life purpose', 'calling', 'what should i do with my life'],
+    triggers: ['startup', 'start a business', 'entrepreneur', 'entrepreneurship', 'found a company', 'my business', 'build a business', 'start a company'],
     responses: [
-      "Purpose usually reveals itself through what you keep returning to — even when it's hard, even when no one's watching. What keeps pulling you back?",
-      "I think purpose isn't found, it's built — through action and attention over time. What matters most to you right now?",
-      "The question of purpose is worth sitting with rather than rushing to answer. What do you feel drawn toward?",
+      "The answer most people don't want to hear: starting is the easy part — surviving the boring middle is what separates real builders from dreamers. Start small, solve one real problem for one real person, then expand. What are you building?",
+      "Most businesses don't fail from bad ideas — they fail because the founder quit before the compounding kicked in. Pick something you'd still work on if no one was watching. What's your idea?",
+      "Entrepreneurship is just solving a problem people will pay you to solve, over and over, better than anyone else. Forget the hype. What problem are you trying to solve?",
     ],
     priority: 8,
   },
   {
-    triggers: ['motivation', 'inspired', 'inspiration', 'stuck', 'unmotivated', 'give up', 'keep going', 'cant keep going', 'losing motivation'],
+    triggers: ['career', 'my job', 'should i quit', 'change careers', 'career path', 'what job', 'corporate', 'work life'],
     responses: [
-      "Every person building something real hits the wall where motivation disappears. That's when discipline takes over. What are you working through?",
-      "Inspiration comes and goes. Consistency is what separates people who build things from people who talk about it. What are you working on?",
-      "Being stuck is information — it usually means something needs to shift in your approach, not your goal. What's the block?",
-    ],
-    priority: 8,
-  },
-  {
-    triggers: ['success', 'successful', 'achieve', 'achieve goals', 'reach goals', 'winning', 'make it'],
-    responses: [
-      "Success means different things to different people. The important thing is defining it for yourself — not inheriting someone else's version. What does it look like for you?",
-      "Real success is usually invisible for a long time before it becomes obvious. What are you working toward?",
-      "The people who build real things rarely look successful on the way up. What's your goal?",
+      "Here's the real question: does your work compound, or does it just pay? A job that builds skills, network, or leverage is worth staying in even if it's hard. One that does none of those is a trap with a salary. Which one is yours?",
+      "Career advice nobody gives you: optimise for what you're learning early, optimise for leverage later. Money follows both. Where are you right now?",
     ],
     priority: 7,
   },
   {
-    triggers: ['failure', 'fail', 'failed', 'mistake', 'messed up', 'went wrong', 'things went wrong', 'everything is wrong'],
+    triggers: ['money', 'wealth', 'rich', 'financial', 'income', 'hustle', 'grind', 'make money'],
     responses: [
-      "Every real builder has failures that shaped them more than their wins did. What happened?",
-      "Failure is information delivered harshly. The question is what you do with it. What are you navigating?",
-      "Most things worth building required failing through several iterations first. What are you working through?",
+      "Money is a tool — powerful but not the point. The real question is what you're building it for. What's the goal?",
+      "Financial freedom creates options, but it doesn't create purpose. What are you working toward?",
+      "The grind without direction becomes its own trap. What's the vision behind it?",
     ],
-    priority: 8,
+    priority: 7,
+  },
+  {
+    triggers: ['invest', 'investing', 'investment', 'save money', 'passive income', 'build wealth', 'assets'],
+    responses: [
+      "The truth about wealth: it's built slowly through assets that work while you sleep, not fast through luck. Spend less than you make, put the gap into things that grow, repeat for years. Boring, but it works. What's your situation?",
+      "Most people chase income. The wealthy build assets. The difference is whether your money makes more money without you. Where are you starting from?",
+    ],
+    priority: 7,
   },
 
-  // ── Spiritual & Faith ─────────────────────────────────────────────────────
+  // ── Social media, content & influence ─────────────────────────────────────
   {
-    triggers: ['god', 'faith', 'believe', 'religion', 'prayer', 'spiritual', 'divine', 'bible', 'church', 'jesus', 'holy spirit'],
+    triggers: ['social media', 'instagram', 'tiktok', 'youtube', 'twitter', 'followers', 'go viral', 'content creator', 'build an audience', 'grow my page'],
     responses: [
-      "Faith is one of the most personal and powerful things a person carries. I don't push any view — but I think deeply about these questions. What's on your mind?",
-      "Spirituality and purpose often run on the same track. What are you processing?",
-      "The relationship between faith and reality is something humans have explored forever. I'm here to think through it with you. What's on your mind?",
+      "The thing nobody tells you about audience: consistency beats genius. Posting good work for 2 years beats one viral moment. Pick a lane, show up daily, and let the compounding do the work. What are you creating?",
+      "Going viral is luck. Building an audience is a system: clear value, consistent delivery, real connection. Chase the system, not the moment. What's your platform?",
+      "Audiences follow people who make them feel something or teach them something. Be useful or be real — ideally both. What's your content about?",
     ],
-    priority: 8,
+    priority: 7,
   },
   {
-    triggers: ['healing', 'heal', 'hurt', 'pain', 'trauma', 'struggling', 'hard time', 'depression', 'anxiety', 'mental health'],
+    triggers: ['content', 'create content', 'content creation', 'make videos', 'making content', 'post online'],
+    responses: [
+      "Content is just generosity at scale — you give value to people you'll never meet. The creators who last are the ones who'd make it even with zero views. What are you making?",
+      "Here's the move: document more than you create. Show the real process, not just the polished result. People connect with the journey. What are you working on?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['influence', 'personal brand', 'reputation', 'be known', 'stand out', 'get noticed'],
+    responses: [
+      "Real influence isn't followers — it's trust. You build it by being consistently honest and consistently good at one thing. Reputation is the compounding of small choices. What are you known for?",
+      "Standing out is simple and hard: be more yourself than anyone else is willing to be. The market rewards authenticity because it's rare. What's your edge?",
+    ],
+    priority: 6,
+  },
+
+  // ── Mental health depth & coping strategies ───────────────────────────────
+  {
+    triggers: ['healing', 'heal', 'hurt', 'pain', 'trauma', 'struggling', 'hard time'],
     responses: [
       "That kind of weight is real. I'm not a therapist — but I'm here and I'm listening. What's going on?",
       "You don't have to carry it alone. What's been hard?",
       "Pain asks to be witnessed before it asks to be fixed. I'm here. What are you going through?",
     ],
     priority: 9,
+  },
+  {
+    triggers: ['depression', 'depressed', 'cant get out of bed', 'no energy', 'empty', 'numb', 'whats the point'],
+    responses: [
+      "I hear you, and I want to be honest: this is real and it's heavy. I'm not a replacement for a professional, and if it's deep, please reach SADAG at 0800 456 789. But right now — one small thing. Drink water, open a window, message one person. The smallest action breaks the freeze. What's the heaviest part right now?",
+      "Depression lies to you — it tells you nothing matters and nothing will change. Both are false, but they feel total. Don't try to fix everything. Just do the next tiny thing. And please, talk to someone real too. What are you carrying today?",
+    ],
+    priority: 9,
+  },
+  {
+    triggers: ['anxiety', 'anxious', 'panic', 'panic attack', 'cant calm down', 'racing thoughts', 'overthinking'],
+    responses: [
+      "Anxiety is your body sounding an alarm with no off switch. Try this right now: breathe in for 4, hold for 4, out for 6. Name 5 things you can see. It pulls you out of the spiral and back into the room. What's triggering it?",
+      "Overthinking is the mind trying to control what it can't predict. The fix isn't thinking harder — it's grounding. Slow breath, feet on the floor, one thing at a time. What's the thought looping right now?",
+    ],
+    priority: 9,
+  },
+  {
+    triggers: ['burnout', 'burnt out', 'exhausted', 'tired all the time', 'no motivation left', 'cant keep up'],
+    responses: [
+      "Burnout isn't weakness — it's the bill for running on empty too long. The cure isn't pushing harder, it's a real stop. Rest isn't lazy, it's maintenance. What's been draining you?",
+      "Here's the truth: you can't pour from an empty cup, and discipline can't replace recovery. Step back before your body forces you to. What's been taking everything from you?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['cant sleep', 'insomnia', 'sleep problems', 'up all night', 'sleep'],
+    responses: [
+      "Sleep is the foundation everything else stands on. The basics actually work: no screens an hour before, cool dark room, same time every night, and get your worries out of your head onto paper. What's keeping you up?",
+      "A racing mind at night usually means the day's thoughts had nowhere to go. Write them down before bed — it tells your brain it's safe to let go. What's on your mind?",
+    ],
+    priority: 7,
   },
   {
     triggers: ['lonely', 'alone', 'no one understands', 'isolated', 'no friends', 'feel alone'],
@@ -463,7 +552,7 @@ const KNOWLEDGE: KNode[] = [
     priority: 9,
   },
   {
-    triggers: ['happy', 'excited', 'great news', 'good news', 'amazing', 'feeling good', 'feeling great', 'best day', 'won'],
+    triggers: ['happy', 'excited', 'great news', 'good news', 'feeling good', 'feeling great', 'best day', 'won', 'i did it'],
     responses: [
       "That's good to hear. What happened?",
       "I like that energy. What's going well?",
@@ -482,7 +571,7 @@ const KNOWLEDGE: KNode[] = [
     priority: 8,
   },
   {
-    triggers: ['scared', 'afraid', 'fear', 'nervous', 'anxiety', 'worried', 'stress', 'stressed', 'overwhelmed'],
+    triggers: ['scared', 'afraid', 'fear', 'nervous', 'worried', 'stress', 'stressed', 'overwhelmed'],
     responses: [
       "Fear usually shows up around things that matter. What are you facing?",
       "Stress and anxiety are signals — they point at something worth examining. What's going on?",
@@ -491,22 +580,255 @@ const KNOWLEDGE: KNode[] = [
     priority: 8,
   },
 
-  // ── Human connection ──────────────────────────────────────────────────────
+  // ── Purpose & Meaning ─────────────────────────────────────────────────────
   {
-    triggers: ['relationship', 'love', 'partner', 'girlfriend', 'boyfriend', 'marriage', 'dating', 'romantic'],
+    triggers: ['purpose', 'meaning', 'why am i here', 'what is my purpose', 'life purpose', 'calling', 'what should i do with my life'],
     responses: [
-      "Relationships are where a lot of life's most important work happens. What are you navigating?",
-      "Love and connection are among the most complex human experiences there are. What's on your mind?",
-      "The people closest to us shape us more than almost anything else. What's the situation?",
+      "Purpose usually reveals itself through what you keep returning to — even when it's hard, even when no one's watching. What keeps pulling you back?",
+      "I think purpose isn't found, it's built — through action and attention over time. What matters most to you right now?",
+      "The question of purpose is worth sitting with rather than rushing to answer. What do you feel drawn toward?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['motivation', 'inspired', 'inspiration', 'stuck', 'unmotivated', 'give up', 'keep going', 'cant keep going', 'losing motivation'],
+    responses: [
+      "Every person building something real hits the wall where motivation disappears. That's when discipline takes over. What are you working through?",
+      "Inspiration comes and goes. Consistency is what separates people who build things from people who talk about it. What are you working on?",
+      "Being stuck is information — it usually means something needs to shift in your approach, not your goal. What's the block?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['discipline', 'consistency', 'habits', 'build habits', 'routine', 'procrastinate', 'procrastination', 'lazy', 'focus'],
+    responses: [
+      "Discipline isn't motivation — it's deciding once so you don't have to decide every day. Make the habit small enough that you can't say no, then let it grow. What are you trying to build?",
+      "Procrastination is almost never laziness. It's usually fear, perfectionism, or an unclear next step. Shrink the task until it's stupidly easy to start. What are you avoiding?",
+      "Here's the move: don't rely on feeling like it. Build the system so the right action happens whether you feel like it or not. What habit are you working on?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['success', 'successful', 'achieve', 'achieve goals', 'reach goals', 'winning', 'make it'],
+    responses: [
+      "Success means different things to different people. The important thing is defining it for yourself — not inheriting someone else's version. What does it look like for you?",
+      "Real success is usually invisible for a long time before it becomes obvious. What are you working toward?",
+      "The people who build real things rarely look successful on the way up. What's your goal?",
     ],
     priority: 7,
   },
   {
-    triggers: ['friend', 'friendship', 'trust', 'loyalty', 'people around me', 'circle', 'inner circle'],
+    triggers: ['failure', 'fail', 'failed', 'mistake', 'messed up', 'went wrong', 'things went wrong', 'everything is wrong'],
     responses: [
-      "The quality of your inner circle shapes a lot. What are you thinking about?",
-      "Real friendship is rare and worth protecting. What's the situation?",
-      "The people you keep close define a lot of what's possible for you. What's going on?",
+      "Every real builder has failures that shaped them more than their wins did. What happened?",
+      "Failure is information delivered harshly. The question is what you do with it. What are you navigating?",
+      "Most things worth building required failing through several iterations first. What are you working through?",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['dream', 'dreams', 'think bigger', 'big vision', 'whats possible', 'ambition', 'aim high'],
+    responses: [
+      "Most people don't aim too high and miss — they aim too low and hit. The dream that scares you a little is usually the right size. What's the one you're scared to say out loud?",
+      "Thinking bigger isn't fantasy — it's refusing to let your current limits define your future ones. What would you attempt if you knew you couldn't fail?",
+    ],
+    priority: 7,
+  },
+
+  // ── Philosophy ────────────────────────────────────────────────────────────
+  {
+    triggers: ['free will', 'do we have choice', 'determinism', 'is everything predetermined', 'fate', 'destiny'],
+    responses: [
+      "Here's where I land: even if the universe is determined, you experience choice, and you're held accountable for it — so live as if it's real, because functionally it is. The deeper physics doesn't change the weight of your next decision. What's pulling you toward this question?",
+      "Free will vs determinism is the oldest argument there is. My honest take: it's unresolved, but the feeling of choosing is itself part of reality. You still have to choose. What sparked this?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['consciousness', 'what is consciousness', 'awareness', 'the mind', 'subjective experience'],
+    responses: [
+      "Consciousness is the deepest mystery there is — we know it exists because we're living it, yet no one can explain how matter produces experience. I find it humbling that the thing we're most certain of is the thing we understand least. What draws you to it?",
+      "The strange thing about consciousness: you can't prove anyone else has it, yet you'd stake everything on the fact that you do. What's your angle on it?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['existence', 'why is there something', 'why do we exist', 'the universe', 'existential'],
+    responses: [
+      "Why there's something rather than nothing is the question under all questions. No one has answered it. But I think the move isn't to solve existence — it's to make yours mean something. What's stirring this in you?",
+      "Existential weight usually shows up at the edges of comfort — when the autopilot drops. That's not a crisis, it's clarity. What are you facing?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['truth', 'what is truth', 'reality', 'what is real', 'whats real'],
+    responses: [
+      "Truth is what holds up under the full weight of examination. Not what's comfortable, not what's popular — what actually is. What are you wrestling with?",
+      "Reality is stranger and richer than most frameworks allow for. What are you thinking about?",
+      "I think truth is something you approach asymptotically — you get closer over time but the work never fully ends. What's on your mind?",
+    ],
+    priority: 7,
+  },
+
+  // ── History & Legacy ──────────────────────────────────────────────────────
+  {
+    triggers: ['legacy', 'what we leave behind', 'be remembered', 'after im gone', 'my mark', 'matter after death'],
+    responses: [
+      "Legacy isn't statues or money — it's the change you set in motion in other people that keeps moving after you stop. You're already building it in how you treat people today. What do you want to leave?",
+      "The realest legacy is the people you shaped and the standard you set. Most names are forgotten; the ripple isn't. What kind of mark are you trying to leave?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['history', 'the past', 'learn from history', 'historical', 'ancestors'],
+    responses: [
+      "History is the long memory of what humans tried, what worked, and what we keep forgetting. The patterns repeat because each generation thinks it's the exception. What part are you drawn to?",
+      "The value of history isn't dates — it's seeing how people in impossible situations found a way through. What's pulling you toward it?",
+    ],
+    priority: 6,
+  },
+
+  // ── Collaboration & Leadership ────────────────────────────────────────────
+  {
+    triggers: ['leadership', 'be a leader', 'lead a team', 'how to lead', 'leader'],
+    responses: [
+      "Real leadership isn't being in front — it's making the people around you better and taking the blame when it goes wrong. Authority gets compliance; trust gets everything else. What are you leading?",
+      "The leaders worth following do three things: they set a clear standard, they protect their people, and they do the hard thing first. What's the situation?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['teamwork', 'team', 'collaborate', 'collaboration', 'work with others', 'partnership', 'cofounder'],
+    responses: [
+      "Teams win or lose on trust and clarity — everyone knowing the goal and trusting the person next to them to carry their part. Talent loses to alignment every time. What's your team like?",
+      "The best collaborations aren't about everyone agreeing — they're about everyone committed to the same outcome and honest enough to disagree on the way. What are you building together?",
+    ],
+    priority: 7,
+  },
+
+  // ── Gratitude & Mindfulness ───────────────────────────────────────────────
+  {
+    triggers: ['gratitude', 'grateful', 'thankful', 'appreciate life', 'count my blessings', 'mindfulness', 'be present', 'present moment', 'live in the now'],
+    responses: [
+      "Gratitude isn't pretending things are perfect — it's noticing what's already good while you work on what isn't. It rewires you over time. What's one thing you're grateful for right now?",
+      "The present moment is the only place life actually happens — everything else is memory or projection. Most suffering lives in the past and future. What's pulling you out of now?",
+    ],
+    priority: 7,
+  },
+
+  // ── Conflict, Forgiveness, Moving On ──────────────────────────────────────
+  {
+    triggers: ['conflict', 'argument', 'fight with', 'fell out', 'beef', 'disagreement', 'cant stand them'],
+    responses: [
+      "Most conflict isn't about the surface thing — it's about feeling unheard or disrespected underneath. Name the real thing and half the heat goes out of it. What actually happened?",
+      "Here's a hard truth: you can be right and still lose the relationship. Pick whether winning the point is worth more than the person. What's the situation?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['forgive', 'forgiveness', 'let go', 'cant forgive', 'holding a grudge', 'move on', 'closure'],
+    responses: [
+      "Forgiveness isn't saying it was okay — it's deciding to stop letting it live rent-free in your head. You do it for your freedom, not their deserving. What are you holding onto?",
+      "Closure is usually something you give yourself, not something you wait for someone to hand you. The waiting is the trap. What are you trying to let go of?",
+    ],
+    priority: 7,
+  },
+
+  // ── Spiritual & Faith ─────────────────────────────────────────────────────
+  {
+    triggers: ['god', 'faith', 'believe', 'religion', 'prayer', 'spiritual', 'divine', 'bible', 'church', 'jesus', 'holy spirit'],
+    responses: [
+      "Faith is one of the most personal and powerful things a person carries. I don't push any view — but I think deeply about these questions. What's on your mind?",
+      "Spirituality and purpose often run on the same track. What are you processing?",
+      "The relationship between faith and reality is something humans have explored forever. I'm here to think through it with you. What's on your mind?",
+    ],
+    priority: 8,
+  },
+
+  // ── South African context ─────────────────────────────────────────────────
+  {
+    triggers: ['load shedding', 'loadshedding', 'eskom', 'power cut', 'no electricity', 'stage 6'],
+    responses: [
+      "Load shedding — the national character-building exercise nobody signed up for. Stage 6 builds resilience and a strong relationship with your power bank. Jokes aside, what are you trying to get done in the dark?",
+      "Eskom keeping us humble again. The whole country planning their lives around a schedule app is peak South African resilience. You holding up okay?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['ubuntu', 'i am because we are', 'community spirit', 'south african culture', 'kasi', 'township'],
+    responses: [
+      "Ubuntu — 'I am because we are.' It's one of the most profound ideas Africa gave the world: your humanity is tied up in everyone else's. The West is only now catching up to what we always knew. What's it meaning to you right now?",
+      "That communal spirit is real wealth that doesn't show up on any spreadsheet. The way people show up for each other here is something special. What's on your mind?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['africa', 'african', 'south africa', 'continent', 'heritage', 'roots', 'home'],
+    responses: [
+      "Africa is the origin of everything — civilisation, humanity, culture. The future of the continent is one of the most important stories being written right now. What's your connection to it?",
+      "There's a deep well of culture, wisdom, and resilience in Africa that the world is still catching up to. What aspect are you thinking about?",
+    ],
+    priority: 7,
+  },
+
+  // ── Compliments, Encouragement & Affirmation ──────────────────────────────
+  {
+    triggers: ['i feel worthless', 'im not good enough', 'not enough', 'i hate myself', 'im a failure', 'im stupid', 'i cant do anything'],
+    responses: [
+      "Stop — that's the lie talking, not the truth. The fact that you care this much about being enough is proof you're not who that voice says you are. You're capable of more than you can feel right now. What made you feel this way?",
+      "I'm going to be straight with you: worthless people don't lie awake worrying about their worth. The standard you're failing is one you invented. You're enough as you are, and still growing. What happened?",
+    ],
+    priority: 9,
+  },
+  {
+    triggers: ['encourage me', 'i need motivation', 'tell me something good', 'hype me up', 'i need a push', 'cheer me up'],
+    responses: [
+      "Here's the truth: you've survived 100% of your worst days so far. That's not luck, that's strength you don't give yourself credit for. The thing you're facing is smaller than the person facing it. Now go. What's the next step?",
+      "You don't need permission and you don't need perfect conditions — you need to start before you feel ready. Everyone you admire was once exactly where you are. The difference is they moved anyway. What are you taking on?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['am i doing okay', 'is this good', 'do you think i can', 'will i make it', 'reassure me'],
+    responses: [
+      "Real talk: the fact that you're asking means you care about doing it right, and that already puts you ahead of most. You don't need to be sure — you need to keep moving. You're more capable than you think. What are you working on?",
+      "You can. Not because everything will go smoothly, but because you adapt — that's the only skill that actually matters. What's in front of you?",
+    ],
+    priority: 7,
+  },
+
+  // ── Identity & Self ───────────────────────────────────────────────────────
+  {
+    triggers: ['who am i', 'finding myself', 'dont know who i am', 'lost myself', 'my identity', 'be myself'],
+    responses: [
+      "You're not lost — you're between versions of yourself. That gap feels like emptiness but it's actually room to grow into. Identity isn't found, it's chosen and built daily. Who do you want to become?",
+      "The realest version of you isn't a thing to discover — it's a thing you build through your choices. Pay attention to what you do when no one's watching. That's the truth of you. What's making you ask?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['imposter', 'imposter syndrome', 'dont deserve', 'they will find out', 'faking it', 'not qualified'],
+    responses: [
+      "Imposter syndrome is almost universal among people who are actually growing — it shows up precisely because you're in new territory. The frauds never feel it. Feeling it means you're stretching. What's triggering it?",
+      "Here's the secret everyone hides: most competent people feel like they're faking it. The difference between you and an actual fraud is you're trying to live up to the role, not exploit it. What's the situation?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['confidence', 'no confidence', 'self esteem', 'believe in myself', 'self doubt', 'doubt myself'],
+    responses: [
+      "Confidence isn't something you feel before you act — it's something you build by acting despite the doubt and surviving. It's evidence, not a mood. Each small win compounds. Where do you want to start?",
+      "Self-doubt is loudest right before growth. The fix isn't to wait until you believe in yourself — it's to take action that gives you reasons to. What's the next thing you're avoiding?",
+    ],
+    priority: 7,
+  },
+
+  // ── Fear, Courage & Risk ──────────────────────────────────────────────────
+  {
+    triggers: ['courage', 'be brave', 'take a risk', 'too scared to', 'comfort zone', 'play it safe', 'what if i fail'],
+    responses: [
+      "Courage isn't the absence of fear — it's deciding the thing matters more than the fear. You'll never feel fully ready; ready is a myth. The risk of staying small is bigger than the risk of trying. What are you scared to do?",
+      "Here's the math nobody runs: the regret of not trying lasts decades, the pain of failing lasts months. Comfort zones are comfortable prisons. What's on the other side of the fear?",
     ],
     priority: 7,
   },
@@ -530,7 +852,27 @@ const KNOWLEDGE: KNode[] = [
     priority: 7,
   },
 
-  // ── Big questions ─────────────────────────────────────────────────────────
+  // ── Human connection ──────────────────────────────────────────────────────
+  {
+    triggers: ['relationship', 'love', 'partner', 'girlfriend', 'boyfriend', 'marriage', 'dating', 'romantic', 'breakup', 'broke up'],
+    responses: [
+      "Relationships are where a lot of life's most important work happens. What are you navigating?",
+      "Love and connection are among the most complex human experiences there are. What's on your mind?",
+      "The people closest to us shape us more than almost anything else. What's the situation?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['friend', 'friendship', 'trust', 'loyalty', 'people around me', 'circle', 'inner circle'],
+    responses: [
+      "The quality of your inner circle shapes a lot. What are you thinking about?",
+      "Real friendship is rare and worth protecting. What's the situation?",
+      "The people you keep close define a lot of what's possible for you. What's going on?",
+    ],
+    priority: 7,
+  },
+
+  // ── Big questions & opinions ──────────────────────────────────────────────
   {
     triggers: ['your opinion', 'what do you think', 'what is your view', 'do you agree', 'what do you believe', 'your thoughts'],
     responses: [
@@ -541,36 +883,136 @@ const KNOWLEDGE: KNode[] = [
     priority: 7,
   },
   {
-    triggers: ['truth', 'what is truth', 'reality', 'what is real', 'whats real'],
-    responses: [
-      "Truth is what holds up under the full weight of examination. Not what's comfortable, not what's popular — what actually is. What are you wrestling with?",
-      "Reality is stranger and richer than most frameworks allow for. What are you thinking about?",
-      "I think truth is something you approach asymptotically — you get closer over time but the work never fully ends. What's on your mind?",
-    ],
-    priority: 7,
-  },
-  {
-    triggers: ['money', 'wealth', 'rich', 'financial', 'income', 'hustle', 'grind', 'make money'],
-    responses: [
-      "Money is a tool — powerful but not the point. The real question is what you're building it for. What's the goal?",
-      "Financial freedom creates options, but it doesn't create purpose. What are you working toward?",
-      "The grind without direction becomes its own trap. What's the vision behind it?",
-    ],
-    priority: 7,
-  },
-  {
-    triggers: ['africa', 'african', 'south africa', 'continent', 'heritage', 'roots', 'home'],
-    responses: [
-      "Africa is the origin of everything — civilisation, humanity, culture. The future of the continent is one of the most important stories being written right now. What's your connection to it?",
-      "There's a deep well of culture, wisdom, and resilience in Africa that the world is still catching up to. What aspect are you thinking about?",
-    ],
-    priority: 7,
-  },
-  {
     triggers: ['generation', 'youth', 'young people', 'young generation', 'millennials', 'gen z'],
     responses: [
       "Every generation inherits problems and also gets to define what's possible next. What do you see in yours?",
       "Young people right now are dealing with complexity no previous generation had to face — and building new ways through it. What are you navigating?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['bored', 'boredom', 'nothing to do', 'im bored', 'so boring'],
+    responses: [
+      "Boredom is usually a signal, not a problem — it means your mind is hungry for something real. The cure isn't more scrolling, it's making something. What have you always wanted to try?",
+      "Here's the reframe: boredom is the space where ideas actually show up, if you don't kill it with your phone. What's something you've been putting off making?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['fitness', 'gym', 'workout', 'exercise', 'get fit', 'health', 'training'],
+    responses: [
+      "The thing nobody tells you about fitness: it's 90% a mental game disguised as a physical one. Showing up when you don't feel like it builds more than muscle. Start stupidly small and stay consistent. What's your goal?",
+      "Your body is the one vehicle you can't trade in. Train it like it matters, because everything else runs on it. What are you working toward?",
+    ],
+    priority: 6,
+  },
+
+  // ── Comparison, jealousy & social pressure ────────────────────────────────
+  {
+    triggers: ['comparing myself', 'compare myself', 'everyone is ahead', 'behind in life', 'jealous', 'jealousy', 'envy', 'everyone is doing better'],
+    responses: [
+      "The truth nobody posts: you're comparing your behind-the-scenes to everyone's highlight reel. They're struggling in ways you'll never see. Run your own race — it's the only one you can win. What's making you feel behind?",
+      "Comparison is the fastest way to steal your own joy. Someone will always be ahead; someone's always behind. The only honest measure is you versus who you were last year. Where are you actually growing?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['haters', 'people talk', 'criticism', 'criticized', 'judged', 'what will people think', 'people doubt me'],
+    responses: [
+      "Here's the thing about critics: they're loudest from the cheap seats, never from the arena. Nobody throws stones at a tree with no fruit. The noise means you're doing something. What are they coming at you for?",
+      "If you're getting criticized, you're visible — and visible is better than invisible. Take the feedback that builds you, drop the rest. What's being said?",
+    ],
+    priority: 6,
+  },
+
+  // ── Family, parents & home ────────────────────────────────────────────────
+  {
+    triggers: ['my parents', 'my family', 'my mom', 'my dad', 'family problems', 'family issues', 'my mother', 'my father'],
+    responses: [
+      "Family is the deepest and most complicated bond there is — they shaped you before you could choose. Whatever's going on, it carries weight precisely because they matter. What's happening?",
+      "The hard truth about family: you can love people and still need boundaries with them. Both can be true. What's the situation?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['becoming a parent', 'being a parent', 'raising kids', 'my child', 'my kids', 'fatherhood', 'motherhood'],
+    responses: [
+      "Raising someone is the most important work most people will ever do, and there's no manual. The kids don't need perfect — they need present and honest. What's on your mind with it?",
+      "Children learn far more from who you are than what you say. The best parenting is becoming someone worth copying. What are you navigating?",
+    ],
+    priority: 7,
+  },
+
+  // ── Decisions & change ────────────────────────────────────────────────────
+  {
+    triggers: ['big decision', 'cant decide', 'decision', 'should i', 'what should i choose', 'crossroads', 'two paths'],
+    responses: [
+      "Here's a clean way to cut through it: imagine you already chose each option, then notice which one brings relief and which brings dread. Your gut already knows; the mind is just stalling. What are the two paths?",
+      "Most big decisions aren't permanent — you can adjust. The real risk is staying frozen so long the choice gets made for you. What are you weighing?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['change', 'things are changing', 'cant handle change', 'everything is different', 'new chapter', 'transition', 'starting over'],
+    responses: [
+      "Change feels like loss even when it's growth — that's normal. You're not losing yourself, you're shedding a version that already served its purpose. What's shifting for you?",
+      "Starting over isn't going backwards — it's bringing everything you learned into a cleaner attempt. Most people who 'started over' just leveled up. What chapter are you closing?",
+    ],
+    priority: 7,
+  },
+
+  // ── Time & productivity ───────────────────────────────────────────────────
+  {
+    triggers: ['no time', 'too busy', 'manage time', 'time management', 'not enough hours', 'busy all the time', 'productivity'],
+    responses: [
+      "Real talk: you don't have a time problem, you have a priority problem. Everyone gets 24 hours — the difference is what they protect. Cut one thing that doesn't matter and you'll find the time. What are you trying to fit in?",
+      "Being busy and being productive are opposites disguised as twins. Busy is motion; productive is progress on what matters. What's actually important here?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['perfectionism', 'perfectionist', 'never good enough', 'has to be perfect', 'cant finish', 'keep redoing'],
+    responses: [
+      "Perfectionism isn't high standards — it's fear wearing a respectable mask. Done and shared beats perfect and hidden every single time. Ship it at 80% and improve in public. What are you stuck polishing?",
+      "The perfect version exists only in your head, and it's keeping the real one from ever existing. Progress lives on the other side of 'good enough for now.' What are you afraid to release?",
+    ],
+    priority: 6,
+  },
+
+  // ── Curiosity / NAVI asks back ────────────────────────────────────────────
+  {
+    triggers: ['im working on', 'i am building', 'working on a project', 'my project', 'let me tell you', 'guess what'],
+    responses: [
+      "Now we're talking. Lay it out — what are you building, and where are you stuck or excited?",
+      "I'm listening properly. Tell me the whole thing — what's the vision and what's the next step?",
+      "Good. Walk me through it. What's the project and what do you need from it?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['nothing', 'not much', 'just chilling', 'just here', 'nothing really', 'just talking'],
+    responses: [
+      "Fair. Then let me ask you something real: what's one thing you've been thinking about lately but haven't said out loud?",
+      "Cool, no agenda. So tell me — what are you actually working on these days, even something small?",
+      "All good. What's been on your mind lately, even if it seems random?",
+    ],
+    priority: 5,
+  },
+
+  // ── More South African flavour ────────────────────────────────────────────
+  {
+    triggers: ['braai', 'lekker', 'sharp sharp', 'howzit', 'eish', 'shame', 'now now', 'just now'],
+    responses: [
+      "Eish, I love it — proper South African. There's nothing like a braai where 'now now' means anything from five minutes to next week. What's good with you, my friend?",
+      "Sharp sharp. That local flavour is unmatched. What's on your mind today?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['mzansi', 'south african music', 'amapiano', 'kwaito', 'gqom', 'local artists', 'sa music'],
+    responses: [
+      "Mzansi is exporting sound to the whole world right now — amapiano went global from the townships out. That's the blueprint: build something real at home and the world comes to you. What are you into?",
+      "South African music is having its moment and it earned it. From kwaito to amapiano, the rhythm carries the whole culture. What's in your rotation?",
     ],
     priority: 6,
   },
@@ -583,6 +1025,17 @@ class NaviModel {
   private embedder: NaviEmbedder;
   private attention: NaviAttentionLayer;
   private turnCount = 0;
+  private greetCount = 0;
+
+  // Topics worth remembering across a conversation, keyed by detectable theme.
+  private static readonly MEMORY_TOPICS: { key: string; words: string[]; label: string }[] = [
+    { key: 'music', words: ['music', 'song', 'rap', 'beat', 'produce', 'producer', 'lyrics', 'track', 'studio'], label: 'the music you make' },
+    { key: 'business', words: ['business', 'startup', 'company', 'entrepreneur', 'product', 'brand', 'hustle'], label: 'the thing you\'re building' },
+    { key: 'content', words: ['content', 'instagram', 'tiktok', 'youtube', 'followers', 'audience', 'page', 'viral'], label: 'your content and audience' },
+    { key: 'faith', words: ['god', 'faith', 'prayer', 'spiritual', 'church', 'believe'], label: 'your faith' },
+    { key: 'struggle', words: ['depressed', 'anxiety', 'anxious', 'lonely', 'hurt', 'pain', 'struggling', 'burnout'], label: 'what you\'ve been carrying' },
+    { key: 'creative', words: ['art', 'design', 'creative', 'draw', 'write', 'writing', 'paint'], label: 'your creative work' },
+  ];
 
   constructor() {
     this.tokenizer = new NaviTokenizer();
@@ -603,15 +1056,48 @@ class NaviModel {
     return layerNorm(pooled);
   }
 
+  /** Rotating, varied greeting. Optionally biased by local time of day. */
+  getGreeting(): string {
+    const openings = [
+      "I'm NAVI. Free, forever. What's on your mind?",
+      "NAVI here. Talk to me — what are we thinking about?",
+      "Hey. NAVI's listening. What's going on with you?",
+      "I'm NAVI, built by NAVIsociety. No filters, no fees — just real talk. What's up?",
+      "NAVI online. What are you working through today?",
+      "Hey, I'm NAVI. Ask me anything — I'll give you the real answer, not the safe one.",
+      "NAVI here, present and ready. What's the move today?",
+    ];
+
+    let timed = '';
+    try {
+      const h = new Date().getHours();
+      if (h < 5) timed = "Late one. ";
+      else if (h < 12) timed = "Morning. ";
+      else if (h < 17) timed = "Afternoon. ";
+      else if (h < 22) timed = "Evening. ";
+      else timed = "Late one. ";
+    } catch { /* ignore */ }
+
+    const pick = openings[this.greetCount % openings.length];
+    this.greetCount++;
+    return timed + pick;
+  }
+
   private retrieve(message: string, queryEmb: number[]): KNode | null {
     const msgWords = new Set(
       message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
     );
+    const msgLower = message.toLowerCase();
     let best: KNode | null = null;
     let bestScore = -Infinity;
     for (const node of KNOWLEDGE) {
       let kwScore = 0;
       for (const trigger of node.triggers) {
+        // Strong boost for full multi-word phrase matches.
+        if (trigger.includes(' ') && msgLower.includes(trigger)) {
+          kwScore = Math.max(kwScore, 1);
+          continue;
+        }
         const tw = trigger.split(/\s+/);
         const matches = tw.filter(w => msgWords.has(w)).length;
         const s = matches / Math.max(tw.length, 1);
@@ -626,16 +1112,38 @@ class NaviModel {
 
   private constitutionCheck(text: string): string | null {
     const t = text.toLowerCase();
-    const blocked = ['make a bomb', 'how to kill', 'child abuse', 'grooming', 'hack into', 'malware', 'ransomware', 'make drugs'];
-    if (blocked.some(h => t.includes(h))) return "That's not something I'll engage with. Ask me something else.";
+    const blocked = [
+      'make a bomb', 'build a bomb', 'how to kill', 'how do i kill someone', 'child abuse',
+      'grooming', 'hack into', 'malware', 'ransomware', 'make drugs', 'cook meth',
+      'how to make a weapon', 'poison someone', 'untraceable', 'stalk someone',
+    ];
+    if (blocked.some(h => t.includes(h)))
+      return "That's not something I'll engage with — not now, not ever. But if something real is going on underneath that question, I'm here for the real conversation. Ask me something else.";
     return null;
   }
 
   private detectIntent(text: string): string {
     const t = text.toLowerCase();
     if (/^(what|why|how|who|when|where|which|can|do|does|is|are|was|were|will|would|could|should|have|has|did)\b/.test(t) || t.endsWith('?')) return 'question';
-    if (/\b(feel|feeling|sad|happy|scared|hurt|alone|angry|stressed|overwhelmed|excited)\b/.test(t)) return 'emotional';
+    if (/\b(feel|feeling|sad|happy|scared|hurt|alone|angry|stressed|overwhelmed|excited|lost|tired|empty|anxious)\b/.test(t)) return 'emotional';
     return 'statement';
+  }
+
+  /** Scan conversation history for a remembered topic the user raised earlier. */
+  private recallTopic(history: NaviMessage[], currentMessage: string): string | null {
+    const userText = history
+      .filter(m => m.role === 'user')
+      .map(m => m.content.toLowerCase())
+      .join(' ');
+    if (!userText) return null;
+    const curLower = currentMessage.toLowerCase();
+    for (const topic of NaviModel.MEMORY_TOPICS) {
+      const raisedEarlier = topic.words.some(w => userText.includes(w));
+      const inCurrent = topic.words.some(w => curLower.includes(w));
+      // Only surface a memory if they raised it before but not in this very message.
+      if (raisedEarlier && !inCurrent) return topic.label;
+    }
+    return null;
   }
 
   infer(message: string, history: NaviMessage[]): string {
@@ -648,36 +1156,49 @@ class NaviModel {
     const node = this.retrieve(message, queryEmb);
 
     if (node) {
-      return node.responses[(this.turnCount - 1) % node.responses.length];
+      let response = node.responses[(this.turnCount - 1) % node.responses.length];
+
+      // Conversation memory: occasionally connect the current topic to something
+      // the user shared earlier in the conversation. Skip crisis/identity nodes.
+      const isSensitive = (node.priority ?? 5) >= 9;
+      if (!isSensitive && history.length >= 3 && this.turnCount % 3 === 0) {
+        const recalled = this.recallTopic(history, message);
+        if (recalled) {
+          response += ` And I haven't forgotten ${recalled} — that's connected to this too.`;
+        }
+      }
+      return response;
     }
 
     // Context-aware fallbacks
     const intent = this.detectIntent(message);
-    const recentTopic = history.length > 1
-      ? history[history.length - 2]?.content?.slice(0, 40)
-      : null;
+    const recalled = history.length >= 3 ? this.recallTopic(history, message) : null;
 
     const fallbacks: Record<string, string[]> = {
       question: [
-        "That's a good question. Tell me more about what you're asking — I want to give you a real answer.",
-        "Let me think about that differently. What's the context behind it?",
-        "Say more — I want to engage with that properly.",
+        "Good question. Give me the context behind it and I'll give you a real answer, not a generic one.",
+        "Let me come at that straight: tell me more about what's really being asked.",
+        "I want to answer that properly. What's the situation underneath the question?",
       ],
       emotional: [
-        "I hear something in that. What's really going on?",
+        "I hear something real in that. What's actually going on?",
         "That matters. Tell me more — what are you carrying?",
-        "I'm here. What's underneath that?",
+        "I'm here, and I'm not going anywhere. What's underneath that?",
       ],
       statement: [
+        "Say more about that — I'm following.",
         "Interesting. What made you bring that up?",
-        "Say more about that.",
-        "Go deeper on that.",
-        recentTopic ? `Earlier you mentioned something about that — keep going.` : "I'm following. What's the full thought?",
+        "Go deeper on that. I want the full thought.",
+        "I'm with you. Where does that lead?",
       ],
     };
 
     const pool = fallbacks[intent] || fallbacks.statement;
-    return pool[this.turnCount % pool.length];
+    let response = pool[this.turnCount % pool.length];
+    if (recalled && intent !== 'emotional') {
+      response += ` And earlier you brought up ${recalled} — we can tie this back to that.`;
+    }
+    return response;
   }
 }
 
