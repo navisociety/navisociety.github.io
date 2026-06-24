@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { navi, type NaviMessage } from './lib/navi-model';
+import NaviMenu from './components/NaviMenu';
 
 type Message = {
   id: string;
@@ -14,6 +15,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>('booting');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -101,7 +103,7 @@ export default function App() {
       <div style={{ display: 'flex', flexDirection: 'column', padding: '1.25rem 1.25rem 0', flexShrink: 0, gap: '0.6rem' }}>
         {/* Row 1: menu icon — top left */}
         <div>
-          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+          <button onClick={() => setMenuOpen(true)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
             <div style={{ width: '42px', height: '42px', background: '#00F7FF', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="22" height="16" viewBox="0 0 28 20" fill="none">
                 <path d="M14 1C7.5 1 1.5 10 1.5 10S7.5 19 14 19 26.5 10 26.5 10 20.5 1 14 1z" stroke="#000" strokeWidth="1.8" fill="none"/>
@@ -205,6 +207,8 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background:rgba(0,247,255,0.15); border-radius:2px; }
         textarea::placeholder { color:#555; }
       `}</style>
+
+      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} />}
     </div>
   );
 }
