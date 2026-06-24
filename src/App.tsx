@@ -99,17 +99,23 @@ export default function App() {
 
       {/* ── Top bar: Mini + Max ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.25rem 0', flexShrink: 0 }}>
+        {/* Left: Mini + menu icon */}
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+            <span style={{ color: '#FA00FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Mini</span>
+          </button>
+          <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+            <div style={{ width: '42px', height: '42px', background: '#00F7FF', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="22" height="16" viewBox="0 0 28 20" fill="none">
+                <path d="M14 1C7.5 1 1.5 10 1.5 10S7.5 19 14 19 26.5 10 26.5 10 20.5 1 14 1z" stroke="#000" strokeWidth="1.8" fill="none"/>
+                <circle cx="14" cy="10" r="4.5" fill="#000"/>
+                <circle cx="12" cy="8" r="1.5" fill="white" opacity="0.5"/>
+              </svg>
+            </div>
+          </button>
+        </div>
+        {/* Right: Max */}
         <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
-          <span style={{ color: '#FA00FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Mini</span>
-        </button>
-        <button style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
-          <div style={{ width: '42px', height: '42px', background: '#00F7FF', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <svg width="22" height="16" viewBox="0 0 28 20" fill="none">
-              <path d="M14 1C7.5 1 1.5 10 1.5 10S7.5 19 14 19 26.5 10 26.5 10 20.5 1 14 1z" stroke="#000" strokeWidth="1.8" fill="none"/>
-              <circle cx="14" cy="10" r="4.5" fill="#000"/>
-              <circle cx="12" cy="8" r="1.5" fill="white" opacity="0.5"/>
-            </svg>
-          </div>
           <span style={{ color: '#00F7FF', fontSize: '2rem', fontWeight: 700, fontFamily: 'Fredoka, sans-serif' }}>Max</span>
         </button>
       </div>
