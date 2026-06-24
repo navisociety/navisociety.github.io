@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { sendMagicLink, storeSession, getSubscriptionStatus, NaviSession } from '../lib/navi-supabase';
 
 interface NaviSubscribeProps {
@@ -7,13 +7,35 @@ interface NaviSubscribeProps {
   onClose: () => void;
 }
 
-type Step = 'email' | 'upgrade';
+type Step = 'email' | 'upgrade' | 'success';
+
+const PAYPAL_CLIENT_ID = 'BAA4Pfgt8NrVZMCEc4cFkY6PsxA6OnR5pJARRVhH0m5W1H5v68jYYxLYqSZMBNvny_SmwkcmTdspeAlc2Q';
+const PAYPAL_FN = 'https://nmxwsjvmhoxjvkhgqmic.supabase.co/functions/v1/navi-paypal';
+
+// Load the PayPal JS SDK once
+let paypalSdkPromise: Promise<void> | null = null;
+function loadPayPalSdk(): Promise<void> {
+  if (typeof (window as any).paypal !== 'undefined') return Promise.resolve();
+  if (paypalSdkPromise) return paypalSdkPromise;
+  paypalSdkPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription`;
+    script.setAttribute('data-sdk-integration-source', 'button-factory');
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load PayPal'));
+    document.body.appendChild(script);
+  });
+  return paypalSdkPromise;
+}
 
 export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSubscribeProps) {
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [payReady, setPayReady] = useState(false);
+  const paypalRef = useRef<HTMLDivElement>(null);
+  const renderedRef = useRef(false);
 
   const price = mode === 'mini' ? '$10' : '$20';
   const accent = mode === 'mini' ? '#FA00FF' : '#00F7FF';
@@ -36,6 +58,63 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
       setStep('upgrade');
     }
   }
+
+  // Render the PayPal button when we reach the upgrade step
+  useEffect(() => {
+    if (step !== 'upgrade') return;
+    let cancelled = false;
+
+    loadPayPalSdk()
+      .then(() => {
+        if (cancelled || renderedRef.current || !paypalRef.current) return;
+        const paypal = (window as any).paypal;
+        if (!paypal || !paypal.Buttons) return;
+        renderedRef.current = true;
+
+        paypal.Buttons({
+          style: { shape: 'rect', color: 'black', layout: 'vertical', label: 'subscribe' },
+          createSubscription: async () => {
+            const res = await fetch(PAYPAL_FN, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'create-subscription', tier: mode, email: email.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.subscriptionId) {
+              throw new Error(data.error || 'Could not start subscription');
+            }
+            return data.subscriptionId;
+          },
+          onApprove: async (data: { subscriptionID?: string }) => {
+            const subscriptionId = data.subscriptionID;
+            const res = await fetch(PAYPAL_FN, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'activate', subscriptionId, email: email.trim(), tier: mode }),
+            });
+            const result = await res.json();
+            if (res.ok && result.success) {
+              const session: NaviSession = { email: email.trim(), access_token: '' };
+              storeSession(session);
+              setStep('success');
+              setTimeout(() => onAuthenticated(session), 1400);
+            } else {
+              setError('Payment received — activating shortly. Please refresh in a moment.');
+            }
+          },
+          onError: () => {
+            setError('Something went wrong with PayPal. Please try again.');
+          },
+        }).render(paypalRef.current).then(() => {
+          if (!cancelled) setPayReady(true);
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not load PayPal. Please try again.');
+      });
+
+    return () => { cancelled = true; };
+  }, [step, mode, email, onAuthenticated]);
 
   const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, background: '#000',
@@ -114,16 +193,13 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
                 {price}<span style={{ fontSize: '13px', color: '#888', fontWeight: 400 }}>/month</span>
               </div>
             </div>
-            <button
-              disabled
-              style={{
-                background: '#1a1a1a', color: '#555', border: '1.5px solid #333',
-                borderRadius: '10px', padding: '13px', fontSize: '16px', fontWeight: 700,
-                fontFamily: 'Fredoka, sans-serif', cursor: 'not-allowed',
-              }}
-            >
-              Pay with PayPal · Coming Soon
-            </button>
+
+            {!payReady && !error && (
+              <div style={{ color: '#666', fontSize: '13px', textAlign: 'center' }}>Loading secure checkout…</div>
+            )}
+            {error && <div style={{ color: '#ff4444', fontSize: '13px', textAlign: 'center' }}>{error}</div>}
+            <div ref={paypalRef} style={{ minHeight: '48px' }} />
+
             <button
               onClick={onClose}
               style={{ background: 'none', border: 'none', color: '#555', fontSize: '14px', fontFamily: 'Fredoka, sans-serif', cursor: 'pointer', textDecoration: 'underline', padding: '4px 0', alignSelf: 'center' }}
@@ -131,6 +207,16 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
               Continue with Free NAVI
             </button>
           </>
+        )}
+
+        {step === 'success' && (
+          <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '14px', padding: '20px 0' }}>
+            <div style={{ fontSize: '40px' }}>✓</div>
+            <div style={{ fontSize: '24px', fontWeight: 700, color: accent }}>Welcome to {label}</div>
+            <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.6 }}>
+              Your subscription is active. NAVI is now at full power.
+            </div>
+          </div>
         )}
       </div>
     </div>
