@@ -1,12 +1,13 @@
 import type { FC } from 'react';
 
-const ITEMS = ['Upgrade', 'Usage', 'My Profile'];
+const ITEMS = ['Upgrade', 'Usage', 'My Profile', 'Chats'];
 
 interface Props {
   onClose: () => void;
+  onSelect: (item: string) => void;
 }
 
-const NaviMenu: FC<Props> = ({ onClose }) => (
+const NaviMenu: FC<Props> = ({ onClose, onSelect }) => (
   <div style={{
     position: 'fixed',
     inset: 0,
@@ -43,6 +44,7 @@ const NaviMenu: FC<Props> = ({ onClose }) => (
       {ITEMS.map(label => (
         <button
           key={label}
+          onClick={() => onSelect(label)}
           style={{
             background: 'none',
             border: 'none',
