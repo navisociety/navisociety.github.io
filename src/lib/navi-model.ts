@@ -603,15 +603,25 @@ class NaviModel {
     return layerNorm(pooled);
   }
 
-  private retrieve(queryEmb: number[]): KNode | null {
+  private retrieve(message: string, queryEmb: number[]): KNode | null {
+    const msgWords = new Set(
+      message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
+    );
     let best: KNode | null = null;
     let bestScore = -Infinity;
     for (const node of KNOWLEDGE) {
-      const sim = cosine(queryEmb, node.embedding!);
-      const score = sim * (node.priority ?? 5) / 5;
+      let kwScore = 0;
+      for (const trigger of node.triggers) {
+        const tw = trigger.split(/\s+/);
+        const matches = tw.filter(w => msgWords.has(w)).length;
+        const s = matches / Math.max(tw.length, 1);
+        if (s > kwScore) kwScore = s;
+      }
+      const embSim = cosine(queryEmb, node.embedding!);
+      const score = (kwScore * 0.75 + embSim * 0.25) * (node.priority ?? 5) / 5;
       if (score > bestScore) { bestScore = score; best = node; }
     }
-    return bestScore > 0.15 ? best : null;
+    return bestScore > 0.04 ? best : null;
   }
 
   private constitutionCheck(text: string): string | null {
@@ -635,7 +645,7 @@ class NaviModel {
     if (block) return block;
 
     const queryEmb = this.encode(message);
-    const node = this.retrieve(queryEmb);
+    const node = this.retrieve(message, queryEmb);
 
     if (node) {
       return node.responses[(this.turnCount - 1) % node.responses.length];
