@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
+import NaviProfile from './components/NaviProfile';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
 import { supabase } from './lib/supabase';
@@ -43,6 +44,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [chatsOpen, setChatsOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [mode, setMode] = useState<'free' | 'mini' | 'max'>('free');
   const [naviSession, setNaviSession] = useState<NaviSession | null>(null);
   const [showSubscribe, setShowSubscribe] = useState(false);
@@ -54,7 +56,7 @@ export default function App() {
   useEffect(() => {
     const t = setTimeout(() => {
       setStatus('ready');
-      setMessages([{ id: '0', role: 'assistant', content: "I'm NAVI. What's on your mind?" }]);
+      setMessages([{ id: '0', role: 'assistant', content: navi.getGreeting() }]);
       setTimeout(() => taRef.current?.focus(), 200);
     }, 1200);
     return () => clearTimeout(t);
@@ -295,7 +297,8 @@ export default function App() {
         textarea::placeholder { color:#555; }
       `}</style>
 
-      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} />}
+      {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} onProfileOpen={() => { setMenuOpen(false); setShowProfile(true); }} />}
+      {showProfile && <NaviProfile session={naviSession} onClose={() => setShowProfile(false)} />}
       {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
