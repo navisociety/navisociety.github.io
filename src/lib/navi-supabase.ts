@@ -77,7 +77,9 @@ function friendlyAuthError(err: unknown): string {
          (err as { msg?: unknown }).msg)
       : err;
   const msg = typeof raw === 'string' ? raw.trim() : '';
-  if (!msg) return fallback;
+  // Never let an empty value or a stringified object ("{}", "[object Object]")
+  // reach the UI — these previously surfaced as a literal "{}" error.
+  if (!msg || msg === '{}' || msg === '[object Object]') return fallback;
   const lower = msg.toLowerCase();
   // SMTP / delivery failures (the common "Error sending magic link email").
   if (lower.includes('sending') || lower.includes('smtp') || lower.includes('email')) {
