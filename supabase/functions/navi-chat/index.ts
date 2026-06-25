@@ -3110,6 +3110,29 @@ function corsHeaders(origin: string | null): Record<string, string> {
   };
 }
 
+async function searchDuckDuckGo(query: string): Promise<{ text: string; url: string }> {
+  try {
+    const res = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (!res.ok) return { text: '', url: '' };
+    const data = await res.json();
+    if (data.Answer) return { text: String(data.Answer).slice(0, 300), url: data.AnswerType || '' };
+    if (data.AbstractText) return { text: String(data.AbstractText).slice(0, 300), url: data.AbstractURL || '' };
+    if (data.RelatedTopics?.[0]?.Text) return { text: String(data.RelatedTopics[0].Text).slice(0, 200), url: data.RelatedTopics[0].FirstURL || '' };
+    return { text: '', url: '' };
+  } catch {
+    return { text: '', url: '' };
+  }
+}
+
+function needsSearch(message: string): boolean {
+  const t = message.toLowerCase();
+  return /\b(who is|what is|when did|where is|how many|latest|news|current|today|price of|define|meaning of|capital of|population|weather in)\b/.test(t)
+    || (t.includes('?') && t.split(' ').length < 10);
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   const origin = req.headers.get("origin");
   const cors = corsHeaders(origin);
@@ -3146,7 +3169,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    const response = navi.infer(message, [...history, { role: "user", content: message }]);
+    let response = navi.infer(message, [...history, { role: "user", content: message }]);
+    if (needsSearch(message)) {
+      const { text, url } = await searchDuckDuckGo(message);
+      if (text) response += ` — Here's what I found online: ${text}${url ? ' (' + url + ')' : ''}`;
+    }
 
     return new Response(JSON.stringify({ response }), {
       status: 200,
