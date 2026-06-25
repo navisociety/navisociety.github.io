@@ -38,14 +38,39 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
     subscription_status: '',
   });
 
-  const authId: string | undefined = session?.user?.id;
+  const [authId, setAuthId] = useState<string | undefined>(session?.user?.id);
+  const [resolving, setResolving] = useState(true);
+
+  // Resolve the Supabase auth uuid. Prefer the id on the passed session;
+  // otherwise ask the live Supabase client (App only stores email + token).
+  useEffect(() => {
+    let active = true;
+    if (session?.user?.id) {
+      setAuthId(session.user.id);
+      setResolving(false);
+      return;
+    }
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (active) setAuthId(data?.user?.id);
+      } catch {
+        /* no-op */
+      } finally {
+        if (active) setResolving(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [session]);
 
   useEffect(() => {
     let active = true;
+    if (resolving) return;
     if (!authId) {
       setLoading(false);
       return;
     }
+    setLoading(true);
     (async () => {
       try {
         const { data, error: err } = await supabase
@@ -75,7 +100,7 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
     return () => {
       active = false;
     };
-  }, [authId]);
+  }, [authId, resolving]);
 
   const save = async () => {
     if (!authId) return;
@@ -160,7 +185,7 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
       }}>
         <h1 style={{ color: CYAN, fontSize: '2.4rem', fontWeight: 700, margin: '0.5rem 0 1.75rem' }}>My Profile</h1>
 
-        {!authId && (
+        {!resolving && !authId && (
           <div style={{ color: '#cfcfcf', fontSize: '1.05rem', lineHeight: 1.6 }}>
             Sign in to view your profile.
             <div style={{ color: '#777', fontSize: '0.9rem', marginTop: '0.6rem' }}>
@@ -169,11 +194,11 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
           </div>
         )}
 
-        {authId && loading && (
+        {(resolving || (authId && loading)) && (
           <div style={{ color: '#777', fontSize: '1rem' }}>Loading your profile…</div>
         )}
 
-        {authId && !loading && (
+        {!resolving && authId && !loading && (
           <>
             {/* Avatar preview */}
             {profile.avatar_url.trim() !== '' && (
