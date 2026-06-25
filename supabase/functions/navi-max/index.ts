@@ -123,23 +123,26 @@ Deno.serve(async (req) => {
     // Sonnet pricing
     const cost = (inputTokens * 3.0 + outputTokens * 15.0) / 1_000_000;
 
-    // 4. Upsert usage — conflict on (email, month_key)
-    await sb(`navi_usage?on_conflict=email,month_key`, {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({
-        email: userEmail,
-        tier: "max",
-        month_key: mk,
-        usd_spent: spentSoFar + cost,
-        last_updated: new Date().toISOString(),
-      }),
-    });
+    // 4. Atomic usage increment via RPC (avoids read-then-write race)
+    let newTotal = spentSoFar + cost;
+    try {
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/navi_add_usage`, {
+        method: "POST",
+        headers: {
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ p_email: userEmail, p_tier: "max", p_month_key: mk, p_cost: cost }),
+      });
+      const rpcVal = await rpcRes.json();
+      if (typeof rpcVal === "number") newTotal = rpcVal;
+    } catch (_e) { /* keep estimate */ }
 
     return new Response(
       JSON.stringify({
         response: responseText,
-        usage: { spent_usd: spentSoFar + cost, limit_usd: LIMIT_USD, month_key: mk },
+        usage: { spent_usd: newTotal, limit_usd: LIMIT_USD, month_key: mk },
       }),
       { status: 200, headers }
     );
