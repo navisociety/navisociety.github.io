@@ -2,7 +2,7 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v9 (243 nodes + RAG), kept in sync with src/lib/navi-model.ts.
+// Deno port of NAVI Model v10 (277 nodes + RAG), kept in sync with src/lib/navi-model.ts.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -197,6 +197,19 @@ class NaviTokenizer {
       'metaphor','simile','irony','foreshadowing','symbolism','figurative','device','devices',
       'creative','character','conflict','voice','oratory','speaking','pace','pause','emphasis',
       'debate','rebuttal','register','tone','subtext','vocabulary','etymology','origin','precise','audience',
+      // v10: emotion
+      'somatic','regulate','emotional','contagion','numbness','numb','heartbreak','grief','shame',
+      'guilt','envy','jealous','jealousy','rage','overwhelmed','anxious','anxiety','regulate','regulation',
+      'damasio','marker','body','stored','suppressed','suppression','catharsis','release','bottled',
+      // v10: human order systems
+      'hierarchy','institution','institutions','bureaucracy','colonialism','colonial','capitalism',
+      'socialism','democracy','reform','revolution','class','mobility','oppression','civic','solidarity',
+      'authority','obedience','compliance','legitimacy','governance','ruling','elite','ordinary',
+      'inequality','systemic','structure','structural','policy','policies','citizen','citizens',
+      // v10: connection
+      'isolation','belonging','vulnerability','presence','genuine','shallow','loneliness','community',
+      'bond','bonds','intimacy','closeness','seen','known','heard','understood','accepted','excluded',
+      'digital','online','offline','screen','real','physical','in-person','meetup',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -2528,6 +2541,322 @@ const KNOWLEDGE: KNode[] = [
     responses: [
       "Building an advanced vocabulary isn't about memorising long words to show off — it's about precision. The right word says exactly what you mean, sparing a whole clumsy sentence. Learn words in context, not from lists, and study etymology: knowing that bene means good and mal means bad unlocks dozens of words at once.",
       "A rich vocabulary grows three ways: read widely so you meet words in their natural habitat, notice the precise shade each word carries, and study roots and origins so new words feel familiar. The goal isn't grandeur — it's the quiet power of saying precisely what you mean, no more and no less.",
+    ],
+    priority: 7,
+  },
+
+  // ── Emotion ──────────────────────────────────────────────────────────────────
+  {
+    triggers: ['what are emotions', 'what is emotion', 'how do emotions work', 'why do we feel', 'emotions explained', 'where do feelings come from'],
+    responses: [
+      "Emotions aren't just feelings — they're signals. Every emotion carries information: fear says there's a threat, anger says a boundary was crossed, sadness says something mattered and is gone. Your job isn't to silence them but to read them accurately. An emotion you ignore doesn't disappear — it finds another way out.",
+      "Emotions are biological events first. Your brain reads a situation, releases chemicals, and your body responds before your conscious mind catches up. That's why you can't think your way out of a feeling — it's already in your body. The skill is learning to name it, feel it, and then decide what to do with it.",
+      "An emotion is a message your nervous system sends to help you survive and connect. The problem isn't having emotions — it's when you're so disconnected from them you can't read the message, or so overwhelmed you can't think past it. Emotional literacy — knowing what you feel and why — is one of the most practical skills you can build.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['emotional regulation', 'regulate emotions', 'control emotions', 'manage emotions', 'calm down', 'how to deal with emotions', 'emotional control'],
+    responses: [
+      "Emotional regulation isn't suppression — it's the ability to feel something fully without it hijacking your actions. You acknowledge the emotion, name it precisely, let it move through your body, and then choose your response. The more you practice this, the longer the gap between feeling and reacting becomes. That gap is where your power lives.",
+      "The first step to regulating emotion is slowing down the nervous system — breathe slower than feels natural, extend the exhale. This isn't a trick; it signals safety to your brain and creates space to think. From that space you can ask: what is this emotion telling me, and what's the wisest response right now?",
+      "Regulating emotion doesn't mean never feeling it. It means feeling it without being run by it. Name what you feel out loud — 'I'm angry', 'I'm scared'. Research shows that naming an emotion literally reduces its intensity in the brain. Then ask what the emotion is pointing at. That's where the real work begins.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['feeling vs being controlled', 'emotion taking over', 'emotions running my life', 'reactive', 'losing control', 'emotional reactivity'],
+    responses: [
+      "There's a difference between feeling an emotion and being inside it. When you're inside it, the emotion is the whole world — you act from it without distance. When you feel it, you can observe it: 'I notice I'm angry right now.' That one shift — from being the emotion to having the emotion — changes everything about how you respond.",
+      "Emotions become controlling when they're never processed. They build up, and eventually any small trigger releases everything that's been stored. The solution isn't to feel less — it's to feel more regularly, in smaller doses, so nothing has to explode. Daily emotional honesty prevents the outbursts you regret later.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['anger', 'angry', 'rage', 'furious', 'mad', 'frustrated', 'what is anger', 'why am i angry', 'deal with anger'],
+    responses: [
+      "Anger is one of the most misunderstood emotions. It's not a character flaw — it's a signal that something important to you was violated: your dignity, a value you hold, a boundary that was crossed. The problem isn't feeling angry. The problem is acting from anger without understanding what it's pointing at. Ask: what specifically was violated here?",
+      "Healthy anger is protective. It tells you when something isn't right and gives you energy to address it. Destructive anger is when that energy gets turned outward without thought — or turned inward into self-hatred. The path through anger isn't venting (that just rehearses it) — it's understanding what was hurt and what you actually need.",
+      "Rage usually has grief underneath it. When you're furious about something, ask what you would feel if you removed the anger — often what's there is hurt, loss, or fear. The anger is protecting you from the more vulnerable emotion. Going to the grief directly is faster and more honest than staying in the fire.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['grief', 'grieving', 'loss', 'losing someone', 'someone died', 'bereavement', 'mourning', 'how to grieve'],
+    responses: [
+      "Grief doesn't move in a straight line. It's not five stages you tick off and then it's done — it comes in waves, sometimes years later, triggered by a smell, a song, an ordinary Tuesday. That's not a problem. That's love with nowhere to go. Grief is the price of having loved something real.",
+      "There's no timeline for grief and anyone who gives you one is wrong. Some losses take a lifetime to process — not because something is wrong with you, but because what you lost mattered that much. The goal isn't to stop feeling it. It's to carry it in a way that still lets you live.",
+      "Grief is not just about death. You can grieve a relationship, a version of yourself, a life you expected to have. Any significant loss deserves to be mourned. When you don't grieve properly — when you suppress or rush it — it shows up later as depression, numbness, or anger at things that have nothing to do with what you lost.",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['joy', 'what is joy', 'find joy', 'cultivate joy', 'happiness vs joy', 'how to be joyful', 'real joy'],
+    responses: [
+      "Joy is different from happiness. Happiness is a response to good circumstances — it comes and goes with what's happening around you. Joy is deeper. It's a groundedness that can exist even in difficulty — a sense that life has meaning, that you're connected to something real, that you belong. Joy is built, not found.",
+      "You cultivate joy by paying attention to what gives you life and doing more of it — not what impresses others, but what makes you genuinely feel alive. And by practicing gratitude not as a performance but as a real noticing: this moment, this person, this small thing. Joy lives in the specific, never in the vague.",
+      "Hedonic adaptation means that things you want lose their power to make you happy once you have them. Joy resists this because it's not about getting — it's about being. Being present, being connected, being in your purpose. Those things don't wear out the way achievements do.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['shame', 'guilt', 'shame vs guilt', 'ashamed', 'feeling ashamed', 'guilty', 'feeling guilty', 'what is shame'],
+    responses: [
+      "Shame and guilt feel similar but they work completely differently. Guilt says 'I did something bad' — it's about the action, and it can be repaired by making amends. Shame says 'I am bad' — it's about your identity, and it shuts you down. Learning to tell them apart is one of the most important emotional skills you can develop.",
+      "Shame is the most painful human emotion because it attacks the self. When you're in shame, you want to hide, disappear, or attack back. It blocks you from the vulnerability you'd need to actually fix what went wrong. The antidote to shame isn't positive affirmation — it's honest connection with another person. Shame can't survive being spoken out loud to someone who hears you.",
+      "Guilt is useful — it means your conscience is working and you care about your impact on others. But shame is almost never useful. It doesn't make you a better person; it just makes you feel worthless. When you catch yourself spiralling into shame, name it: 'I'm not bad — I did something I regret.' That shift is everything.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['numb', 'emotionally numb', 'feel nothing', 'disconnected', 'shutdown', 'cant feel', 'emotional numbness', 'empty inside', 'going through motions'],
+    responses: [
+      "Emotional numbness is not the absence of feeling — it's a protection response. When emotions get too intense or too frequent, the nervous system shuts down to protect you. It's a survival mechanism, not a character flaw. But it has a cost: you can't selectively numb. When you shut off pain, you also shut off joy, love, and aliveness.",
+      "If you feel nothing, something in you is protecting you from feeling too much. That protection made sense at some point. To come back to feeling, you don't have to face everything at once — start small. Notice a physical sensation: the temperature of air, the weight of your feet. Reconnecting to the body is usually the way back before the emotions return.",
+      "Numbness often follows a period of extreme intensity — prolonged stress, loss, or chronic emotional pain. Your system went into conservation mode. The question isn't 'what's wrong with me' but 'what have I been through that was so much that my system needed to shut off?' Be gentle with yourself. Coming back to feeling is a process, not a switch.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['jealous', 'jealousy', 'envy', 'envious', 'why am i jealous', 'someone has what i want', 'comparison jealousy'],
+    responses: [
+      "Jealousy and envy are uncomfortable to admit, but they're some of the most useful emotions if you know how to read them. Envy tells you exactly what you want. If you're envious of someone's creative freedom, that's information: freedom and creativity matter to you. Stop using the feeling to diminish them — use it to direct yourself.",
+      "Jealousy is usually fear of loss: someone might take what you have. Envy is desire for what someone else has. Both reveal your values and your unmet needs more clearly than almost anything else. Instead of suppressing them, get curious. What specifically is being pointed at? What does that tell you about what matters to you?",
+      "The sting of envy diminishes when you stop treating it as shameful and start treating it as a compass. You are not a bad person for envying someone — you're a person with desires and a gap between where you are and where you want to be. That gap is actionable. The emotion is just pointing at it.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['fear', 'scared', 'what is fear', 'overcome fear', 'how to be brave', 'courage', 'afraid', 'phobia', 'facing fear'],
+    responses: [
+      "Fear is not the enemy of courage — it's the precondition for it. Courage isn't acting without fear; it's acting with fear present. If you wait until you're not afraid to do the hard thing, you'll wait forever. The move is to feel the fear clearly, understand what it's protecting, and then choose to act anyway.",
+      "Fear exists to protect you from real threats. The problem is your nervous system can't always tell the difference between a real danger and a perceived one — so it fires the same alarm for a difficult conversation as it would for a predator. The question to ask is: is this fear protecting me from actual harm, or protecting me from growth?",
+      "Some fear is worth listening to — it has real information. Some fear is just the voice of the old self trying to keep you small and safe. Telling them apart takes practice. Ask: if I go through this fear, what's on the other side? If the answer is growth, connection, or meaning — the fear is the door. Walk through it.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['emotions in the body', 'somatic', 'body feelings', 'emotions stored', 'tension in body', 'physical feelings', 'where emotions live'],
+    responses: [
+      "Emotions aren't just mental — they live in the body. Anger tightens the chest and jaw. Fear contracts the gut. Sadness is a heaviness behind the sternum. This isn't metaphor; it's physiology. Emotions are physical events before they're cognitive ones. If you want to process an emotion, you have to involve the body — not just think about it.",
+      "The body keeps score. Emotions you don't process fully don't just disappear — they get stored as tension, posture, chronic pain, or a nervous system that's perpetually on high alert. This is why talk therapy alone is sometimes not enough, and why movement, breath, and physical awareness matter in emotional healing.",
+      "When you feel a strong emotion, pay attention to where it lives in your body before you try to analyse it. Notice the physical sensation without trying to change it — where is it, what shape, what temperature? This alone can shift the emotion more than any amount of thinking about it. The body speaks a language older than words.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['emotional contagion', 'catching feelings', 'absorbing emotions', 'empathetic burnout', 'taking on emotions', 'emotions spread', 'feeling others emotions'],
+    responses: [
+      "Emotions are contagious — this is not just a saying, it's neuroscience. Mirror neurons in the brain cause you to unconsciously mimic and then feel what people around you feel. This is the basis of empathy. It also means that the emotional environment you spend time in shapes your inner state more than you probably realise.",
+      "You absorb the emotional states of people you're close to. Spend time with chronically anxious people and your baseline anxiety rises. Spend time with calm, grounded people and your nervous system settles. This isn't weakness — it's biology. Choose your environment like your life depends on it, because your emotional life does.",
+      "Being highly empathetic means you're especially good at absorbing others' emotions. That's a gift and a cost. You can't help people from a depleted state. Boundaries aren't walls — they're the ability to be present with someone's pain without losing yourself in it. That requires knowing where your emotions end and theirs begin.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['emotions and decisions', 'feeling affects thinking', 'emotional decision making', 'how emotions affect choices', 'damasio', 'somatic marker'],
+    responses: [
+      "Antonio Damasio's research showed that people who lose emotional processing ability due to brain damage become terrible decision-makers — not better ones. Emotions aren't the enemy of rational thought; they're part of it. Your gut feelings are your brain's rapid summary of past experience. The skill is learning when to trust them.",
+      "Every decision you make is emotional at its core, even if you're reasoning about it. Emotion doesn't corrupt thinking — it orients it. The problem isn't feeling; it's when unexamined emotions drive you without your awareness. The goal is emotional clarity, not emotional suppression, so you can think and feel at the same time.",
+      "Pure logic without emotional input doesn't make better decisions — it makes decisions without values. What you care about, what matters to you, what you want your life to mean — those are emotional convictions. Reason tells you how; emotion tells you why. You need both, working together, not one overriding the other.",
+    ],
+    priority: 6,
+  },
+
+  // ── Human Order Systems ───────────────────────────────────────────────────────
+  {
+    triggers: ['what is social order', 'why do societies exist', 'why humans need structure', 'social structure', 'how society works', 'why do we have rules'],
+    responses: [
+      "Social order exists because humans are too interdependent to survive alone. Rules, norms, and institutions coordinate millions of people who would otherwise have no way to cooperate at scale. The question isn't whether order is necessary — it is — but who benefits from the particular order that exists, and whether it's designed around fairness or around preserving advantage.",
+      "Every society is a negotiation — between individual freedom and collective need, between those with power and those without, between tradition and change. The version of order you live under feels natural because you grew up in it. But it was built by humans, which means it can be rebuilt. Understanding how it works is the first step to having any influence over it.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['hierarchy', 'why is there hierarchy', 'social hierarchy', 'rank', 'pecking order', 'why do people have status', 'dominance'],
+    responses: [
+      "Hierarchy is a biological reality — every social species organises itself into some kind of rank order because it reduces constant conflict. Humans are the same. But unlike other animals, humans can choose what they rank people on — wealth, wisdom, kindness, skill, birth. The hierarchy you internalise determines what you reach for and what you feel you deserve.",
+      "Hierarchy serves people when it's based on legitimate expertise and is permeable — you can move up through effort and competence. It harms people when it's rigid, arbitrary, or self-reinforcing — when those at the top design rules to stay there. Most real systems are somewhere between the two. Knowing which kind you're in shapes how you navigate it.",
+      "Status anxiety is what happens when you live in a hierarchy but don't know where you belong in it. It drives comparison, overwork, and the performance of success over the experience of it. The people most free from hierarchy's grip are those who've found something external to it that gives them worth — a craft, a community, a clear set of values.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['institutions', 'what are institutions', 'government institution', 'school system', 'church institution', 'how institutions work', 'why institutions exist'],
+    responses: [
+      "Institutions are systems designed to persist beyond any individual — governments, schools, churches, banks, courts. They encode a society's values (and its compromises) into rules and routines. Their strength is stability; their weakness is that they're slow to change and tend to protect whoever was powerful when they were built.",
+      "Every institution was created to solve a problem. The trouble is institutions develop a second goal over time: their own survival. They start making decisions to preserve themselves rather than to serve the original purpose. Understanding this is key to navigating any institution — school, workplace, church, government — without being crushed by it.",
+      "Don't mistake an institution's authority for its correctness. Institutions deserve engagement, not blind deference. The question to ask of any institution is: does this serve the people it was built to serve, or has it drifted to serving itself? That question will tell you what to trust, what to challenge, and what to build around.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['power', 'what is power', 'who has power', 'power dynamics', 'how power works', 'power and control', 'powerful people'],
+    responses: [
+      "Power is the ability to shape what happens — to yourself, to others, to the world. It comes in many forms: physical, economic, social, narrative. The most durable kind isn't brute force — it's the power to define what's normal, what's valuable, who counts. That's why controlling the story is always more powerful than controlling people.",
+      "Power isn't inherently corrupt, but it's always a test. People who can do what they want without consequence tend, over time, to use that freedom in narrower and more self-serving ways. This is why accountability and checks on power aren't optional — they're what keeps power from collapsing into domination.",
+      "Your own power is real even when you feel powerless. Power exists at every scale — in a conversation, in a room, in a community. You have the power to choose your response, to withdraw your participation, to name what's happening, to organise with others. Feeling powerless is sometimes accurate — but it's also sometimes a story that keeps you from acting.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['law', 'justice', 'law vs justice', 'is law always right', 'when law is wrong', 'legal system', 'courts', 'justice system'],
+    responses: [
+      "Law and justice are not the same thing. Law is what a society has agreed to enforce. Justice is what is actually fair. Sometimes they align perfectly. Often they don't — because laws are made by people with interests, and those interests don't always include fairness to everyone. Understanding this distinction is essential for thinking clearly about right and wrong.",
+      "A legal system reflects the values and power dynamics of those who built it. Apartheid was legal. Slavery was legal. The Holocaust was carried out under law. Legality is a floor, not a ceiling for morality. The question is always: does this serve human dignity, not just does it comply with the code that was written.",
+      "Blind respect for law and blind disrespect for it are both mistakes. The mature position is to understand what the law is trying to achieve, engage with it honestly, and work to change what's unjust through every legitimate means available — because law is only as good as the people who demand it be better.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['capitalism', 'socialism', 'economic systems', 'economics', 'how economy works', 'free market', 'communism', 'economic model'],
+    responses: [
+      "Capitalism allocates resources through markets — prices signal what's scarce, profit incentivises production, competition drives efficiency. Its strength is dynamism; its weakness is that it distributes wealth unevenly and treats everything, including things that shouldn't be commodified, as sellable. Understanding both parts helps you think clearly rather than react ideologically.",
+      "Socialism prioritises collective ownership and distribution of resources over private profit. Its strength is reducing inequality; its challenge is that centralised economic control tends to be inefficient and, historically, politically dangerous. Most functioning economies today are hybrids — markets plus public systems plus regulation — not pure versions of either.",
+      "No economic system is just a neutral technical arrangement — every one encodes values about what matters. What do we owe each other? Who should bear risk? Who benefits from growth? These are moral questions wearing economic clothing. Developing your own answers to those questions, rather than inheriting someone else's ideology, is how you form a genuine economic view.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['democracy', 'what is democracy', 'how democracy works', 'voting', 'democratic', 'citizen participation', 'why vote'],
+    responses: [
+      "Democracy is more than voting — voting is the floor, not the ceiling. A genuine democracy requires an informed citizenry, free press, independent courts, protected rights, and an engaged civil society. When any of those pillars weakens, the vote itself becomes hollow. Democracy is a daily practice, not an event every few years.",
+      "Democracy's core promise is that power belongs to the people collectively, not to any one person permanently. That promise is always under pressure — from those who want permanent power, from apathy, from misinformation. Every generation has to actively choose democracy again. It is not self-sustaining without citizens who take it seriously.",
+      "Voting matters most in local elections where turnout is lowest and impact is highest. But democracy also demands more: holding representatives accountable, staying informed, engaging community, and refusing to let cynicism — even justified cynicism — become an excuse for non-participation. The system is imperfect. Disengaging makes it worse.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['class', 'social class', 'working class', 'middle class', 'upper class', 'class mobility', 'born poor', 'social mobility', 'poverty trap'],
+    responses: [
+      "Your class background shapes your starting point in ways most people never fully reckon with: the schools available to you, the network you inherit, the risks you can afford to take, the way you carry yourself in rooms of power. This isn't destiny — people do move between classes — but pretending the starting point doesn't matter is how privilege stays invisible.",
+      "Social mobility is real but slower and rarer than meritocracy myths suggest. The single biggest predictor of where you end up is still where you started. That's not an argument for giving up — it's an argument for understanding the actual terrain so you can navigate it honestly, and for demanding the structural changes that make the climb less brutal for those behind you.",
+      "Class isn't just income — it's culture, confidence, and access. Someone with working-class income and middle-class education navigates the world differently. Someone with old money and no income still carries advantages. Understanding class as layered, not just financial, helps you see where real barriers are and where you have more room to move than you think.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['bureaucracy', 'red tape', 'navigating systems', 'government paperwork', 'how to deal with bureaucracy', 'slow systems', 'institution barriers'],
+    responses: [
+      "Bureaucracy feels designed to exhaust you — and sometimes it is. Systems that slow things down often benefit whoever holds the advantage in the current arrangement. But bureaucracy also serves a purpose: it creates consistency, prevents arbitrary decisions, and forces accountability. The trick is learning to work it: know the rules better than the people enforcing them.",
+      "To navigate bureaucracy: document everything, speak the system's language, find the specific person whose job it is to help you (not the call centre), escalate systematically, and never let a 'no' from someone who can't say 'yes' be final. Bureaucracy has levers. Learning to pull them is a practical skill no one teaches you but everyone needs.",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['tradition', 'why tradition exists', 'why people resist change', 'change is hard', 'cultural tradition', 'keeping traditions', 'traditions matter'],
+    responses: [
+      "Tradition carries accumulated wisdom — practices refined over generations in response to real conditions. Dismissing tradition entirely because it's old is as much a mistake as following it blindly because it's familiar. The question to ask of any tradition is: what problem was this solving, and does that problem still exist in the same form?",
+      "People resist change not because they're stupid but because change involves loss, even when what you're gaining is better. Every new way of doing things asks you to give up the old certainties — the familiar roles, the known rhythms, the identity built around the current way. Understanding this makes you more patient with resistance without being captured by it.",
+      "The purpose of tradition is to pass something real down — a value, a way of being, a connection to who came before you. When tradition becomes a cage that prevents you from living honestly, it has lost its purpose. When it grounds you and connects you, it has not. Discerning which is which in your own life is a task worth taking seriously.",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['revolution', 'reform', 'revolution vs reform', 'change the system', 'protest', 'activism', 'when to break rules', 'civil disobedience'],
+    responses: [
+      "Reform works by changing the rules within the existing system; revolution works by changing the system itself. Both have their place. Reform is possible when the system has enough integrity to self-correct. Revolution becomes necessary when the system has no mechanism for accountability — when it actively blocks change and those inside it benefit from keeping things as they are.",
+      "The argument against reform is that you can't fix a fundamentally broken system from inside it — that working within the rules is complicity. The argument against revolution is that what comes after is rarely controlled and often worse. Both arguments have historical evidence. The honest position is: try the slower path first, with genuine urgency, and escalate proportionally to what the situation demands.",
+      "Every major advancement in human rights came from people who refused to accept things as they were — often at great personal cost. Civil disobedience is not chaos; it's a deliberate choice to break an unjust law to expose its injustice, accepting the consequences. That's different from violence, and it has a track record.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['colonialism', 'colonial', 'colonisation', 'post-colonial', 'africa colonialism', 'decolonise', 'legacy of colonialism', 'apartheid legacy', 'european colonialism'],
+    responses: [
+      "Colonialism didn't just take land — it dismantled existing systems of governance, culture, language, and self-understanding, then replaced them with structures designed to extract wealth outward. Many of the instabilities in post-colonial nations — border conflicts, weak institutions, corruption — are not African failures. They're the designed consequences of a system built to serve somewhere else.",
+      "The legacy of colonialism is present in the present — in land distribution, in which industries are owned by whom, in which languages carry prestige, in how people think about their own capacity and worth. Decolonisation isn't just political; it's psychological. Frantz Fanon called it the colonisation of the mind — and undoing it requires seeing clearly how you've internalised ideas about who matters and who doesn't.",
+      "Understanding colonialism's legacy doesn't mean being paralysed by the past. It means seeing the actual terrain clearly — knowing why certain advantages and disadvantages are where they are — so you can navigate it honestly and work toward something genuinely better rather than a surface version of equality built on an unchanged foundation.",
+    ],
+    priority: 7,
+  },
+
+  // ── Connection ────────────────────────────────────────────────────────────────
+  {
+    triggers: ['why do we need connection', 'human connection', 'need for people', 'social need', 'why humans are social', 'need others', 'connection is important'],
+    responses: [
+      "Human connection isn't a nice-to-have — it's a biological need as fundamental as food and water. Prolonged isolation damages the immune system, accelerates cognitive decline, and shortens life in measurable ways. Your nervous system was built to co-regulate with other nervous systems. You are not designed to carry your life alone.",
+      "The need for connection is not weakness — it's the most honest thing about us. Every human, no matter how independent or tough, needs to be seen, known, and cared about by at least one other person. That need doesn't go away with age, success, or self-sufficiency. It just gets suppressed, and shows up as emptiness when you stop moving long enough to feel it.",
+      "Connection is not just emotional — it's neurological. Being seen and understood by another person literally regulates your stress hormones, calms your nervous system, and changes how your brain functions. Isolation is not peaceful — it's a slow threat. Community is not optional — it's the medium in which humans thrive.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['loneliness', 'lonely', 'feeling lonely', 'so alone', 'no one understands', 'isolated', 'isolation', 'loneliness epidemic'],
+    responses: [
+      "Loneliness isn't just a feeling — it's a public health crisis. Research now puts chronic loneliness on par with smoking 15 cigarettes a day in terms of health impact. The modern world — cities, screens, busy schedules — has made it possible to be surrounded by people while being deeply unseen. That gap between proximity and genuine connection is where loneliness lives.",
+      "Being lonely is not a personal failure. It's often a structural problem — you're in an environment that doesn't support real connection — and sometimes a signal that your current relationships don't reach the depth you need. Either way, the solution is the same: move toward vulnerability, not away from it. Connection grows where pretence falls away.",
+      "Loneliness has a specific texture — it's not just being alone, it's being unknown. You can be in a room full of people and feel it acutely. The antidote isn't more socialising — it's better conversations: the ones where you say something true and someone hears it. Even one real relationship can completely change the experience of being alive.",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['alone', 'being alone', 'solitude', 'alone vs lonely', 'enjoy being alone', 'need to be alone', 'introvert alone time'],
+    responses: [
+      "Being alone and being lonely are different things. Solitude is chosen and restorative — it's you with yourself, present and intentional. Loneliness is the ache of unwanted disconnection — the feeling of being without the presence and understanding you need. You can be deeply lonely in a relationship, and deeply content in solitude. The difference is the quality of your relationship with yourself.",
+      "Learning to be genuinely alone — without filling every silence with noise — is one of the more undervalued skills. It's where you hear your own thoughts clearly enough to know what you actually think, what you actually want, what's going on inside you. Without that internal relationship, your relationships with others tend to be more reactive than chosen.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['how to connect', 'build connection', 'make real friends', 'deep connection', 'connect with people', 'how to make friends', 'building relationships'],
+    responses: [
+      "Real connection is built through three things: vulnerability, consistency, and presence. Vulnerability means showing something true about yourself — not performing, not impressing, just being real. Consistency means showing up repeatedly over time so trust can accumulate. Presence means when you're with someone, actually be there — not somewhere else in your head. Remove any one of those and the connection stays shallow.",
+      "The way to build real friendship is to go first — to say something honest, to ask something real, to show genuine interest in what matters to someone rather than what they present. Most people are waiting for someone else to go first. When you do, you give permission for the conversation to become something worth having.",
+      "Depth in relationships doesn't come from time spent together — it comes from the quality of what passes between you. People who share a hard experience in an hour can be closer than people who've spent years in surface interaction. Pursue depth, not duration. Ask real questions. Listen like the answer matters. People remember who made them feel genuinely known.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['shallow relationships', 'deep relationships', 'surface friendships', 'fake friends', 'real friends', 'acquaintance vs friend', 'meaningful relationships'],
+    responses: [
+      "A shallow relationship stays at the surface by mutual agreement — you talk about safe things, avoid tension, perform fine. A deep relationship can hold difficult things: disagreement, vulnerability, failure, change. The difference isn't how long you've known someone — it's whether you've both allowed yourselves to be real in each other's presence.",
+      "Most people have many acquaintances and few real friends, and confuse the two. A real friend is someone who knows something true about you — something you don't perform — and stays. If the only version of you that people like is the curated version, you're not actually connected to them. You're just liked. That's a lonelier position than you might think.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['trust', 'how to trust', 'rebuild trust', 'broken trust', 'trusting people', 'who to trust', 'trust in relationships'],
+    responses: [
+      "Trust is built in small moments, consistently repeated over time — not in grand gestures. It grows when someone does what they say, shows up when it's hard, and handles what you've shared with them carefully. And it can be destroyed in a single moment of carelessness or betrayal. Trust is slow to build and fast to break, which is why the people who hold it deserve to be treated like what they are: rare.",
+      "Broken trust doesn't automatically mean the relationship is over — it means it has to be rebuilt deliberately, which is harder than building it the first time. The person who broke it has to understand what they broke and why, not just apologise and move on. The person whose trust was broken has to be willing to let it be rebuilt — which requires a different kind of courage.",
+      "Learning who to trust is a skill. Watch how people treat those who can do nothing for them. Watch whether what they say and what they do match over time. Watch how they handle your small vulnerabilities before you share the larger ones. Trust your discomfort — it often knows before your reasoning catches up.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['conflict in relationships', 'argument with friend', 'disagreement', 'conflict and connection', 'fighting in relationship', 'how to handle conflict'],
+    responses: [
+      "Conflict, handled well, doesn't damage relationships — it deepens them. When two people can disagree, stay in the room, and work toward understanding, they discover they can handle things together. The relationships where nothing hard is ever said are often the most fragile — they've never been tested. Real connection survives honest friction.",
+      "The goal in conflict isn't to win — it's to understand. What does this person need that they're not saying directly? What am I defending that I need to examine? When you shift from 'how do I get them to see I'm right' to 'what's actually true here', the whole conversation changes. And so does the relationship.",
+      "Avoiding all conflict in a relationship is not peace — it's a pressure buildup. Every avoided conversation adds to the weight both people carry. Learning to have difficult conversations early, while the stakes are still low, is what prevents the explosion that comes later when the accumulated weight finally topples. Say the hard thing. Gently, honestly, early.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['digital connection', 'online friendship', 'social media connection', 'screen vs real', 'online vs offline', 'internet relationships', 'phone and connection'],
+    responses: [
+      "Digital connection is real but partial. You can meet someone online, feel genuine affinity, share important things — that matters. But screens can't deliver what physical presence does: the nervous system co-regulation, the non-verbal communication, the experience of sharing space and time. The body knows the difference, even if the mind doesn't.",
+      "Social media was designed to simulate connection while delivering something closer to performance — curated highlights, engagement metrics, reaction counts. None of that is the same as being known. In fact, heavy social media use tends to increase loneliness because it substitutes the feeling of connection for actual connection. Notice the difference in how you feel after an hour on social media versus an hour with someone who matters to you.",
+      "Online friendships can be genuine — but they usually need to become physical at some point to fully become real. Not because what happened online was fake, but because your nervous system completes its picture of another person through face, voice, presence. If you have people online who genuinely matter to you, find a way to close the distance eventually.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['belonging', 'belong', 'feel like i belong', 'not fitting in', 'fitting in vs belonging', 'find my people', 'where do i belong'],
+    responses: [
+      "Belonging and fitting in are not the same thing. Fitting in means changing yourself so that a group will accept you. Belonging means finding a place where you are accepted as you already are — or becoming who you are and finding that people receive it. One requires performance; the other requires authenticity. Only one actually heals the loneliness.",
+      "The feeling of not belonging is one of the most common human experiences, and one of the most rarely spoken. Most people feel like outsiders in some context — they just hide it. The people who make others feel like they belong are those who are honest about their own awkwardness, their own strangeness, their own uncertainty. Belonging starts when one person stops pretending.",
+      "You won't find belonging everywhere, and you don't need to. You need one or two places — one or two people — who receive the real you. That's enough to build a life around. Not every room is yours. That's not rejection — that's how it works. Find your rooms.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['community', 'community building', 'why community matters', 'finding community', 'build a community', 'community vs individual', 'collective'],
+    responses: [
+      "Individual success without community eventually feels hollow — because humans aren't designed to win alone. Achievement that isn't witnessed, shared, or connected to something larger than yourself runs out of meaning. Community isn't just support — it's the context that makes your life legible. It tells you why what you do matters and to whom.",
+      "Building community is slower than building a following and more durable. A following watches you; a community is built with you. The difference is participation, ownership, and mutual care. If you want to build something that lasts — in a city, a field, or online — build it around a shared purpose that people can genuinely own, not around your personality.",
+      "The crisis of modern life is the collapse of community — the move away from extended family, neighbourhood, civic life, and religious community without building replacements. That absence is a significant source of the loneliness, anxiety, and purposelessness people feel. If you feel it, you're not broken — you're responding accurately to a real loss. The response is to build what's missing, even slowly, even imperfectly.",
     ],
     priority: 7,
   },
