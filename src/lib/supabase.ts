@@ -17,12 +17,6 @@ if (!isSupabaseConfigured) {
   );
 }
 
-// The single account permitted to access NAVI.
-export const ALLOWED_EMAIL = "prophetdian@gmail.com";
-
-// The site origin used as the magic-link email redirect target.
-export const SITE_URL = "https://navisociety.github.io";
-
 // A single shared client for the whole app. When env vars are missing we still
 // create a client against placeholder values so imports don't throw; calls are
 // guarded by `isSupabaseConfigured`.
