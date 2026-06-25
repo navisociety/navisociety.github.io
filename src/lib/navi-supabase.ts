@@ -47,13 +47,51 @@ async function sbGet(path: string): Promise<unknown> {
 }
 
 // Send a magic link to the given email address.
+// Returns a clean, human-readable error string on failure — never an empty
+// string or a stringified object (which previously surfaced as "{}" in the UI).
 export async function sendMagicLink(email: string): Promise<{ error?: string }> {
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: 'https://navisociety.github.io' },
-  });
-  if (error) return { error: error.message };
-  return {};
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: 'https://navisociety.github.io' },
+    });
+    if (error) {
+      console.error('[auth] signInWithOtp failed:', error);
+      return { error: friendlyAuthError(error) };
+    }
+    return {};
+  } catch (e) {
+    console.error('[auth] signInWithOtp threw:', e);
+    return { error: friendlyAuthError(e) };
+  }
+}
+
+// Map any Supabase/auth failure to a friendly, always-non-empty message.
+function friendlyAuthError(err: unknown): string {
+  const fallback = "Couldn't send sign-in email. Please try again.";
+  // Supabase AuthError exposes `message`; some failures carry only a status/code.
+  const raw =
+    err && typeof err === 'object'
+      ? ((err as { message?: unknown }).message ??
+         (err as { error_description?: unknown }).error_description ??
+         (err as { msg?: unknown }).msg)
+      : err;
+  const msg = typeof raw === 'string' ? raw.trim() : '';
+  if (!msg) return fallback;
+  const lower = msg.toLowerCase();
+  // SMTP / delivery failures (the common "Error sending magic link email").
+  if (lower.includes('sending') || lower.includes('smtp') || lower.includes('email')) {
+    return "Couldn't send sign-in email. Please try again in a moment.";
+  }
+  // Rate limiting.
+  if (lower.includes('rate') || lower.includes('limit') || lower.includes('too many')) {
+    return 'Too many attempts. Please wait a minute and try again.';
+  }
+  // Invalid address.
+  if (lower.includes('invalid') && lower.includes('email')) {
+    return 'That email address looks invalid. Please check and try again.';
+  }
+  return msg;
 }
 
 // No longer needed — Supabase client handles the hash via detectSessionInUrl.
