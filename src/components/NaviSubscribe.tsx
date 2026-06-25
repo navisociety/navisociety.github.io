@@ -19,7 +19,7 @@ function loadPayPalSdk(): Promise<void> {
   if (paypalSdkPromise) return paypalSdkPromise;
   paypalSdkPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription`;
+    script.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription&enable-funding=card&disable-funding=venmo,paylater`;
     script.setAttribute('data-sdk-integration-source', 'button-factory');
     script.onload = () => resolve();
     script.onerror = () => reject(new Error('Failed to load PayPal'));
@@ -36,6 +36,8 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
   const [payReady, setPayReady] = useState(false);
   const paypalRef = useRef<HTMLDivElement>(null);
   const renderedRef = useRef(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const cardRenderedRef = useRef(false);
 
   const price = mode === 'mini' ? '$10' : '$20';
   const accent = mode === 'mini' ? '#FA00FF' : '#00F7FF';
@@ -108,6 +110,50 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
         }).render(paypalRef.current).then(() => {
           if (!cancelled) setPayReady(true);
         });
+
+        // Render a separate Card funding button below the PayPal button
+        const cardPaypal = (window as any).paypal;
+        if (cardPaypal?.Buttons && cardRef.current && !cardRenderedRef.current) {
+          const cardBtn = cardPaypal.Buttons({
+            fundingSource: cardPaypal.FUNDING.CARD,
+            createSubscription: async () => {
+              const res = await fetch(PAYPAL_FN, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'create-subscription', tier: mode, email: email.trim() }),
+              });
+              const data = await res.json();
+              if (!res.ok || !data.subscriptionId) {
+                throw new Error(data.error || 'Could not start subscription');
+              }
+              return data.subscriptionId;
+            },
+            onApprove: async (data: { subscriptionID?: string }) => {
+              const subscriptionId = data.subscriptionID;
+              const res = await fetch(PAYPAL_FN, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'activate', subscriptionId, email: email.trim(), tier: mode }),
+              });
+              const result = await res.json();
+              if (res.ok && result.success) {
+                const session: NaviSession = { email: email.trim(), access_token: '' };
+                storeSession(session);
+                setStep('success');
+                setTimeout(() => onAuthenticated(session), 1400);
+              } else {
+                setError('Payment received — activating shortly. Please refresh in a moment.');
+              }
+            },
+            onError: () => {
+              setError('Something went wrong. Please try again.');
+            },
+          });
+          if (cardBtn.isEligible()) {
+            cardRenderedRef.current = true;
+            cardBtn.render(cardRef.current);
+          }
+        }
       })
       .catch(() => {
         if (!cancelled) setError('Could not load PayPal. Please try again.');
@@ -199,6 +245,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
             )}
             {error && <div style={{ color: '#ff4444', fontSize: '13px', textAlign: 'center' }}>{error}</div>}
             <div ref={paypalRef} style={{ minHeight: '48px' }} />
+            <div ref={cardRef} style={{ minHeight: '0px' }} />
 
             <button
               onClick={onClose}
