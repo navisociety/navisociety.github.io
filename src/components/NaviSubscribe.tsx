@@ -214,7 +214,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
             <div style={{ fontSize: '40px' }}>✓</div>
             <div style={{ fontSize: '24px', fontWeight: 700, color: accent }}>Welcome to {label}</div>
             <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.6 }}>
-              Your subscription is active. NAVI is now at full power.
+              Your subscription is active! Check your inbox for a verification email from NAVI — click the link to unlock Mini/Max in this session.
             </div>
           </div>
         )}
