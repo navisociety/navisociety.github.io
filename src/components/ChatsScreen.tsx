@@ -1,4 +1,4 @@
-import { FC, useState, useEffect } from 'react';
+﻿import { FC, useState, useEffect } from 'react';
 import { sendMagicLink, loadChatHistory, NaviSession, ChatMessage } from '../lib/navi-supabase';
 
 interface Props {
@@ -107,18 +107,18 @@ const ChatsScreen: FC<Props> = ({ onClose, session, onAuth }) => {
           <div style={{ color: '#fff', fontSize: '1.8rem', fontWeight: 700, marginBottom: '1.2rem', paddingLeft: '0.25rem' }}>Your Chats</div>
 
           {fetching && (
-            <div style={{ color: '#2a2a2a', textAlign: 'center', paddingTop: '3rem', fontSize: '0.9rem' }}>Loading...</div>
+            <div style={{ color: '#555', textAlign: 'center', paddingTop: '3rem', fontSize: '0.9rem' }}>Loading...</div>
           )}
 
           {!fetching && history.length === 0 && (
-            <div style={{ color: '#2a2a2a', textAlign: 'center', paddingTop: '3rem', fontSize: '0.95rem' }}>
+            <div style={{ color: '#555', textAlign: 'center', paddingTop: '3rem', fontSize: '0.95rem' }}>
               No conversations yet. Start chatting with NAVI.
             </div>
           )}
 
           {!fetching && groupByDate(history).map(group => (
             <div key={group.date}>
-              <div style={{ color: '#222', fontSize: '11px', textAlign: 'center', margin: '1.4rem 0 0.8rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              <div style={{ color: '#555', fontSize: '11px', textAlign: 'center', margin: '1.4rem 0 0.8rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 {group.date}
               </div>
               {group.messages.map(msg => (
