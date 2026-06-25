@@ -5,11 +5,12 @@ interface Props {
   onClose: () => void;
   session: NaviSession | null;
   onAuth: (session: NaviSession) => void;
+  onContinueSession?: (s: ChatSession) => void;
 }
 
 const CYAN = '#00F7FF';
 
-const ChatsScreen: FC<Props> = ({ onClose, session }) => {
+const ChatsScreen: FC<Props> = ({ onClose, session, onContinueSession }) => {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
@@ -138,6 +139,17 @@ const ChatsScreen: FC<Props> = ({ onClose, session }) => {
             ))}
           </div>
         </div>
+        {/* Continue this chat — lifts the session back into the main view so the user keeps talking to NAVI from here. New messages append to this same session_id. */}
+        {onContinueSession && (
+          <div style={{ flexShrink: 0, maxWidth: '480px', margin: '0 auto', width: '100%', padding: '0.5rem 1.25rem 1.5rem', boxSizing: 'border-box' as const }}>
+            <button
+              onClick={() => onContinueSession(activeSession)}
+              style={{ width: '100%', background: CYAN, color: '#000', border: 'none', borderRadius: '12px', padding: '0.9rem', fontFamily: 'Fredoka, sans-serif', fontSize: '1.05rem', fontWeight: 700, cursor: 'pointer' }}
+            >
+              Continue this chat
+            </button>
+          </div>
+        )}
       </div>
     );
   }
