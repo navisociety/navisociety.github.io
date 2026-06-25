@@ -54,7 +54,7 @@ const ChatsScreen: FC<Props> = ({ onClose, session }) => {
     setLinkError('');
     const { error: err } = await sendMagicLink(email.trim());
     setLinkLoading(false);
-    if (err) { setLinkError(err); return; }
+    if (err) { setLinkError(err || "Couldn't send sign-in email. Please try again."); return; }
     setSent(true);
   }
 
