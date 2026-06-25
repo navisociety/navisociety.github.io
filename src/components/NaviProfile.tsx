@@ -1,5 +1,5 @@
 import { FC, useState, useEffect } from 'react';
-import { supabase } from '../lib/navi-supabase';
+import { supabase } from '../lib/supabase';
 
 interface Props {
   session: any;
