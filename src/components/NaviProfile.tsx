@@ -29,6 +29,7 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const [profile, setProfile] = useState<Profile>({
     email: '',
     full_name: '',
@@ -126,6 +127,20 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
       setError('Could not save your changes. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Sign the user out. App.tsx's onAuthStateChange fires on signOut and clears
+  // the session state for the whole app; we just close this overlay afterwards.
+  const signOut = async () => {
+    setSigningOut(true);
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      /* even if the network call fails, close the overlay */
+    } finally {
+      setSigningOut(false);
+      onClose();
     }
   };
 
@@ -305,6 +320,29 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
               }}
             >
               {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save'}
+            </button>
+
+            {/* Sign Out — clears the Supabase session; App.tsx reacts via onAuthStateChange */}
+            <button
+              onClick={signOut}
+              disabled={signingOut}
+              style={{
+                width: '100%',
+                marginTop: '0.85rem',
+                background: 'transparent',
+                color: MAGENTA,
+                border: `1px solid ${MAGENTA}`,
+                borderRadius: '12px',
+                padding: '0.9rem',
+                fontFamily: 'Fredoka, sans-serif',
+                fontSize: '1.05rem',
+                fontWeight: 700,
+                cursor: signingOut ? 'not-allowed' : 'pointer',
+                opacity: signingOut ? 0.6 : 1,
+                transition: 'opacity 0.15s',
+              }}
+            >
+              {signingOut ? 'Signing out…' : 'Sign Out'}
             </button>
           </>
         )}
