@@ -48,6 +48,29 @@ async function sb(path: string, init: RequestInit): Promise<Response> {
   });
 }
 
+async function searchDuckDuckGo(query: string): Promise<{ text: string; url: string }> {
+  try {
+    const res = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (!res.ok) return { text: '', url: '' };
+    const data = await res.json();
+    if (data.Answer) return { text: String(data.Answer).slice(0, 300), url: data.AnswerType || '' };
+    if (data.AbstractText) return { text: String(data.AbstractText).slice(0, 300), url: data.AbstractURL || '' };
+    if (data.RelatedTopics?.[0]?.Text) return { text: String(data.RelatedTopics[0].Text).slice(0, 200), url: data.RelatedTopics[0].FirstURL || '' };
+    return { text: '', url: '' };
+  } catch {
+    return { text: '', url: '' };
+  }
+}
+
+function needsSearch(message: string): boolean {
+  const t = message.toLowerCase();
+  return /\b(who is|what is|when did|where is|how many|latest|news|current|today|price of|define|meaning of|capital of|population|weather in)\b/.test(t)
+    || (t.includes('?') && t.split(' ').length < 10);
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
   const headers = corsHeaders(origin);
@@ -88,7 +111,14 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ code: "limit_reached" }), { status: 200, headers });
     }
 
-    // 3. Anthropic call
+    // 3. Optional web search grounding
+    let searchContext = '';
+    if (needsSearch(message)) {
+      const { text, url } = await searchDuckDuckGo(message);
+      if (text) searchContext = `\nSEARCH RESULT FOR CONTEXT:\n${text}${url ? ' — Source: ' + url : ''}\n\nUse this as factual grounding where relevant. Do not fabricate beyond it.`;
+    }
+
+    // 4. Anthropic call
     const recent = history.slice(-10).map((m) => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: String(m.content || ""),
@@ -105,7 +135,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 2048,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM_PROMPT + searchContext,
         messages,
       }),
     });
