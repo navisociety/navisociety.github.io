@@ -30,6 +30,14 @@ export interface ChatMessage {
   tier: string;
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  last_message: string;
+}
+
 async function sbGet(path: string): Promise<unknown> {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
@@ -97,15 +105,65 @@ export async function getUsageStatus(email: string, tier: 'mini' | 'max'): Promi
 }
 
 export async function saveMessage(
-  email: string, role: 'user' | 'assistant', content: string, tier = 'free'
+  email: string, role: 'user' | 'assistant', content: string, tier = 'free', sessionId?: string
 ): Promise<void> {
   try {
     await fetch(`${SUPABASE_URL}/functions/v1/navi-chats`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, role, content, tier }),
+      body: JSON.stringify(sessionId
+        ? { action: 'message', session_id: sessionId, email, role, content, tier }
+        : { email, role, content, tier }),
     });
   } catch {}
+}
+
+export async function createChatSession(email: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/navi-chats`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create', email }),
+    });
+    const data = await r.json();
+    return data.session_id ?? null;
+  } catch { return null; }
+}
+
+export async function renameChatSession(sessionId: string, email: string, title: string): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/navi-chats`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rename', session_id: sessionId, email, title }),
+    });
+  } catch {}
+}
+
+export async function deleteChatSession(sessionId: string, email: string): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/navi-chats?session_id=${sessionId}&email=${encodeURIComponent(email)}`, {
+      method: 'DELETE',
+    });
+  } catch {}
+}
+
+export async function loadChatSessions(email: string): Promise<ChatSession[]> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/navi-chats?email=${encodeURIComponent(email)}`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data) ? data as ChatSession[] : [];
+  } catch { return []; }
+}
+
+export async function loadSessionMessages(email: string, sessionId: string): Promise<ChatMessage[]> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/navi-chats?email=${encodeURIComponent(email)}&session_id=${sessionId}`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data) ? data as ChatMessage[] : [];
+  } catch { return []; }
 }
 
 export async function loadChatHistory(email: string): Promise<ChatMessage[]> {
