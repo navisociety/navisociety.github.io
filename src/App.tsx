@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
 import NaviProfile from './components/NaviProfile';
@@ -73,6 +73,11 @@ export default function App() {
       if (!session?.user?.email) return;
       const naviSess: NaviSession = { email: session.user.email, access_token: session.access_token };
       setNaviSession(naviSess);
+      // Ensure profile exists for this user — handles pre-trigger users and first sign-ins
+      supabase.from('profiles').upsert(
+        { auth_id: session.user.id, email: session.user.email },
+        { onConflict: 'auth_id', ignoreDuplicates: true }
+      ).then(() => {});
       getSubscriptionStatus(naviSess.email).then(sub => {
         if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
       });
@@ -333,4 +338,3 @@ export default function App() {
     </div>
   );
 }
-
