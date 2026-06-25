@@ -5,7 +5,7 @@ import NaviProfile from './components/NaviProfile';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
 import { supabase } from './lib/supabase';
-import { callNaviPro, getSubscriptionStatus, saveMessage, createChatSession, renameChatSession, type NaviSession, } from './lib/navi-supabase';
+import { callNaviPro, getSubscriptionStatus, saveMessage, createChatSession, renameChatSession, loadSessionMessages, type NaviSession, type ChatSession, } from './lib/navi-supabase';
 
 type Message = {
   id: string;
@@ -70,7 +70,13 @@ export default function App() {
   // Handle magic link redirect and persisted sessions via Supabase auth.
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user?.email) return;
+      if (!session?.user?.email) {
+        // Signed out (or no session): clear user-scoped state so the UI resets.
+        setNaviSession(null);
+        setMode('free');
+        setCurrentSessionId(null);
+        return;
+      }
       const naviSess: NaviSession = { email: session.user.email, access_token: session.access_token };
       setNaviSession(naviSess);
       // Ensure profile exists for this user — handles pre-trigger users and first sign-ins
@@ -91,6 +97,27 @@ export default function App() {
     const sub = await getSubscriptionStatus(session.email);
     if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
   }
+
+  // Resume an existing chat session from ChatsScreen: load its full history
+  // into the main view and point new messages at that same session_id so the
+  // conversation continues seamlessly from where the user left off.
+  const handleContinueSession = useCallback(async (s: ChatSession) => {
+    if (!naviSession) return;
+    setChatsOpen(false);
+    setCurrentSessionId(s.id);
+    setStatus('thinking');
+    const past = await loadSessionMessages(naviSession.email, s.id);
+    const loaded: Message[] = past.map(m => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+    }));
+    setMessages(loaded.length > 0
+      ? loaded
+      : [{ id: '0', role: 'assistant', content: navi.getGreeting() }]);
+    setStatus('ready');
+    setTimeout(() => taRef.current?.focus(), 120);
+  }, [naviSession]);
 
   const stream = useCallback((text: string, msgId: string) => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -333,7 +360,7 @@ export default function App() {
 
       {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} onProfileOpen={() => { setMenuOpen(false); setShowProfile(true); }} />}
       {showProfile && <NaviProfile session={naviSession} onClose={() => setShowProfile(false)} />}
-      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} />}
+      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} onContinueSession={handleContinueSession} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
   );
