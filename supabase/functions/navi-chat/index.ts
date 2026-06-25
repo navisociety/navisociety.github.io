@@ -2,7 +2,7 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v8 (243 nodes), kept in sync with src/lib/navi-model.ts.
+// Deno port of NAVI Model v9 (243 nodes + RAG), kept in sync with src/lib/navi-model.ts.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -2603,17 +2603,15 @@ class NaviModel {
     return timed + pick;
   }
 
-  private retrieve(message: string, queryEmb: number[]): KNode | null {
+  private retrieveTopK(message: string, queryEmb: number[], k = 3): Array<{ node: KNode; score: number }> {
     const msgWords = new Set(
       message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
     );
     const msgLower = message.toLowerCase();
-    let best: KNode | null = null;
-    let bestScore = -Infinity;
+    const scored: Array<{ node: KNode; score: number }> = [];
     for (const node of KNOWLEDGE) {
       let kwScore = 0;
       for (const trigger of node.triggers) {
-        // Strong boost for full multi-word phrase matches.
         if (trigger.includes(' ') && msgLower.includes(trigger)) {
           kwScore = Math.max(kwScore, 1);
           continue;
@@ -2625,9 +2623,19 @@ class NaviModel {
       }
       const embSim = cosine(queryEmb, node.embedding!);
       const score = (kwScore * 0.75 + embSim * 0.25) * (node.priority ?? 5) / 5;
-      if (score > bestScore) { bestScore = score; best = node; }
+      if (score > 0.04) scored.push({ node, score });
     }
-    return bestScore > 0.04 ? best : null;
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, k);
+  }
+
+  private selectBestVariant(responses: string[], queryEmb: number[]): string {
+    let bestIdx = 0, bestSim = -Infinity;
+    for (let i = 0; i < responses.length; i++) {
+      const sim = cosine(this.encode(responses[i]), queryEmb);
+      if (sim > bestSim) { bestSim = sim; bestIdx = i; }
+    }
+    return responses[bestIdx];
   }
 
   private constitutionCheck(text: string): string | null {
@@ -2673,14 +2681,32 @@ class NaviModel {
     if (block) return block;
 
     const queryEmb = this.encode(message);
-    const node = this.retrieve(message, queryEmb);
+    const results = this.retrieveTopK(message, queryEmb);
 
-    if (node) {
-      let response = node.responses[(this.turnCount - 1) % node.responses.length];
+    if (results.length > 0) {
+      const [primary, secondary] = results;
 
-      // Conversation memory: occasionally connect the current topic to something
-      // the user shared earlier in the conversation. Skip crisis/identity nodes.
-      const isSensitive = (node.priority ?? 5) >= 9;
+      // RAG step 1: pick the response variant most semantically aligned with this query.
+      let response = this.selectBestVariant(primary.node.responses, queryEmb);
+
+      // RAG step 2: cross-domain augmentation — when a second node is strongly
+      // relevant and the primary match isn't already a clear single-topic hit,
+      // append the best-matching line from the secondary node as extra context.
+      const isSensitive = (primary.node.priority ?? 5) >= 9;
+      if (
+        !isSensitive &&
+        secondary &&
+        secondary.score >= primary.score * 0.65 &&
+        primary.score < 0.35 &&
+        (secondary.node.priority ?? 5) < 9
+      ) {
+        const secVariant = this.selectBestVariant(secondary.node.responses, queryEmb);
+        const firstSent = secVariant.split(/(?<=[.!?])\s+/)[0];
+        const bridges = ['Worth connecting:', 'Related to that:', 'Another angle:', 'Adding to that:'];
+        response += ` ${bridges[this.turnCount % bridges.length]} ${firstSent}`;
+      }
+
+      // Conversation memory threading. Skip sensitive nodes.
       if (!isSensitive && history.length >= 3 && this.turnCount % 3 === 0) {
         const recalled = this.recallTopic(history, message);
         if (recalled) {
