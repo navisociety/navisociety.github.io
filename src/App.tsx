@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
 import NaviProfile from './components/NaviProfile';
@@ -163,6 +163,7 @@ export default function App() {
   const handleMenuSelect = (item: string) => {
     setMenuOpen(false);
     if (item === 'Chats') setChatsOpen(true);
+    if (item === 'Upgrade') { setSubscribeMode(mode === 'max' ? 'max' : 'mini'); setShowSubscribe(true); }
   };
 
   if (status === 'booting') {
@@ -304,3 +305,4 @@ export default function App() {
     </div>
   );
 }
+
