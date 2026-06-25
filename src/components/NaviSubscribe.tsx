@@ -49,7 +49,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
     setError('');
     const { error: err } = await sendMagicLink(email.trim());
     setLoading(false);
-    if (err) { setError(err); return; }
+    if (err) { setError(err || "Couldn't send sign-in email. Please try again."); return; }
 
     const sub = await getSubscriptionStatus(email.trim());
     if (sub.active && (sub.tier === mode || (mode === 'mini' && sub.tier === 'max'))) {
