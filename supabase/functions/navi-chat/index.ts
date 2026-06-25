@@ -3127,10 +3127,24 @@ async function searchDuckDuckGo(query: string): Promise<{ text: string; url: str
   }
 }
 
-function needsSearch(message: string): boolean {
-  const t = message.toLowerCase();
-  return /\b(who is|what is|when did|where is|how many|latest|news|current|today|price of|define|meaning of|capital of|population|weather in)\b/.test(t)
-    || (t.includes('?') && t.split(' ').length < 10);
+// Only search when navi.infer() produced a generic fallback (no knowledge match).
+function isNaviFallback(response: string): boolean {
+  return [
+    "I don't have a sharp answer",
+    "That's outside what I know",
+    "Hmm. I'm not sure I have that one",
+    "Good question. Give me the context",
+    "I want to give you a real answer, not a generic one. Tell me more",
+    "I don't have that fully mapped yet",
+    "That one's at the edge of what I know",
+    "I'm still building in that area",
+    "Say more about that — I'm following",
+    "Interesting. What made you bring that up",
+    "Go deeper on that. I want the full thought",
+    "I'm with you. Where does that lead",
+    "Let me come at that straight: tell me more",
+    "I want to answer that properly",
+  ].some(s => response.includes(s));
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -3170,9 +3184,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     let response = navi.infer(message, [...history, { role: "user", content: message }]);
-    if (needsSearch(message)) {
-      const { text, url } = await searchDuckDuckGo(message);
-      if (text) response += ` — Here's what I found online: ${text}${url ? ' (' + url + ')' : ''}`;
+    // Only use search when NAVI has no knowledge match — silently replace the fallback.
+    if (isNaviFallback(response)) {
+      const { text } = await searchDuckDuckGo(message);
+      if (text) response = text;
     }
 
     return new Response(JSON.stringify({ response }), {
