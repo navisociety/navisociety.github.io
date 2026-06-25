@@ -1,5 +1,6 @@
 import { FC, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { sendMagicLink } from '../lib/navi-supabase';
 
 interface Props {
   session: any;
@@ -38,6 +39,12 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
     subscription_tier: 'free',
     subscription_status: '',
   });
+
+  // Sign-in form state (logged-out view).
+  const [signInEmail, setSignInEmail] = useState('');
+  const [linkSent, setLinkSent] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState('');
 
   const [authId, setAuthId] = useState<string | undefined>(session?.user?.id);
   const [resolving, setResolving] = useState(true);
@@ -102,6 +109,17 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
       active = false;
     };
   }, [authId, resolving]);
+
+  // Send a magic link from the logged-out profile view.
+  const handleSendLink = async () => {
+    if (!signInEmail.trim()) return;
+    setLinkLoading(true);
+    setLinkError('');
+    const { error: err } = await sendMagicLink(signInEmail.trim());
+    setLinkLoading(false);
+    if (err) { setLinkError(err || "Couldn't send sign-in email. Please try again."); return; }
+    setLinkSent(true);
+  };
 
   const save = async () => {
     if (!authId) return;
@@ -201,12 +219,65 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
         <h1 style={{ color: CYAN, fontSize: '2.4rem', fontWeight: 700, margin: '0.5rem 0 1.75rem' }}>My Profile</h1>
 
         {!resolving && !authId && (
-          <div style={{ color: '#cfcfcf', fontSize: '1.05rem', lineHeight: 1.6 }}>
-            Sign in to view your profile.
-            <div style={{ color: '#777', fontSize: '0.9rem', marginTop: '0.6rem' }}>
-              Once you're signed in, your details and subscription will show up here.
-            </div>
-          </div>
+          <>
+            {!linkSent ? (
+              <>
+                <div style={{ color: '#cfcfcf', fontSize: '1.05rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
+                  Sign in to view your profile.
+                  <div style={{ color: '#777', fontSize: '0.9rem', marginTop: '0.6rem' }}>
+                    Once you're signed in, your details and subscription will show up here.
+                  </div>
+                </div>
+
+                {/* Email */}
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Email</label>
+                  <input
+                    type="email"
+                    value={signInEmail}
+                    onChange={(e) => setSignInEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendLink()}
+                    placeholder="your@email.com"
+                    style={inputStyle}
+                  />
+                </div>
+
+                {linkError && (
+                  <div style={{ color: MAGENTA, fontSize: '0.9rem', marginBottom: '1rem' }}>{linkError}</div>
+                )}
+
+                {/* Sign In */}
+                <button
+                  onClick={handleSendLink}
+                  disabled={linkLoading || !signInEmail.trim()}
+                  style={{
+                    width: '100%',
+                    background: CYAN,
+                    color: '#000',
+                    border: 'none',
+                    borderRadius: '12px',
+                    padding: '0.9rem',
+                    fontFamily: 'Fredoka, sans-serif',
+                    fontSize: '1.05rem',
+                    fontWeight: 700,
+                    cursor: linkLoading || !signInEmail.trim() ? 'not-allowed' : 'pointer',
+                    opacity: linkLoading || !signInEmail.trim() ? 0.6 : 1,
+                    transition: 'opacity 0.15s',
+                  }}
+                >
+                  {linkLoading ? 'Sending…' : 'Sign In'}
+                </button>
+              </>
+            ) : (
+              <div>
+                <div style={{ color: CYAN, fontSize: '1.6rem', fontWeight: 700, marginBottom: '0.75rem' }}>Check your email</div>
+                <div style={{ color: '#cfcfcf', fontSize: '1rem', lineHeight: 1.7 }}>
+                  We sent a sign-in link to <span style={{ color: '#fff' }}>{signInEmail}</span>.<br/>
+                  Click it to sign in and your profile will show up here.
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {(resolving || (authId && loading)) && (
