@@ -6,9 +6,10 @@ interface Props {
   onSelect: (item: string) => void;
   mode: 'free' | 'mini' | 'max';
   email: string | null;
+  onProfileOpen?: () => void;
 }
 
-const NaviMenu: FC<Props> = ({ onClose, onSelect, mode, email }) => {
+const NaviMenu: FC<Props> = ({ onClose, onSelect, mode, email, onProfileOpen }) => {
   const [remainPct, setRemainPct] = useState<number>(1);
 
   useEffect(() => {
@@ -23,6 +24,14 @@ const NaviMenu: FC<Props> = ({ onClose, onSelect, mode, email }) => {
 
   const barColor = mode === 'mini' ? '#FA00FF' : '#00F7FF';
   const NAV_ITEMS = ['Upgrade', 'My Profile', 'Chats'];
+
+  const handleItem = (label: string) => {
+    if (label === 'My Profile' && onProfileOpen) {
+      onProfileOpen();
+      return;
+    }
+    onSelect(label);
+  };
 
   return (
     <div style={{
@@ -82,7 +91,7 @@ const NaviMenu: FC<Props> = ({ onClose, onSelect, mode, email }) => {
         {NAV_ITEMS.map(label => (
           <button
             key={label}
-            onClick={() => onSelect(label)}
+            onClick={() => handleItem(label)}
             style={{
               background: 'none',
               border: 'none',
