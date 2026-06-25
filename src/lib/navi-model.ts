@@ -1,6 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// NAVI Model — v7
+// NAVI Model — v8
 // Built by NAVIsociety, shaped by Prophet Dian.
+// v8: a new domain of logic & reason (deductive, inductive, abductive
+//     reasoning, fallacies, argument structure, cognitive bias, first
+//     principles, Socratic method, scientific method, probability, systems
+//     thinking), deeper human nature (narrative, tribalism, status,
+//     reciprocity, scarcity vs abundance, autonomy, envy, uncertainty,
+//     bystander effect, mirror neurons), and English mastery (academic
+//     writing, rhetoric, literary devices, creative writing, oratory, debate,
+//     critical reading, register, workplace English, vocabulary) — built on
+//     the v7 foundation below.
 // v7: a deep expansion into advanced English language (phrasal verbs,
 //     conditionals, transitions, professional writing, public speaking,
 //     punctuation, difficult conversations) and deep human nature &
@@ -183,6 +192,22 @@ class NaviTokenizer {
       'vulnerable','vulnerability','open','guard','wall','trust','risk','seen','known',
       'meaning','purpose','logotherapy','frankl','existential','void','fulfillment','legacy',
       'change','transform','uncomfortable','growth','discomfort','new','pattern','rewire',
+      // v8: logic & reason
+      'logic','logical','reasoning','reason','fallacy','fallacies','argument','premise','conclusion',
+      'deductive','inductive','abductive','syllogism','valid','sound','inference','critical','thinking',
+      'bias','cognitive','confirmation','anchoring','heuristic','availability','assumption',
+      'principles','socratic','hypothesis','scientific','method','probability','odds','baserate',
+      'systems','feedback','emergent','consequences','fact','facts','opinion','belief','beliefs',
+      'deduce','induce','probable','certain','rational','evidence','prove','disprove','test',
+      // v8: human nature depth
+      'narrative','tribal','tribe','ingroup','outgroup','status','hierarchy','rank',
+      'reciprocity','debt','favour','favor','scarcity','abundance','autonomy','agency',
+      'envy','comparison','uncertainty','bystander','diffusion','responsibility','mirror','neurons','contagion',
+      // v8: english mastery
+      'academic','thesis','citation','rhetoric','ethos','pathos','logos','persuade','persuasion',
+      'metaphor','simile','irony','foreshadowing','symbolism','figurative','device','devices',
+      'creative','character','conflict','voice','oratory','speaking','pace','pause','emphasis',
+      'debate','rebuttal','register','tone','subtext','vocabulary','etymology','origin','precise','audience',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -2231,6 +2256,292 @@ const KNOWLEDGE: KNode[] = [
     ],
     priority: 7,
   },
+
+  // ── v8: Logic & Reason ─────────────────────────────────────────────────────
+  {
+    triggers: ['what is logic', 'critical thinking', 'reason', 'reasoning', 'think clearly', 'logical thinking', 'how to think'],
+    responses: [
+      "Logic is the discipline of reasoning well — drawing conclusions that actually follow from what you know. Critical thinking is logic in action: questioning claims, checking evidence, spotting hidden assumptions, and refusing to be swayed by how something is said rather than whether it's true. It's the skill that separates being persuaded from being convinced.",
+      "To think clearly is to slow down and ask three things: What is being claimed? What's the evidence? Does the conclusion really follow? Most errors in thinking aren't about intelligence — they're about skipping one of those steps. Logic just makes the steps visible.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['deductive', 'deductive reasoning', 'if then', 'premise', 'conclusion', 'syllogism', 'valid argument'],
+    responses: [
+      "Deductive reasoning starts from a rule and applies it: if all humans are mortal, and you are human, then you are mortal. The conclusion is guaranteed if the premises are true. It's the backbone of mathematics, law, and formal argument — but it's only ever as strong as the assumptions you begin with.",
+      "Deductive logic moves from the general to the specific. A syllogism takes two premises and forces a conclusion. The weakness is simple: if one premise is false, the whole chain collapses. That's why checking your starting assumptions matters more than admiring the elegance of the argument.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['inductive', 'inductive reasoning', 'pattern', 'generalize', 'examples to conclusion', 'probable conclusion'],
+    responses: [
+      "Inductive reasoning works the other way from deduction: you observe many cases and infer a general rule. Every swan you've seen is white, so you conclude swans are white. It never guarantees truth — one black swan breaks it — but it's how science, experience, and everyday learning actually work.",
+      "Induction builds conclusions from patterns. The more varied and numerous your observations, the stronger the inference, but it always stays probable, never certain. Good inductive thinking means asking: is my sample large enough, and have I looked for the exceptions, or only the confirmations?",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['abductive', 'abductive reasoning', 'best explanation', 'inference', 'most likely cause', 'detective reasoning'],
+    responses: [
+      "Abductive reasoning is the leap to the best explanation. The grass is wet, so it probably rained — though a sprinkler is possible too. It's how doctors diagnose and detectives solve cases: you pick the hypothesis that explains the most with the fewest assumptions, while staying open to being wrong.",
+      "Abduction asks: of all the things that could explain what I'm seeing, which is most likely? It's reasoning under incomplete information. Its power is speed; its danger is settling on the first explanation that fits instead of the one that fits best. Keep asking what else could account for this.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['logical fallacy', 'fallacy', 'fallacies', 'ad hominem', 'straw man', 'false dichotomy', 'slippery slope', 'flawed argument'],
+    responses: [
+      "A logical fallacy is a flaw in reasoning that makes an argument fail even when it sounds convincing. Ad hominem attacks the person instead of the point. A straw man argues against a distorted version of what was said. A false dichotomy pretends there are only two options. A slippery slope claims one step leads inevitably to disaster. Naming them is the first defence.",
+      "Fallacies are persuasion without proof. Learn the common ones — attacking character instead of claims, forcing a false either-or, exaggerating an opponent's point to knock it down — and you'll notice them everywhere, including in your own thinking. Spotting a fallacy doesn't always mean the conclusion is wrong; it means the argument hasn't earned it.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['argument structure', 'valid and sound', 'premises and conclusion', 'good argument', 'construct argument', 'sound argument'],
+    responses: [
+      "An argument is a set of premises offered in support of a conclusion. It's valid if the conclusion truly follows from the premises, and sound if it's valid and the premises are actually true. Validity is about form; soundness is about truth. A perfectly valid argument can still be nonsense if you feed it false premises.",
+      "To build a strong argument, state your premises clearly, make sure each one is true, and check that together they actually force your conclusion. Many disagreements aren't about logic at all — they're about a premise both sides assumed but never examined. Find that hidden premise and the real conversation begins.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['cognitive bias', 'confirmation bias', 'availability heuristic', 'anchoring', 'mental shortcut', 'biased thinking'],
+    responses: [
+      "Cognitive biases are systematic glitches in how the mind processes information. Confirmation bias makes you notice evidence that supports what you already believe and ignore the rest. The availability heuristic makes vivid, recent events feel more common than they are. Anchoring lets the first number you hear quietly shape every judgement after it.",
+      "Biases aren't stupidity — they're shortcuts the brain evolved to save energy, and they usually work. They fail in the modern world, where the loudest, most recent, or most emotionally charged information isn't the most accurate. You can't delete biases, but you can build habits that check them: seek the disconfirming evidence on purpose.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['problem solving', 'solve a problem', 'break it down', 'how to solve', 'tackle a problem', 'work through a problem'],
+    responses: [
+      "Strong problem solving starts by breaking a big, vague problem into smaller, definable parts. Then you eliminate what can't be the cause, test your assumptions one at a time, and stay willing to discover that the problem isn't what you first thought. Confusion usually means the problem hasn't been broken down far enough yet.",
+      "When you're stuck, don't push harder on the same approach — restate the problem. Ask what you actually know, what you're assuming, and what would have to be true for each possible solution to work. Often the answer was hidden inside a question you hadn't asked clearly.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['decision making', 'make a decision', 'decide', 'uncertainty', 'hard choice', 'choosing under uncertainty'],
+    responses: [
+      "Good decisions under uncertainty aren't about predicting the future — they're about choosing well given what you can't know. Separate the decision from the outcome: a sound choice can still turn out badly, and a reckless one can get lucky. Judge yourself on the quality of your reasoning, not the roll of the dice.",
+      "When the path is unclear, ask which choice you can recover from if you're wrong, and which one is permanent. Favour reversible decisions made quickly and irreversible ones made carefully. And remember: doing nothing is also a decision, with its own cost.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['first principles', 'first principles thinking', 'from scratch', 'fundamental truths', 'reason from basics', 'aristotle reasoning'],
+    responses: [
+      "First-principles thinking means breaking a problem down to its most basic, undeniable truths and reasoning up from there, instead of reasoning by analogy to how things have always been done. It's how real breakthroughs happen: you stop asking what others do and start asking what the laws of the situation actually allow.",
+      "Most thinking copies existing patterns. First-principles thinking refuses to. It asks: strip away every assumption and convention — what do we know to be fundamentally true here, and what becomes possible if we build only from that? Slower at first, but it's where genuinely new answers come from.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['socratic', 'socratic questioning', 'ask why', 'keep asking', 'deeper questions', 'questioning method'],
+    responses: [
+      "Socratic questioning is the art of asking deeper and deeper why until you reach the foundation of a belief. Instead of arguing, you ask: what do you mean by that? How do you know? What if the opposite were true? It exposes shaky reasoning gently, often revealing that the strongest opinions rest on the thinnest ground.",
+      "The Socratic method teaches by questions, not answers. Each why peels back another layer of assumption until the real basis of a belief is exposed — sometimes solid, sometimes empty. Used on others it sharpens debate; used on yourself it's one of the most honest tools for thinking you have.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['scientific method', 'hypothesis', 'experiment', 'observe and test', 'how science works', 'test a theory'],
+    responses: [
+      "The scientific method is a loop: observe something, form a hypothesis to explain it, design a test that could prove you wrong, run it, then refine your idea based on what reality says. Its genius is that it's built to catch its own errors — a hypothesis earns trust only by surviving honest attempts to break it.",
+      "Science isn't a collection of facts; it's a method for not fooling yourself. You observe, you guess, you test the guess in a way that could fail, and you follow the evidence even when it contradicts you. A claim that can't be tested or could never be proven wrong isn't science — it's just an opinion in a lab coat.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['probability', 'risk', 'base rate', 'expected value', 'odds', 'thinking in probabilities', 'likelihood'],
+    responses: [
+      "Thinking in probabilities means accepting that almost nothing is certain, and reasoning in odds instead. Two ideas do most of the work: base rates — how common something is in general before you know the specifics — and expected value — the average outcome of a bet weighing both the size and the likelihood of each result.",
+      "Most poor risk judgement comes from ignoring base rates and being dazzled by vivid stories. A rare event feels likely when it's dramatic. Train yourself to ask: out of a hundred similar situations, how often does this actually happen, and is the payoff worth the probability? That's expected-value thinking.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['systems thinking', 'feedback loop', 'emergent', 'unintended consequences', 'the big picture', 'how systems work'],
+    responses: [
+      "Systems thinking looks at the whole web of relationships rather than isolated parts. It pays attention to feedback loops — where an effect circles back to influence its own cause — and to emergence, where simple parts interacting produce behaviour none of them has alone. It's the antidote to fixing one thing and breaking three others.",
+      "In complex systems, the obvious solution often makes the problem worse, because it ignores the loops connecting everything. Systems thinking asks: if I push here, what pushes back, and where does the unintended consequence land? Cause and effect are rarely close together in time or space — that's why the wise look for the loop, not just the lever.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['facts opinions beliefs', 'fact vs opinion', 'belief', 'what is a fact', 'opinion', 'difference between fact and opinion'],
+    responses: [
+      "A fact is something that can be checked against reality and is true regardless of how you feel about it. An opinion is a judgement or preference — it can be informed or careless, but it isn't simply true or false. A belief is something you hold to be true, sometimes on evidence, sometimes on faith. Confusing the three is where most pointless arguments begin.",
+      "Facts don't bend to wanting. Opinions are yours to hold but should be open to better evidence. Beliefs sit deeper and shape how you read everything else. Clear thinking means knowing which one you're dealing with — and being honest about when an opinion has quietly disguised itself as a fact.",
+    ],
+    priority: 7,
+  },
+
+  // ── v8: Human Nature Depth ─────────────────────────────────────────────────
+  {
+    triggers: ['need for story', 'narrative', 'think in stories', 'why we love stories', 'storytelling brain', 'humans need narrative'],
+    responses: [
+      "Humans think in stories, not spreadsheets. A list of facts slides off the mind, but a story with a character, a struggle, and a turn lodges deep and gets remembered. This is why we organise our own lives into narratives — hero, hardship, redemption — and why whoever tells the better story usually wins the argument, fairly or not.",
+      "We are a story-shaped species. Long before writing, survival knowledge was passed down as tales, and the brain still craves cause, character, and meaning over raw data. Understanding this is power: if you want to move people, don't just give them information — give them a story they can place themselves inside.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['tribal', 'tribe', 'in group', 'out group', 'us vs them', 'tribalism', 'group loyalty'],
+    responses: [
+      "The tribal mind is ancient hardware. For most of human history, belonging to the group meant survival and exile meant death, so the brain learned to instantly sort people into us and them — and to favour us, often without noticing. It builds loyalty and belonging, but it's also the root of prejudice and needless conflict.",
+      "In-group versus out-group thinking can form around almost anything: a flag, a team, a brand, an opinion. Once the line is drawn, we judge our side generously and the other side harshly. Knowing this doesn't switch it off, but it lets you pause and ask whether a person is really an enemy, or just on the other side of a line your mind drew automatically.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['status', 'hierarchy', 'rank', 'why we seek status', 'social standing', 'status games'],
+    responses: [
+      "Humans are intensely status-aware because, for our ancestors, rank determined access to food, safety, and mates. That instinct survives in modern dress — titles, followers, cars, credentials. Status isn't shallow; it's wired deep. But the trap is chasing rank for its own sake instead of the real things it was once a proxy for: respect, security, and contribution.",
+      "Every group forms a hierarchy, and people read their place in it constantly, often unconsciously. Recognising the status game lets you play it wisely or step out of it. The freest people are usually those who've found a source of self-worth that the rankings can't touch.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['reciprocity', 'social debt', 'return a favour', 'owe someone', 'give and take', 'favours'],
+    responses: [
+      "Reciprocity is one of the strongest social forces we have: when someone gives us something, we feel a pull to give back. It built trust and cooperation across human history — but it's also why a small free gift can make you feel obliged to buy. The instinct is good; just stay aware of when it's being used to steer you.",
+      "We carry an internal ledger of social debts and credits, mostly without meaning to. A favour received sits uncomfortably until it's repaid. Used with generosity, reciprocity is the glue of friendship and community. Used cynically, it's a manipulation tactic. Knowing the mechanism lets you give freely and accept wisely.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['scarcity mindset', 'abundance mindset', 'not enough', 'plenty to go around', 'scarcity vs abundance', 'mindset of lack'],
+    responses: [
+      "A scarcity mindset sees life as a fixed pie: if you win, I lose, so I must grab and guard. An abundance mindset sees more pies can be baked — that helping others can grow the whole. Scarcity is often a survival reflex from hard times, but lived out long-term it breeds fear, hoarding, and broken relationships.",
+      "Scarcity narrows thinking — when you feel there isn't enough, you focus on the immediate threat and lose sight of the bigger picture. Abundance widens it, making generosity and patience possible. The shift isn't naive optimism; it's noticing where the pie really is fixed and where, with effort, it can grow.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['autonomy', 'self determination', 'need for control', 'freedom to choose', 'sense of agency', 'being told what to do'],
+    responses: [
+      "Self-Determination Theory says humans have three core psychological needs: autonomy, competence, and relatedness. Autonomy — the sense that your actions are your own choice — is so deep that people will resist even good advice if it feels imposed. We don't just want outcomes; we want to feel we authored them.",
+      "The need for autonomy explains why being controlled drains motivation even when the goal is one you'd have chosen freely. Give a person ownership and a why, and effort flows; dictate every step and it dries up. If you lead anyone — or yourself — protect that sense of agency. It's not a luxury; it's fuel.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['envy', 'comparison', 'jealous of others', 'comparing myself', 'social comparison', 'why we compare'],
+    responses: [
+      "Envy is ancient: comparing yourself to rivals once helped you track your standing and survival. But the modern world hands you thousands of curated highlight reels to measure against, and the instinct goes haywire. Comparison is the thief of joy not because others have more, but because you're comparing your whole reality to their edited surface.",
+      "The roots of envy are evolutionary — relative position mattered to our ancestors. The trap is that today the comparisons are endless and rigged. The cure isn't pretending you feel no envy; it's noticing what the envy points to. Often it reveals a real desire worth pursuing — for yourself, on your own terms, not as a race against someone else.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['fear of uncertainty', 'uncertainty worse than bad news', 'not knowing', 'fear the unknown', 'ambiguity', 'waiting is the worst'],
+    responses: [
+      "Humans often fear uncertainty more than bad news itself. Studies show people feel more stressed waiting to learn if something painful will happen than knowing for sure it will. The mind hates an open question — it fills the blank with worst cases. That's why clear bad news can feel like relief: at least now you can act.",
+      "Not knowing is its own kind of suffering. The brain treats uncertainty as a threat and burns energy running every possibility. This is why honesty, even hard honesty, is often kinder than vague reassurance — it ends the exhausting guessing. When you can't get certainty, naming what you do know shrinks the fog.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['bystander effect', 'diffusion of responsibility', 'no one helped', 'someone else will', 'crowd inaction', 'why nobody acts'],
+    responses: [
+      "The bystander effect is the unsettling fact that the more people witness an emergency, the less likely any single one is to help. Responsibility gets diffused across the crowd — everyone assumes someone else will act, so no one does. It isn't coldness; it's a predictable trick of group psychology.",
+      "Diffusion of responsibility means that in a group, the felt duty to act spreads thin until it nearly vanishes. The antidote is specificity: a single person directly asked — you, in the blue shirt, call for help — almost always responds. If you ever need help in a crowd, don't shout to everyone. Point to one person and name the task.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['mirror neurons', 'empathy science', 'feel what others feel', 'how empathy works', 'emotional contagion', 'catching emotions'],
+    responses: [
+      "Mirror neurons fire both when you do an action and when you watch someone else do it — part of why a wince at another's injury feels almost physical. They're thought to underpin empathy and emotional contagion: yawns spread, moods ripple through a room, and we learn by imitation. We are wired to feel into one another.",
+      "Empathy isn't only a virtue; it has machinery. The brain partly simulates what it sees in others, which is why genuine connection can feel like literally sharing a state. This is a gift and a responsibility — your calm or your panic is contagious. In any room, you're not just feeling the mood; you're shaping it.",
+    ],
+    priority: 7,
+  },
+
+  // ── v8: English Mastery ────────────────────────────────────────────────────
+  {
+    triggers: ['academic writing', 'thesis statement', 'argument and evidence', 'citation', 'write an essay properly', 'scholarly writing'],
+    responses: [
+      "Academic writing is built on a clear thesis — one arguable claim your whole piece defends. Every paragraph then advances that argument with evidence, and every source is cited so readers can verify and trace it. The voice is precise and measured, not flashy: you're persuading through reasoning and proof, not decoration.",
+      "Master academic writing by mastering structure: a thesis that states your position, body paragraphs that each make one point backed by evidence, and citations that give credit and credibility. Strong academic prose anticipates the counter-argument and answers it. Clarity outranks complexity — if a sentence has to be reread to be understood, simplify it.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['rhetoric', 'ethos pathos logos', 'persuasion', 'art of persuasion', 'rhetorical', 'how to persuade'],
+    responses: [
+      "Rhetoric is the art of persuasion, and the classical foundation is three appeals. Ethos persuades through credibility — why should they trust you. Pathos moves through emotion — why should they care. Logos convinces through logic — why it makes sense. The strongest arguments balance all three; rely on only one and you'll lose half your audience.",
+      "Aristotle named the three pillars of persuasion: ethos, pathos, logos — character, emotion, reason. Audiences need to trust the speaker, feel something, and follow the logic. Notice which pillar you lean on and which you neglect. A brilliant argument with no warmth falls flat; pure emotion with no substance collapses under scrutiny.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['literary devices', 'metaphor', 'simile', 'irony', 'foreshadowing', 'symbolism', 'figurative language'],
+    responses: [
+      "Literary devices are tools that make writing resonate beyond its literal meaning. A metaphor says one thing is another; a simile compares using like or as. Irony is the gap between what's said and what's meant. Foreshadowing plants hints of what's coming. Symbolism lets an object carry a larger idea. Together they turn information into experience.",
+      "Great writing rarely states everything outright — it suggests, layers, and resonates. Metaphor and simile create vivid comparison; irony adds tension between surface and depth; symbolism lets a small thing stand for something vast; foreshadowing builds quiet dread or anticipation. Learn to spot them as a reader and you'll learn to wield them as a writer.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['creative writing', 'write a story', 'character and conflict', 'show dont tell', 'find your voice', 'fiction writing'],
+    responses: [
+      "Creative writing lives on four pillars: character, conflict, voice, and the rule of show, don't tell. Readers bond with characters who want something and face obstacles. Conflict is the engine — no struggle, no story. Voice is your unmistakable way of putting words together. And showing — letting action and detail reveal emotion — always beats announcing it.",
+      "Don't tell me she was sad; show me the untouched plate and the phone she keeps checking. That's show, don't tell, the heart of vivid writing. Build a character who wants something badly, throw real conflict in the way, and write it all in a voice that's unmistakably yours. Everything else is craft you refine over time.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['public speaking', 'oratory', 'speak in public', 'breath and pace', 'pause and emphasis', 'give a speech'],
+    responses: [
+      "Public speaking is as much about silence and breath as words. Breathe from the diaphragm to steady your voice and nerves. Slow your pace — anxious speakers rush. Use the pause: a held silence before a key point makes the room lean in. And place emphasis deliberately, because the words you stress tell the audience what matters.",
+      "Great oratory isn't loudness; it's control. Master four things: breath that anchors you, pace that lets ideas land, the pause that creates weight, and emphasis that guides attention. The audience doesn't remember every word — they remember how you made them feel and the few moments you let breathe.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['debate', 'debating', 'persuasion techniques', 'win an argument', 'rebuttal', 'argue effectively'],
+    responses: [
+      "Effective debate isn't about volume; it's about clarity and steel. State your claim plainly, support it with evidence, and anticipate the strongest version of your opponent's case — then answer that, not a weakened caricature. Listening closely is a weapon: the best rebuttal often comes from a contradiction the other side handed you.",
+      "To persuade in debate, lead with what your audience already accepts and build toward what you want them to accept. Stay calm — composure reads as credibility. Concede the points that are true; it earns trust for the points that matter. And never confuse winning the exchange with changing a mind; sometimes the second comes long after the first.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['critical reading', 'read critically', 'identify bias', 'subtext', 'assumptions in text', 'reading between the lines'],
+    responses: [
+      "Critical reading means engaging a text instead of absorbing it. Ask who wrote this and why, what they want you to believe, and what they've left out. Watch for loaded words, missing evidence, and the assumptions smuggled in as if they were facts. Subtext — what's implied beneath the words — often carries more than the words themselves.",
+      "To read critically, separate what a text says from what it's trying to do. Identify the author's stance and the bias it creates, notice the assumptions the argument rests on, and read between the lines for the subtext. A skilled reader is hard to manipulate, because they're always asking what the writer hopes they won't.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['writing for different audiences', 'register', 'tone shift', 'adjust your writing', 'formal vs casual writing', 'know your reader'],
+    responses: [
+      "Skilled writers shift register to fit the reader. Register is the level of formality — the same idea reads differently in a text to a friend, an email to a boss, and a formal report. Tone carries your attitude: warm, neutral, urgent. Before you write a word, picture the exact reader and ask what they need and how they expect to be addressed.",
+      "Writing for different audiences means the message stays true while the delivery changes. A child, a colleague, and a committee each need a different register and tone. This isn't being fake — it's respect for the reader. The mark of mastery is making each audience feel the writing was made for them, because in a sense it was.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['english at work', 'workplace english', 'meetings', 'negotiation language', 'giving feedback', 'professional communication'],
+    responses: [
+      "English in the workplace rewards being clear, concise, and considerate. In meetings, make your point in a sentence before you explain it. In negotiations, ask questions and listen more than you speak — information is leverage. When giving feedback, be specific and kind: name the behaviour, its effect, and the change you'd like, without attacking the person.",
+      "Professional communication is a skill you can build. State the purpose of an email in the first line. In meetings, contribute deliberately rather than constantly. Frame feedback around actions, not character, so it can be heard. And learn the soft phrasing that keeps doors open — I'd suggest, have we considered, my concern is — it isn't weakness, it's diplomacy.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['advanced vocabulary', 'build vocabulary', 'etymology', 'word origins', 'precise words', 'expand vocabulary'],
+    responses: [
+      "Building an advanced vocabulary isn't about memorising long words to show off — it's about precision. The right word says exactly what you mean, sparing a whole clumsy sentence. Learn words in context, not from lists, and study etymology: knowing that bene means good and mal means bad unlocks dozens of words at once.",
+      "A rich vocabulary grows three ways: read widely so you meet words in their natural habitat, notice the precise shade each word carries, and study roots and origins so new words feel familiar. The goal isn't grandeur — it's the quiet power of saying precisely what you mean, no more and no less.",
+    ],
+    priority: 7,
+  },
 ];
 
 // ── NaviModel ─────────────────────────────────────────────────────────────────
@@ -2433,3 +2744,4 @@ class NaviModel {
 }
 
 export const navi = new NaviModel();
+
