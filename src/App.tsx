@@ -3,7 +3,8 @@ import { navi, type NaviMessage } from './lib/navi-model';
 import NaviMenu from './components/NaviMenu';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
-import { callNaviPro, getStoredSession, storeSession, getSubscriptionStatus, extractSessionFromHash, saveMessage, type NaviSession, } from './lib/navi-supabase';
+import { supabase } from './lib/supabase';
+import { callNaviPro, getSubscriptionStatus, saveMessage, type NaviSession, } from './lib/navi-supabase';
 
 type Message = {
   id: string;
@@ -17,7 +18,7 @@ type Status = 'booting' | 'ready' | 'thinking';
 // NAVI now lives on Supabase as an Edge Function (server-side inference).
 // The function is public (no JWT required); we intentionally send no auth
 // header — the Supabase gateway rejects the publishable key as an invalid JWT.
-const NAVI_API = 'https://nmxwsjvmhoxjvkhgqmic.supabase.co/functions/v1/navi-chat';
+const NAVI_API = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/navi-chat`;
 
 async function naviRespond(message: string, history: NaviMessage[]): Promise<string> {
   try {
@@ -63,20 +64,20 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // On mount: handle magic link redirect OR restore stored session.
+  // Handle magic link redirect and persisted sessions via Supabase auth.
   useEffect(() => {
-    const fromHash = extractSessionFromHash();
-    const session = fromHash ?? getStoredSession();
-    if (!session) return;
-    if (fromHash) storeSession(fromHash);
-    setNaviSession(session);
-    getSubscriptionStatus(session.email).then(sub => {
-      if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user?.email) return;
+      const naviSess: NaviSession = { email: session.user.email, access_token: session.access_token };
+      setNaviSession(naviSess);
+      getSubscriptionStatus(naviSess.email).then(sub => {
+        if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
+      });
     });
+    return () => subscription.unsubscribe();
   }, []);
 
   async function handleAuth(session: NaviSession) {
-    storeSession(session);
     setNaviSession(session);
     setShowSubscribe(false);
     const sub = await getSubscriptionStatus(session.email);

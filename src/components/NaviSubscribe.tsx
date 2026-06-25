@@ -10,7 +10,7 @@ interface NaviSubscribeProps {
 type Step = 'email' | 'upgrade' | 'success';
 
 const PAYPAL_CLIENT_ID = 'BAA4Pfgt8NrVZMCEc4cFkY6PsxA6OnR5pJARRVhH0m5W1H5v68jYYxLYqSZMBNvny_SmwkcmTdspeAlc2Q';
-const PAYPAL_FN = 'https://nmxwsjvmhoxjvkhgqmic.supabase.co/functions/v1/navi-paypal';
+const PAYPAL_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/navi-paypal`;
 
 // Load the PayPal JS SDK once
 let paypalSdkPromise: Promise<void> | null = null;
