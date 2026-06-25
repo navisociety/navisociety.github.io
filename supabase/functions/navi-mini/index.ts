@@ -65,10 +65,10 @@ async function searchDuckDuckGo(query: string): Promise<{ text: string; url: str
   }
 }
 
+// Only fetch live data Claude's training can't reliably answer — silently injected into system prompt.
 function needsSearch(message: string): boolean {
   const t = message.toLowerCase();
-  return /\b(who is|what is|when did|where is|how many|latest|news|current|today|price of|define|meaning of|capital of|population|weather in)\b/.test(t)
-    || (t.includes('?') && t.split(' ').length < 10);
+  return /\b(latest|breaking|news today|current price|price of|today['']?s|right now|this week|this month|just happened|recently announced|new release|trending)\b/.test(t);
 }
 
 Deno.serve(async (req) => {
