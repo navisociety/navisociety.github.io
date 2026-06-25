@@ -26,3 +26,35 @@ jobs:
             --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy navi-mini function
+        run: |
+          supabase functions deploy navi-mini \
+            --project-ref irssegzkvxyewuxgqpwi \
+            --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy navi-max function
+        run: |
+          supabase functions deploy navi-max \
+            --project-ref irssegzkvxyewuxgqpwi \
+            --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy navi-paypal function
+        run: |
+          supabase functions deploy navi-paypal \
+            --project-ref irssegzkvxyewuxgqpwi \
+            --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy navi-chats function
+        run: |
+          supabase functions deploy navi-chats \
+            --project-ref irssegzkvxyewuxgqpwi \
+            --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
