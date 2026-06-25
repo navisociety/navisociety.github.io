@@ -5,7 +5,7 @@ import NaviProfile from './components/NaviProfile';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
 import { supabase } from './lib/supabase';
-import { callNaviPro, getSubscriptionStatus, saveMessage, type NaviSession, } from './lib/navi-supabase';
+import { callNaviPro, getSubscriptionStatus, saveMessage, createChatSession, renameChatSession, type NaviSession, } from './lib/navi-supabase';
 
 type Message = {
   id: string;
@@ -49,6 +49,7 @@ export default function App() {
   const [naviSession, setNaviSession] = useState<NaviSession | null>(null);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [subscribeMode, setSubscribeMode] = useState<'mini' | 'max'>('mini');
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -105,6 +106,14 @@ export default function App() {
     }, 14);
   }, []);
 
+  function generateChatTitle(msg: string): string {
+    const clean = msg.trim().replace(/\s+/g, ' ');
+    if (clean.length <= 42) return clean;
+    const cut = clean.substring(0, 42);
+    const lastSpace = cut.lastIndexOf(' ');
+    return (lastSpace > 15 ? cut.substring(0, lastSpace) : cut) + '…';
+  }
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || status !== 'ready') return;
@@ -128,6 +137,16 @@ export default function App() {
       const endpoint = mode === 'mini' ? 'navi-mini' : 'navi-max';
       const result = await callNaviPro(endpoint, text, history, naviSession.email);
       if (result.response) {
+        let sid = currentSessionId;
+        if (!sid) {
+          sid = await createChatSession(naviSession.email);
+          if (sid) {
+            setCurrentSessionId(sid);
+            renameChatSession(sid, naviSession.email, generateChatTitle(text));
+          }
+        }
+        saveMessage(naviSession.email, 'user', text, mode, sid ?? undefined);
+        saveMessage(naviSession.email, 'assistant', result.response, mode, sid ?? undefined);
         stream(result.response, naviId);
         return;
       }
@@ -150,11 +169,20 @@ export default function App() {
     // Free tier: ask NAVI on Supabase (falls back to client-side inference on failure).
     const response = await naviRespond(text, fullHistory);
     if (naviSession) {
-      saveMessage(naviSession.email, 'user', text, 'free');
-      saveMessage(naviSession.email, 'assistant', response, 'free');
+      let sid = currentSessionId;
+      if (!sid) {
+        sid = await createChatSession(naviSession.email);
+        if (sid) {
+          setCurrentSessionId(sid);
+          // Auto-title: rename from "New Chat" to first user message
+          renameChatSession(sid, naviSession.email, generateChatTitle(text));
+        }
+      }
+      saveMessage(naviSession.email, 'user', text, 'free', sid ?? undefined);
+      saveMessage(naviSession.email, 'assistant', response, 'free', sid ?? undefined);
     }
     stream(response, naviId);
-  }, [input, status, messages, stream, mode, naviSession]);
+  }, [input, status, messages, stream, mode, naviSession, currentSessionId]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
