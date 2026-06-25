@@ -5,7 +5,7 @@ import NaviProfile from './components/NaviProfile';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
 import { supabase } from './lib/supabase';
-import { callNaviPro, getSubscriptionStatus, saveMessage, createChatSession, renameChatSession, loadSessionMessages, type NaviSession, type ChatSession, } from './lib/navi-supabase';
+import { callNaviPro, getSubscriptionStatus, saveMessage, createChatSession, renameChatSession, loadSessionMessages, sendMagicLink, type NaviSession, type ChatSession, } from './lib/navi-supabase';
 
 type Message = {
   id: string;
@@ -38,6 +38,9 @@ async function naviRespond(message: string, history: NaviMessage[]): Promise<str
   }
 }
 
+const CYAN = '#00F7FF';
+const MAGENTA = '#FA00FF';
+
 export default function App() {
   const [status, setStatus] = useState<Status>('booting');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -50,6 +53,13 @@ export default function App() {
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [subscribeMode, setSubscribeMode] = useState<'mini' | 'max'>('mini');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  // Inline "save this chat" nudge — shown once the first user+NAVI exchange is
+  // done and the user is not signed in. Auto-hides once a session exists.
+  const [firstExchangeDone, setFirstExchangeDone] = useState(false);
+  const [promptEmail, setPromptEmail] = useState('');
+  const [promptSent, setPromptSent] = useState(false);
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptError, setPromptError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -98,6 +108,17 @@ export default function App() {
     if (sub.active) setMode(sub.tier === 'max' ? 'max' : 'mini');
   }
 
+  // Send a magic link from the inline "save this chat" nudge.
+  const handlePromptSendLink = async () => {
+    if (!promptEmail.trim()) return;
+    setPromptLoading(true);
+    setPromptError('');
+    const { error: err } = await sendMagicLink(promptEmail.trim());
+    setPromptLoading(false);
+    if (err) { setPromptError(err || "Couldn't send sign-in email. Please try again."); return; }
+    setPromptSent(true);
+  };
+
   // Resume an existing chat session from ChatsScreen: load its full history
   // into the main view and point new messages at that same session_id so the
   // conversation continues seamlessly from where the user left off.
@@ -131,6 +152,8 @@ export default function App() {
         if (done && timerRef.current) {
           clearInterval(timerRef.current);
           setStatus('ready');
+          // The first user+NAVI exchange is now complete — allow the nudge.
+          setFirstExchangeDone(true);
           setTimeout(() => taRef.current?.focus(), 80);
         }
         return [...prev.slice(0, -1), { ...last, content: text.slice(0, i), streaming: !done }];
@@ -226,6 +249,11 @@ export default function App() {
     if (item === 'Upgrade') { setSubscribeMode(mode === 'max' ? 'max' : 'mini'); setShowSubscribe(true); }
   };
 
+  // The inline nudge appears only after the first exchange is done, while the
+  // user is not signed in. onAuthStateChange clears naviSession on sign-out and
+  // sets it on sign-in, so this hides automatically the moment a session exists.
+  const showSignInPrompt = firstExchangeDone && !naviSession;
+
   if (status === 'booting') {
     return (
       <div style={{ minHeight: '100vh', background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', fontFamily: 'Fredoka, sans-serif' }}>
@@ -308,6 +336,80 @@ export default function App() {
               </div>
             </div>
           ))}
+
+          {/* Inline sign-in nudge — gentle, non-blocking. Sits below the chat
+              messages, above the input bar. Hides automatically once signed in. */}
+          {showSignInPrompt && (
+            <div style={{
+              marginTop: '0.5rem',
+              background: '#0d0d0d',
+              border: '1px solid #1a1a1a',
+              borderRadius: '14px',
+              padding: '0.95rem 1rem',
+            }}>
+              {!promptSent ? (
+                <>
+                  <div style={{ color: '#e8e8e8', fontSize: '0.92rem', lineHeight: 1.5, marginBottom: '0.7rem' }}>
+                    Want to save this chat?{' '}
+                    <span style={{ color: CYAN, fontWeight: 600 }}>Sign in with your email.</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="email"
+                      value={promptEmail}
+                      onChange={(e) => setPromptEmail(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handlePromptSendLink()}
+                      placeholder="your@email.com"
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        background: '#111',
+                        border: '1px solid #222',
+                        borderRadius: '10px',
+                        color: '#e8e8e8',
+                        padding: '0.6rem 0.8rem',
+                        fontFamily: 'Fredoka, sans-serif',
+                        fontSize: '0.9rem',
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    <button
+                      onClick={handlePromptSendLink}
+                      disabled={promptLoading || !promptEmail.trim()}
+                      style={{
+                        flexShrink: 0,
+                        background: CYAN,
+                        color: '#000',
+                        border: 'none',
+                        borderRadius: '10px',
+                        padding: '0.6rem 1rem',
+                        fontFamily: 'Fredoka, sans-serif',
+                        fontSize: '0.9rem',
+                        fontWeight: 700,
+                        cursor: promptLoading || !promptEmail.trim() ? 'not-allowed' : 'pointer',
+                        opacity: promptLoading || !promptEmail.trim() ? 0.6 : 1,
+                        transition: 'opacity 0.15s',
+                      }}
+                    >
+                      {promptLoading ? '…' : 'Sign In'}
+                    </button>
+                  </div>
+                  {promptError && (
+                    <div style={{ color: MAGENTA, fontSize: '0.82rem', marginTop: '0.55rem' }}>{promptError}</div>
+                  )}
+                </>
+              ) : (
+                <div style={{ color: CYAN, fontSize: '0.95rem', fontWeight: 600, lineHeight: 1.5 }}>
+                  Check your inbox!
+                  <div style={{ color: '#888', fontSize: '0.82rem', fontWeight: 400, marginTop: '0.3rem' }}>
+                    We sent a sign-in link to {promptEmail}.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div ref={bottomRef} />
         </div>
       </main>
