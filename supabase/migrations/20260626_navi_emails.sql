@@ -1,12 +1,14 @@
-CREATE TABLE IF NOT EXISTS navi_emails (
+-- Drop old Brevo-based outbox table
+DROP TABLE IF EXISTS navi_emails CASCADE;
+
+-- Gmail OAuth token storage
+CREATE TABLE IF NOT EXISTS navi_gmail_tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_email text NOT NULL,
-  recipient text NOT NULL DEFAULT '',
-  subject text NOT NULL DEFAULT '',
-  body text NOT NULL DEFAULT '',
-  status text NOT NULL DEFAULT 'draft',
-  sent_at timestamptz,
+  user_email text NOT NULL UNIQUE,
+  access_token text NOT NULL,
+  refresh_token text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  gmail_address text,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS navi_emails_user_email_idx ON navi_emails(user_email);
