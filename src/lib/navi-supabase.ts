@@ -218,6 +218,21 @@ export async function loadChatHistory(email: string): Promise<ChatMessage[]> {
   }
 }
 
+// Cancel the user's active subscription. The edge function cancels the
+// PayPal subscription and downgrades the user to free in Supabase.
+export async function cancelSubscription(email: string): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/navi-paypal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel-subscription', email }),
+    });
+    return r.json();
+  } catch {
+    return { error: 'Network error' };
+  }
+}
+
 export async function callNaviPro(
   endpoint: 'navi-mini' | 'navi-max',
   message: string,
