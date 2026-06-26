@@ -478,7 +478,7 @@ export default function App() {
       {showProfile && <NaviProfile session={naviSession} onClose={() => setShowProfile(false)} />}
       {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} onContinueSession={handleContinueSession} onNewChat={handleNewChat} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} session={naviSession} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
-      {toolsOpen && <ToolsScreen onClose={() => setToolsOpen(false)} />}
+      {toolsOpen && <ToolsScreen onClose={() => setToolsOpen(false)} session={naviSession} />}
     </div>
   );
 }
