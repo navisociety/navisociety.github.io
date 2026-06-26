@@ -190,7 +190,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose, session 
 
         {step === 'upgrade' && (
           <>
-            <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 700, color: accent }}>Upgrade to {label}</div>
+            <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 700, color: accent }}>{label}</div>
             <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.7, textAlign: 'center' }}>
               {session?.email ? 'Signed in as ' : 'Verified as '}<span style={{ color: '#fff' }}>{email}</span>.
             </div>
