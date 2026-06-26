@@ -201,6 +201,56 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: true }), { status: 200, headers });
     }
 
+    if (action === "cancel-subscription") {
+      const email: string = body.email || "";
+      if (!email) {
+        return new Response(JSON.stringify({ error: "missing email" }), { status: 200, headers });
+      }
+
+      // Find this user's most recent ACTIVE subscription.
+      const subsRes = await sb(
+        `navi_subscriptions?email=eq.${encodeURIComponent(email)}&status=eq.active&order=created_at.desc&limit=1`,
+        { method: "GET" }
+      );
+      const subs = await subsRes.json();
+      if (!Array.isArray(subs) || subs.length === 0) {
+        return new Response(JSON.stringify({ error: "no active subscription" }), { status: 200, headers });
+      }
+      const paypalSubId: string | undefined = subs[0].paypal_subscription_id;
+
+      // Cancel at PayPal (best-effort: if it's already cancelled/expired there,
+      // we still mark it inactive on our side so the user is downgraded).
+      if (paypalSubId) {
+        try {
+          const token = await getAccessToken();
+          await fetch(`${PAYPAL_API}/v1/billing/subscriptions/${paypalSubId}/cancel`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ reason: "Customer requested cancellation" }),
+          });
+        } catch (_) {
+          /* fall through and downgrade locally */
+        }
+      }
+
+      // Downgrade: mark every active subscription row for this email as cancelled.
+      // getSubscriptionStatus only counts status=active, so this revokes access.
+      await sb(`navi_subscriptions?email=eq.${encodeURIComponent(email)}&status=eq.active`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "cancelled" }),
+      });
+
+      // Keep the profile badge in sync (best-effort).
+      await sb(`profiles?email=eq.${encodeURIComponent(email)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ subscription_tier: "free", subscription_status: "cancelled" }),
+      });
+
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+    }
+
     return new Response(JSON.stringify({ error: "unknown action" }), { status: 200, headers });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e instanceof Error ? e.message : e) }), { status: 200, headers });
