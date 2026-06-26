@@ -67,6 +67,15 @@ export default function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    // Relay Gmail OAuth popup callback to parent window and close popup
+    const qp = new URLSearchParams(window.location.search);
+    const gmailCode = qp.get('code');
+    const gmailState = qp.get('state') ?? '';
+    if (gmailCode && gmailState.startsWith('gmail_oauth:') && window.opener) {
+      window.opener.postMessage({ type: 'gmail_callback', code: gmailCode, state: gmailState }, window.location.origin);
+      window.close();
+      return;
+    }
     const t = setTimeout(() => {
       setStatus('ready');
       setMessages([{ id: '0', role: 'assistant', content: navi.getGreeting() }]);
