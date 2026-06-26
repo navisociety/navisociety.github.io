@@ -155,6 +155,22 @@ serve(async (req) => {
       return Response.json({ messages: details.filter(Boolean) }, { headers: c });
     }
 
+    if (action === 'list-sent') {
+      const list = await gGet(token, 'messages?labelIds=SENT&maxResults=20');
+      const msgs = list.messages ?? [];
+      const details = await Promise.all(msgs.map((m: { id: string }) =>
+        gGet(token, `messages/${m.id}?format=metadata&metadataHeaders=Subject,From,Date,To`)
+          .then((msg: { id: string; snippet: string; payload: { headers: { name: string; value: string }[] } }) => ({
+            id: msg.id, snippet: msg.snippet,
+            subject: hdr(msg.payload.headers, 'Subject'),
+            from: hdr(msg.payload.headers, 'From'),
+            to: hdr(msg.payload.headers, 'To'),
+            date: hdr(msg.payload.headers, 'Date'),
+          })).catch(() => null)
+      ));
+      return Response.json({ messages: details.filter(Boolean) }, { headers: c });
+    }
+
     if (action === 'list-drafts') {
       const list = await gGet(token, 'drafts?maxResults=20');
       const drafts = list.drafts ?? [];
