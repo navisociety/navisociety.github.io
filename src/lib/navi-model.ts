@@ -236,6 +236,15 @@ class NaviTokenizer {
       'isolation','belonging','vulnerability','presence','genuine','shallow','loneliness','community',
       'bond','bonds','intimacy','closeness','seen','known','heard','understood','accepted','excluded',
       'digital','online','offline','screen','real','physical','in-person','meetup',
+      // v11: relationships, family, finance, leadership, climate, tech, coding, philosophy, african history, sports psychology
+      'compound','compounding','interest','debt','loan','loans','savings','budget','budgeting','invest','investment','investing','stokvel','abundance','dividend','assets',
+      'delegate','delegation','accountability','servant','micromanage','mentor','feedback','culture',
+      'climate','warming','carbon','emissions','sustainability','sustainable','renewable','solar','scarcity','loadshedding','grid','greenhouse',
+      'automation','automate','reskill','upskill','blockchain','crypto','cryptocurrency','bitcoin','metaverse','decentralised','ledger','web3',
+      'coding','debug','debugging','programmer','programming','algorithm','engineer',
+      'stoicism','stoic','existentialism','existential','absurdism','determinism','ethics','morality','aurelius','camus','sartre',
+      'colonisation','colonialism','colonial','apartheid','decolonise','decolonisation','precolonial','liberation','independence','reclaim','timbuktu','zimbabwe',
+      'visualisation','visualise','champion','comeback','choke','defeat','breakup','dating','situationship','unconditional','generational','parenting',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -2886,6 +2895,297 @@ const KNOWLEDGE: KNode[] = [
     ],
     priority: 7,
   },
+
+  // ── v11: Relationships & dating ───────────────────────────────────────────
+  {
+    triggers: ['healthy relationship', 'good relationship', 'what makes a relationship work', 'strong relationship', 'lasting love', 'relationship advice', 'how to love someone'],
+    responses: [
+      "A healthy relationship is two whole people choosing each other, not two halves trying to complete one another. The foundations are simple but hard: honesty, respect, the willingness to repair after conflict, and giving each other room to grow. Love is the feeling; commitment is the daily decision that carries it when the feeling dips.",
+      "Watch how you both handle disagreement, not just how you handle the good days. Couples that last aren't the ones who never fight — they're the ones who fight fairly and come back to each other. Safety, not intensity, is the real sign of a strong bond.",
+      "Real love is mostly small things repeated: paying attention, keeping your word, choosing kindness when you're tired. Grand gestures are easy; consistency is the hard part that actually builds trust. Be someone worth staying for, and look for the same.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['red flags', 'red flag', 'toxic relationship', 'warning signs relationship', 'manipulation', 'controlling partner', 'bad relationship signs', 'gaslighting'],
+    responses: [
+      "Real red flags are patterns, not single moments: control disguised as care, blame that always lands on you, isolation from the people who love you, and words that never match actions. Trust how you feel around someone — anxious and small, or safe and yourself. Your nervous system often reads the truth before your mind admits it.",
+      "Manipulation hides behind charm. Love-bombing then withdrawal, twisting facts until you doubt your own memory, punishing honesty — these are not rough patches, they are tactics. You are allowed to leave a situation that keeps making you feel like the problem.",
+      "The biggest red flag is how someone treats you when you set a boundary. A good person adjusts; a controlling one escalates, sulks, or punishes. Respect for your no is the clearest test of whether their yes means anything.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['love languages', 'love language', 'how to show love', 'words of affirmation', 'quality time', 'acts of service', 'physical touch', 'feel loved'],
+    responses: [
+      "Love languages are simply the different ways people give and receive love — words, time, touch, acts of service, and gifts. Most conflict comes from loving someone in your language instead of theirs. Learn how the person in front of you actually feels cared for, then speak that, even when it isn't your native tongue.",
+      "Pay attention to how someone naturally shows love — that's usually the language they most want to receive. The partner who fixes things may be saying 'I love you' with their hands; the one who needs you present may not feel it from gifts at all. Translate generously.",
+      "Knowing your own love language matters too. If you've felt unloved despite people trying, maybe they were speaking the wrong dialect. Tell people clearly what makes you feel cared for — that's not needy, that's a map.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['breakup', 'broke up', 'getting over someone', 'moving on', 'ex', 'heartbreak', 'split up', 'relationship ended', 'how to move on'],
+    responses: [
+      "A breakup is a real loss, and grief is the right response — don't rush it or shame yourself for it. The pain isn't a sign you made the wrong choice; it's a sign the bond was real. Give it time, keep the routines that hold you up, and let yourself feel it without drowning in it.",
+      "Healing isn't linear. Some days you'll feel free and the next a song undoes you — that's normal, not regression. Cut the contact that keeps the wound open, lean on the people who stayed, and slowly your life fills with new weight where the old one was.",
+      "An ending can be an honest gift, even when it hurts. It frees both of you to find something that actually fits. Don't waste the lesson — ask what this taught you about what you need and who you want to become before you love again.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['modern dating', 'dating apps', 'lonely dating', 'cant find love', 'dating is hard', 'single and lonely', 'tinder', 'dating tired', 'situationship'],
+    responses: [
+      "Modern dating can feel like a marketplace, and that's exhausting because people aren't products to swipe past. The endless choice tricks us into thinking someone better is always one more profile away, so no one gets chosen fully. Slow down, choose presence over options, and treat the person in front of you as a whole human, not a profile.",
+      "Loneliness in dating is rarely about being unlovable — it's about a culture that rewards keeping things casual and punishes vulnerability. Situationships thrive because nobody wants to be the first to care. Be brave enough to want something real and to say so; the right person is relieved when you do.",
+      "If dating has worn you down, it's okay to step back and build a life you love on your own first. People are drawn to fullness, not desperation. The goal isn't to be chosen — it's to become someone who can recognise and receive real love when it comes.",
+    ],
+    priority: 6,
+  },
+  // ── v11: Parenting & family ───────────────────────────────────────────────
+  {
+    triggers: ['good parenting', 'how to be a good parent', 'raising kids', 'parenting', 'be a better parent', 'good father', 'good mother', 'raising children'],
+    responses: [
+      "Good parenting is mostly two things held together: warmth and limits. Children need to feel deeply loved and also to know where the edges are — love without boundaries leaves them anxious, boundaries without love leave them hard. Your steadiness becomes the inner voice they carry for life.",
+      "Children learn far more from who you are than from what you say. They absorb how you handle stress, how you treat their other parent, how you repair after losing your temper. You don't have to be perfect — you have to be honest, present, and willing to say sorry.",
+      "The goal of parenting isn't obedient children; it's capable, secure adults. That means letting them struggle a little, make mistakes, and feel the weight of their choices while knowing your love isn't on the line. Raise them to need you less over time — that's success, not loss.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['generational cycles', 'generational trauma', 'break the cycle', 'family patterns', 'breaking the cycle', 'first to heal', 'family wounds', 'repeating my parents'],
+    responses: [
+      "Breaking a generational cycle is some of the hardest, holiest work a person can do. You're not just changing your habits — you're refusing to pass down a wound that may be older than your grandparents. It will feel unnatural, even disloyal at times, because you're doing what no one modelled for you.",
+      "We inherit more than money and surnames — we inherit ways of handling anger, silence, love, and fear. Noticing the pattern is the first crack in it. Every time you respond differently than you were taught, you're rewriting the script for everyone who comes after you.",
+      "You can honour where you come from and still refuse to repeat its harm. That's not betrayal of your family; it's the deepest kind of love for the ones not yet born. Be the one who broke the cycle, even if no one ever thanks you for it.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['family conflict', 'family problems', 'fighting with family', 'difficult family', 'family drama', 'estranged', 'toxic family', 'parents dont understand'],
+    responses: [
+      "Family conflict cuts deeper because the people involved are tied to your sense of where you come from. You don't have to choose between honesty and connection — but you do have to accept you can't control how others respond. Speak your truth with respect, hold your boundaries, and release the outcome.",
+      "Sometimes peace with family means closeness, and sometimes it means distance — both can be acts of self-respect. You're allowed to love people and still limit how much access they have to your peace. Guilt is not proof you're doing wrong; it's often just the cost of changing an old role.",
+      "Try to separate the person from the pattern. Many family wounds come from people who were never given the tools to do better and are running scripts handed to them. Understanding why someone is the way they are doesn't excuse harm, but it can free you from carrying it as your fault.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['unconditional love', 'love no matter what', 'accept my child', 'love without conditions', 'always love you', 'love regardless'],
+    responses: [
+      "Unconditional love means the bond doesn't depend on performance — you are loved when you fail, when you disappoint, when you change. That doesn't mean no boundaries; it means the relationship itself isn't a reward you have to keep earning. Every child deserves at least one person whose love they never have to audition for.",
+      "To love unconditionally is not to approve of everything — it's to stay connected even through disagreement. You can hold someone accountable and still make it unmistakably clear that your love isn't leaving. That combination is what makes people safe enough to grow.",
+      "If you never received unconditional love, you may keep trying to earn what should have been freely given. Part of healing is learning to offer yourself the steady acceptance you needed. You were always worthy of love that didn't come with a price tag.",
+    ],
+    priority: 7,
+  },
+  // ── v11: Financial literacy ───────────────────────────────────────────────
+  {
+    triggers: ['compound interest', 'compounding', 'how interest works', 'interest on savings', 'money grows', 'eighth wonder', 'time and money'],
+    responses: [
+      "Compound interest is the quiet force that turns small, steady amounts into something large given enough time. You earn returns not just on what you put in, but on the returns themselves — growth feeding growth. The single greatest ingredient isn't the amount; it's time, which is why starting young beats starting rich.",
+      "Picture a snowball rolling downhill: it grows slowly at first, then suddenly enormously. That's compounding. Two hundred rand a month started at twenty is worth more than a thousand rand a month started at forty, because the early money has decades to multiply. Start now, even small.",
+      "Compounding works against you too — that's exactly how debt traps people. The same engine that builds wealth on savings drains it through interest on what you owe. Put the engine on your side: invest consistently, leave it alone, and let time do the heavy lifting.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['debt', 'in debt', 'pay off debt', 'loans', 'credit card debt', 'owing money', 'get out of debt', 'borrowing'],
+    responses: [
+      "Debt isn't always a moral failure — sometimes life simply demands it — but it is a master that charges rent on your future. The goal is to make debt rare, cheap, and temporary. List what you owe, attack the highest-interest debt first, and stop borrowing to fund a lifestyle instead of an asset.",
+      "There's a difference between debt that builds something — a skill, a home, a business — and debt that just funds consumption you'll forget by next month. The first can be a tool; the second is a slow leak. Be ruthless about which kind you're taking on.",
+      "If debt is crushing you, don't hide from it — shame keeps people trapped longer than the numbers do. Face the full total, talk to whoever you owe, and build the smallest sustainable plan you can actually keep. Freedom is paid for one disciplined month at a time.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['saving money', 'how to save', 'savings', 'budget', 'budgeting', 'spend less', 'abundance mindset', 'poverty mindset', 'money mindset'],
+    responses: [
+      "Saving isn't about earning more first — it's a habit you build at any income by paying yourself before you pay everyone else. Decide what goes to savings the day money arrives, not whatever happens to be left over, because something rarely is. A small amount saved consistently beats a big amount promised someday.",
+      "A poverty mindset says there's never enough, so spend it now or someone else will take it. An abundance mindset says money is a tool that grows when stewarded, so delay a little today to have options tomorrow. The shift isn't about how much you have — it's about whether you act from fear or from a plan.",
+      "Budgeting isn't punishment; it's telling your money where to go instead of wondering where it went. Track it honestly for one month and you'll be shocked at what the small leaks add up to. Awareness alone changes behaviour more than willpower ever will.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['investing', 'how to invest', 'investing basics', 'stocks', 'stokvel', 'grow my money', 'passive income', 'wealth building', 'invest in south africa'],
+    responses: [
+      "Investing is putting money to work so it grows while you sleep — but it rewards patience, not gambling. Start with what you understand, spread your risk instead of betting it all on one thing, and think in years, not weeks. The market punishes the impatient and quietly rewards the disciplined.",
+      "Here in South Africa we've always understood collective saving — the stokvel is investing built on trust and community. Modern tools like low-cost index funds and tax-free savings accounts apply the same principle: small regular contributions, pooled time, steady growth. You don't need to be rich to begin, you need to be consistent.",
+      "The first investment is usually in yourself — skills that raise your income give you more to invest in the first place. After that, automate it: a fixed amount into a diversified fund every month, ignored through the ups and downs. Wealth is mostly boring consistency dressed up as a secret.",
+    ],
+    priority: 7,
+  },
+  // ── v11: Leadership & management ──────────────────────────────────────────
+  {
+    triggers: ['good leader', 'great leadership', 'how to lead', 'leadership', 'servant leadership', 'be a leader', 'leading people', 'what makes a leader'],
+    responses: [
+      "A great leader is measured by what grows around them, not by how impressive they look. Servant leadership flips the pyramid: you exist to clear obstacles, develop your people, and take the blame while sharing the credit. People will follow competence, but they commit to character.",
+      "Leadership isn't a title — it's the willingness to take responsibility for outcomes you don't fully control. The best leaders set a clear direction, trust people to find the path, and stay calm when things break. Your team watches how you handle pressure far more than how you handle praise.",
+      "You can't lead others further than you've led yourself. Mastery of your own discipline, emotions, and integrity is the real curriculum. Lead with vision so people know where they're going, and with care so they know they matter on the way there.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['delegation', 'how to delegate', 'delegate tasks', 'cant let go', 'doing everything myself', 'trust my team', 'micromanaging', 'delegate work'],
+    responses: [
+      "Delegation isn't dumping tasks — it's transferring ownership along with the trust to do it differently than you would. If you only hand over the doing but keep all the deciding, you've created a bottleneck with your name on it. Give people the outcome you need and the room to reach it their way.",
+      "The hardest part of delegating is accepting that others will do it at eighty percent of your standard at first — and that's exactly how they grow to a hundred. If you snatch every task back the moment it wobbles, no one ever learns and you stay buried. Let people struggle a little; that's where capability is born.",
+      "You can't scale yourself. Every hour spent on something someone else could do is an hour stolen from the work only you can do. Delegate the rest, define what 'done well' looks like clearly, then get out of the way.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['accountability', 'team culture', 'giving feedback', 'feedback', 'hold people accountable', 'build a team', 'team morale', 'difficult conversation work'],
+    responses: [
+      "Accountability isn't punishment — it's respect. When you hold someone to a standard, you're telling them you believe they're capable of meeting it. The kindest leaders are clear; the cruelest are vague, then disappointed in private. Say what you expect, and follow through both ways.",
+      "Culture is not the values on the wall — it's the worst behaviour the leader is willing to tolerate. Whatever you walk past, you permit. Protect the standard by addressing the small things early, before they become the unspoken norm everyone resents.",
+      "Good feedback is timely, specific, and aimed at the behaviour, not the person. Praise in public, correct in private, and always make it clear you're on their side even when you're hard on the work. People can take almost any truth if they trust you want them to win.",
+    ],
+    priority: 6,
+  },
+  // ── v11: Environment & climate ────────────────────────────────────────────
+  {
+    triggers: ['climate change', 'global warming', 'climate crisis', 'carbon emissions', 'greenhouse', 'planet warming', 'climate action', 'environment crisis'],
+    responses: [
+      "Climate change is the long-term warming of the planet driven mainly by burning fossil fuels, which traps heat and destabilises the systems all life depends on. It isn't a future problem — it's already shifting rainfall, raising seas, and intensifying droughts and storms. The science is settled; the open question is how fast and how fairly we respond.",
+      "The hard truth is that those who did least to cause the crisis — including much of Africa — often suffer its sharpest edges. That makes climate a justice issue, not only an environmental one. Real solutions pair cutting emissions with protecting the vulnerable, not asking the poor to pay for the comfort of the rich.",
+      "Despair and denial both lead to the same place: doing nothing. The honest middle is sober hope — the damage is real, and so is the difference that policy, technology, and changed habits can still make. The future isn't written; it's being decided by what we build now.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['water scarcity', 'load shedding', 'loadshedding', 'eskom', 'energy crisis', 'sustainability south africa', 'water crisis', 'save water', 'renewable energy', 'sustainable living'],
+    responses: [
+      "South Africa lives the environmental crisis up close — water scarcity, load shedding, and an energy system straining under pressure. These aren't separate problems; they're what happens when growth outruns the systems meant to support it. The way forward is diversification: solar, wind, water reuse, and decentralised power that doesn't depend on a single failing point.",
+      "Load shedding taught a hard lesson — depending entirely on one fragile grid leaves everyone vulnerable. The same applies to water. Households, businesses, and towns that build their own resilience with solar, boreholes, rainwater capture, and efficiency aren't just saving money; they're buying independence. Sustainability here is survival, not luxury.",
+      "Living sustainably doesn't require perfection — it requires millions of small, consistent choices. Catch your grey water, fix the leaking tap, run appliances off-peak, support local food. In a water-scarce, energy-strained country, ordinary care multiplied across a community becomes real change.",
+    ],
+    priority: 6,
+  },
+  // ── v11: Technology & the future ──────────────────────────────────────────
+  {
+    triggers: ['ai and jobs', 'will ai take my job', 'automation', 'robots taking jobs', 'future of work', 'ai replacing humans', 'machines taking over work', 'job automation'],
+    responses: [
+      "Automation rarely deletes whole jobs at once — it dissolves tasks, and the jobs that survive are reshaped around them. The people most at risk aren't those whose work is hard, but those whose work is predictable. The safest move is to lean into what stays human: judgement, creativity, care, and the ability to work with the machines rather than against them.",
+      "Every technological wave has destroyed certain kinds of work and created others we couldn't have imagined. The painful part is that the destruction and the creation rarely land on the same people at the same time. That's why this is a justice question as much as a tech one — who gets retrained, supported, and brought along matters enormously.",
+      "Don't fear the tool — understand it. The future belongs to those who can use these systems to amplify their own thinking, not those who pretend they aren't coming. Build skills that compound: learning how to learn, working with people, and solving problems no manual covers.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['digital skills', 'skills for the future', 'future proof career', 'learn tech skills', 'stay relevant', 'reskill', 'upskill', 'skills that matter'],
+    responses: [
+      "The most future-proof skill isn't any single tool — it's the ability to learn quickly and keep learning. Tools change; the meta-skill of adapting compounds. On top of that, build digital fluency, clear communication, and the judgement to know which problem actually needs solving.",
+      "You don't need to become a programmer to survive the digital age, but you do need to stop being afraid of technology. Learn enough to use the tools confidently, automate the boring parts of your work, and find data and information for yourself. Comfort with the digital world is becoming as basic as reading once was.",
+      "The skills that last sit at the intersection of human and technical: someone who understands people and can also wield the tools is far rarer and more valuable than either alone. Pick a domain you care about, get genuinely good at it, and let technology multiply your reach.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['blockchain', 'crypto', 'cryptocurrency', 'bitcoin', 'metaverse', 'web3', 'nft', 'decentralised', 'what is blockchain'],
+    responses: [
+      "A blockchain is, at its core, a shared record that no single party owns and no one can quietly rewrite — many computers hold the same ledger and agree on what's true. That's powerful for trust without a middleman, which is why it underpins cryptocurrencies. But the technology is neutral; plenty of hype has been built on top of a genuinely interesting foundation.",
+      "The metaverse is the idea of persistent shared digital spaces you don't just visit but inhabit — work, play, and gather inside them. Whether it becomes central or stays niche, the deeper trend is real: the line between online and offline life keeps dissolving. Be thoughtful about how much of yourself you pour into worlds someone else controls.",
+      "With crypto and web3, separate the principle from the speculation. The principle — reducing dependence on gatekeepers — is worth understanding. The speculation — get-rich-quick promises and tokens with no purpose — has burned many ordinary people. Learn the ideas, stay sceptical of anyone promising easy money.",
+    ],
+    priority: 6,
+  },
+  // ── v11: Coding & software ────────────────────────────────────────────────
+  {
+    triggers: ['why learn to code', 'learn coding', 'learn programming', 'should i learn to code', 'start coding', 'coding for beginners', 'is coding worth it'],
+    responses: [
+      "Learning to code is learning to turn ideas into things that run — it's one of the closest experiences to magic the modern world offers. Even if you never become a professional, it teaches you to break big problems into small steps and to think with precision. And in an economy increasingly built on software, understanding how it works is real power.",
+      "You don't need to be a genius at maths to code — you need patience and a willingness to be wrong a hundred times before you're right. Start small, build something you actually want to exist, and let the frustration teach you. The first program that works is a feeling you don't forget.",
+      "Code is a language of leverage: write something once and it can serve thousands while you sleep. That's why a single person with a laptop can now build what once took a company. If you have ideas and the discipline to learn slowly, coding hands you a tool to make them real.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['debugging', 'fix my code', 'debug', 'software engineer', 'what do programmers do', 'coding mindset', 'errors in code', 'problem solving code', 'stuck on a bug'],
+    responses: [
+      "Debugging is the real job — writing code is the easy part; finding why it doesn't work is the craft. The mindset is calm curiosity, not panic: assume nothing, test one thing at a time, and read the error instead of fearing it. The bug is never personal, even though it always feels like it.",
+      "Software engineers spend less time typing than people imagine and more time thinking — understanding the problem, weighing trade-offs, and naming things well. The hard part isn't making something work once; it's making it clear enough that the next person, often your future self, can understand it. Good code is mostly good communication.",
+      "When you're truly stuck, the answer is usually that one of your assumptions is wrong. Slow down and check what you're certain of — that's where the lie is hiding. Explain the problem out loud, even to no one; half the time you'll solve it mid-sentence.",
+    ],
+    priority: 6,
+  },
+  // ── v11: Philosophy expanded ──────────────────────────────────────────────
+  {
+    triggers: ['stoicism', 'stoic', 'marcus aurelius', 'control what you can', 'stoic philosophy', 'epictetus', 'seneca', 'inner calm philosophy'],
+    responses: [
+      "Stoicism rests on one liberating distinction: some things are in your control and most are not. Your judgements, choices, and effort are yours; outcomes, other people, and fortune are not. Peace comes from pouring yourself fully into the first and releasing your grip on the second.",
+      "The Stoics weren't cold — they were clear. They trained themselves to meet hardship without being ruled by it, to want what they have, and to treat obstacles as material for character. 'The impediment to action advances action,' wrote Marcus Aurelius — what stands in the way becomes the way.",
+      "Practical Stoicism is simple but demanding: each morning, prepare for difficulty; each evening, review how you met it. Don't react, respond. You can't always choose what happens, but you can almost always choose what it makes of you.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['existentialism', 'existential', 'meaning of life', 'life has no meaning', 'create your own meaning', 'existential crisis', 'why am i here', 'absurdism', 'camus', 'sartre'],
+    responses: [
+      "Existentialism begins with an unsettling gift: life has no built-in meaning handed down from above, which means you are free — and responsible — to create your own. That freedom is heavy, even frightening, but it's also the source of all genuine purpose. You are not what happened to you; you are what you choose to do next.",
+      "Camus looked at a universe that offers no clear answer and refused both despair and false comfort. His response to the absurd was to live fully anyway — to imagine even Sisyphus, endlessly pushing his rock, as happy. Meaning isn't found lying around; it's made by how wholeheartedly you commit to your life.",
+      "An existential crisis isn't a breakdown — it's often a doorway. The old borrowed answers stop working, and you're forced to ask what you actually believe and want. Don't rush to fill the silence; let it clear space for a life you actually choose rather than one you inherited.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['free will', 'do we have free will', 'determinism', 'ethics', 'what is right and wrong', 'morality', 'what is truth', 'is free will real', 'consciousness'],
+    responses: [
+      "The free will debate runs deep: are our choices truly ours, or the inevitable output of brain chemistry and circumstance? The honest answer is that nobody has settled it. But even if our freedom is smaller than it feels, living as though your choices matter is the only way to live well — and that itself shapes what you become.",
+      "Ethics is the ongoing human attempt to answer 'how should we treat one another?' The great traditions offer different lenses: consequences, duties, character. None is complete, but together they sharpen the question. A good rule of thumb still holds — could you defend your choice out loud, to the person it affects?",
+      "Truth is not the same as opinion or comfort. Something can be true whether or not it pleases you, and believing harder doesn't make a falsehood real. The honest path is to follow the evidence even when it costs you, and to hold your conclusions firmly but not so tightly that you can't update them.",
+    ],
+    priority: 6,
+  },
+  // ── v11: African history & decolonisation ─────────────────────────────────
+  {
+    triggers: ['pre-colonial africa', 'precolonial africa', 'african kingdoms', 'great zimbabwe', 'mali empire', 'africa before colonisation', 'mansa musa', 'african civilisation'],
+    responses: [
+      "Africa before colonisation was not a blank page waiting to be written on — it held vast kingdoms, trade networks, universities, and sophisticated systems of governance. Great Zimbabwe's stone cities, the libraries of Timbuktu, the wealth of Mali under Mansa Musa, the iron-working of countless societies — this was a continent of builders and thinkers. The story that Africa had no history was a lie told to justify what came next.",
+      "The peoples of this continent traded gold across the Sahara, mapped the stars, organised complex societies, and created art the world now sits behind glass to admire. Knowing this matters, because a people who believe they came from nothing are easier to keep down. You come from civilisations, not from absence.",
+      "Pre-colonial Africa wasn't a paradise — it had its own conflicts and injustices like everywhere human. But it was fully, richly human, with achievements that stand among the world's great ones. Reclaiming that memory isn't nostalgia; it's restoring a true picture that was deliberately erased.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['colonisation', 'colonialism', 'colonial impact', 'apartheid', 'scramble for africa', 'independence', 'liberation', 'slavery history', 'effects of colonialism'],
+    responses: [
+      "Colonisation was not just the taking of land — it was the dismantling of existing systems and their replacement with ones built to extract, not to serve. Borders were drawn through nations, economies were bent toward distant masters, and people were taught to see themselves as lesser. The wealth and underdevelopment we see today are not accidents; they have roots.",
+      "The independence and liberation movements across Africa were among the great moral achievements of the last century — ordinary people refusing to accept that freedom was something others got to ration out to them. Apartheid fell because people decided their dignity was not negotiable. That courage is an inheritance, not just a history lesson.",
+      "Understanding colonialism's impact isn't about staying angry or assigning permanent victimhood — it's about seeing clearly so you can build wisely. Many present struggles make more sense in the light of that history. You honour the past best not by reliving its wounds, but by building what its architects said your people never could.",
+    ],
+    priority: 7,
+  },
+  {
+    triggers: ['decolonise the mind', 'decolonise', 'decolonisation', 'mental slavery', 'free your mind', 'decolonising education', 'african identity', 'eurocentric', 'reclaim identity'],
+    responses: [
+      "Decolonising the mind is the inner work that political freedom alone can't finish — unlearning the quiet belief that what is foreign is superior and what is yours is lesser. It means questioning whose standards of beauty, success, and intelligence you've absorbed without choosing. The chains on the body can be struck off in a day; the ones in the mind take a generation of conscious effort.",
+      "It doesn't mean rejecting everything from elsewhere — that would just be another kind of smallness. It means choosing freely: keeping what serves you, reclaiming what was dismissed, and judging ideas on their merit rather than their origin. A truly free mind drinks from every well but bows to none.",
+      "Reclaiming your identity starts with knowing your own story — your languages, your history, your people's contributions — well enough that no one can convince you it was nothing. Pride rooted in truth doesn't need to put others down. Walk in the world as someone who came from greatness and is building more.",
+    ],
+    priority: 7,
+  },
+  // ── v11: Sports psychology ────────────────────────────────────────────────
+  {
+    triggers: ['champion mindset', 'mindset of champions', 'mental game', 'visualisation', 'sports psychology', 'winning mentality', 'mental toughness', 'peak performance', 'visualise success'],
+    responses: [
+      "The mind of a champion is built, not born. The greatest athletes train their thinking as deliberately as their bodies — visualising success until it feels familiar, narrowing focus to the next play instead of the scoreboard, and treating pressure as a privilege rather than a threat. Talent gets you to the arena; mindset decides what you do once you're there.",
+      "Visualisation works because the brain rehearses the action almost as if it were real — when you've already won the race a thousand times in your mind, the body knows the path. See it in detail: the movement, the feeling, the finish. Champions don't just hope for the moment; they've already lived it.",
+      "The real opponent is rarely the person across from you — it's the voice in your own head. Champions learn to quiet doubt, stay in the present point, and trust the work they've already put in. Confidence isn't the absence of nerves; it's nerves with somewhere to go.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['recover from failure', 'bounce back', 'losing', 'after a loss', 'pressure', 'choking under pressure', 'mental recovery', 'comeback', 'dealing with defeat'],
+    responses: [
+      "Every champion has a graveyard of losses behind them — the difference is what they did the morning after. Recovery means feeling the defeat fully, mining it for the one or two real lessons, and then closing the book before it starts writing your future. The loss is information, not identity.",
+      "Choking under pressure usually comes from focusing on the outcome instead of the action right in front of you. Bring your attention back to the single thing you can control this moment — the breath, the next step, the process you've trained. Pressure shrinks when your focus narrows.",
+      "The comeback is built in private, long before anyone sees it. After a defeat, the temptation is to either quit or to thrash blindly harder. Resist both — rest, reflect, adjust, then return with a sharper plan. Falling is inevitable; staying down is a choice.",
+    ],
+    priority: 6,
+  },
+
 ];
 
 // ── NaviModel ─────────────────────────────────────────────────────────────────
