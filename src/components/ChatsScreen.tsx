@@ -6,11 +6,12 @@ interface Props {
   session: NaviSession | null;
   onAuth: (session: NaviSession) => void;
   onContinueSession?: (s: ChatSession) => void;
+  onNewChat?: () => void;
 }
 
 const CYAN = '#00F7FF';
 
-const ChatsScreen: FC<Props> = ({ onClose, session, onContinueSession }) => {
+const ChatsScreen: FC<Props> = ({ onClose, session, onContinueSession, onNewChat }) => {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
@@ -160,6 +161,18 @@ const ChatsScreen: FC<Props> = ({ onClose, session, onContinueSession }) => {
       {backBtn(onClose)}
       <div style={{ flex: 1, overflowY: 'auto', maxWidth: '480px', margin: '0 auto', width: '100%', padding: '1rem 1.25rem 2rem', boxSizing: 'border-box' as const }}>
         <div style={{ color: '#fff', fontSize: '2rem', fontWeight: 700, marginBottom: '1.25rem' }}>Chats</div>
+
+        {/* New Chat — clears the current conversation and starts a fresh blank
+            session, then drops the user back into the main view to talk to NAVI. */}
+        {onNewChat && (
+          <button
+            onClick={onNewChat}
+            style={{ width: '100%', background: CYAN, color: '#000', border: 'none', borderRadius: '12px', padding: '0.9rem', fontFamily: 'Fredoka, sans-serif', fontSize: '1.05rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '1.25rem', boxShadow: '0 0 14px #00F7FF33' }}
+          >
+            <span style={{ fontSize: '1.35rem', lineHeight: 1, marginTop: '-2px' }}>+</span>
+            New Chat
+          </button>
+        )}
 
         {fetching && <div style={{ color: '#555', fontSize: '0.9rem', textAlign: 'center', paddingTop: '2rem' }}>Loading…</div>}
 
