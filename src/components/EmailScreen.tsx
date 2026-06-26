@@ -1,341 +1,438 @@
-import { FC, useEffect, useState } from 'react';
-
-const SUPABASE_URL = 'https://irssegzkvxyewuxgqpwi.supabase.co';
-const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/navi-email`;
+import { FC, useState, useEffect, useCallback } from 'react';
 
 interface Props {
   userEmail: string;
   onBack: () => void;
 }
 
-interface Email {
+type View = 'list' | 'compose' | 'read-message' | 'read-draft' | 'edit-draft';
+type Tab = 'inbox' | 'drafts';
+
+interface InboxItem {
   id: string;
-  user_email: string;
-  recipient: string;
   subject: string;
-  body: string;
-  status: 'draft' | 'sent';
-  sent_at: string | null;
-  created_at: string;
-  updated_at: string;
+  from: string;
+  to: string;
+  date: string;
+  snippet: string;
 }
 
-type View = 'list' | 'compose' | 'read' | 'edit';
+interface DraftItem {
+  draftId: string;
+  messageId: string;
+  subject: string;
+  to: string;
+  date: string;
+  snippet: string;
+}
 
-async function callEmail(action: string, payload: Record<string, unknown>) {
-  const res = await fetch(FUNCTION_URL, {
+interface FullMessage {
+  id: string;
+  subject: string;
+  from: string;
+  to: string;
+  date: string;
+  body: string;
+}
+
+interface FullDraft {
+  draftId: string;
+  messageId: string;
+  subject: string;
+  to: string;
+  date: string;
+  body: string;
+}
+
+const API = 'https://irssegzkvxyewuxgqpwi.supabase.co/functions/v1/navi-email';
+
+async function emailApi(body: Record<string, unknown>) {
+  const res = await fetch(API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...payload }),
+    body: JSON.stringify(body),
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
+  return data;
 }
 
-function relativeDate(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diff = Date.now() - then;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
+const CYAN = '#00F7FF';
+const MAG = '#FA00FF';
+const RED = '#FA0000';
+
+const BackBtn: FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button onClick={onClick} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+    <div style={{ width: 42, height: 42, background: CYAN, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+        <path d="M17 7H1M7 1L1 7l6 6" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  </button>
+);
 
 const inputStyle: React.CSSProperties = {
-  background: '#111',
-  border: '1px solid #222',
-  color: '#fff',
-  borderRadius: '10px',
-  padding: '0.75rem',
-  fontFamily: 'Fredoka, sans-serif',
-  fontSize: '1rem',
-  width: '100%',
-  boxSizing: 'border-box',
+  background: '#111', border: '1px solid #222', color: '#fff',
+  borderRadius: 10, padding: '0.75rem', fontFamily: 'Fredoka, sans-serif',
+  fontSize: '1rem', width: '100%', boxSizing: 'border-box',
 };
 
 const labelStyle: React.CSSProperties = {
-  color: '#555',
-  fontSize: '0.85rem',
-  marginBottom: '4px',
-  display: 'block',
+  color: '#555', fontSize: '0.8rem', marginBottom: 4, display: 'block',
 };
 
-const cyanButton: React.CSSProperties = {
-  background: '#00F7FF',
-  color: '#000',
-  border: 'none',
-  borderRadius: '10px',
-  fontWeight: 700,
-  fontFamily: 'Fredoka, sans-serif',
-  fontSize: '1rem',
-  padding: '0.75rem',
-  cursor: 'pointer',
+const btnCyan: React.CSSProperties = {
+  background: CYAN, color: '#000', border: 'none', borderRadius: 10,
+  fontFamily: 'Fredoka, sans-serif', fontWeight: 700, fontSize: '1rem',
+  padding: '0.65rem 1.2rem', cursor: 'pointer',
 };
 
-const magentaOutlineButton: React.CSSProperties = {
-  background: 'none',
-  border: '2px solid #FA00FF',
-  color: '#FA00FF',
-  borderRadius: '10px',
-  fontWeight: 700,
-  fontFamily: 'Fredoka, sans-serif',
-  fontSize: '1rem',
-  padding: '0.75rem',
-  cursor: 'pointer',
+const btnMag: React.CSSProperties = {
+  background: 'none', color: MAG, border: `2px solid ${MAG}`, borderRadius: 10,
+  fontFamily: 'Fredoka, sans-serif', fontWeight: 700, fontSize: '1rem',
+  padding: '0.65rem 1.2rem', cursor: 'pointer',
 };
 
 const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
   const [view, setView] = useState<View>('list');
-  const [tab, setTab] = useState<'draft' | 'sent'>('draft');
-  const [emails, setEmails] = useState<Email[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState<Email | null>(null);
-
-  // form state
-  const [to, setTo] = useState('');
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
+  const [tab, setTab] = useState<Tab>('inbox');
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [gmailAddress, setGmailAddress] = useState<string | null>(null);
+  const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [drafts, setDrafts] = useState<DraftItem[]>([]);
+  const [selectedMsg, setSelectedMsg] = useState<FullMessage | null>(null);
+  const [selectedDraft, setSelectedDraft] = useState<FullDraft | null>(null);
+  const [composeTo, setComposeTo] = useState('');
+  const [composeSubject, setComposeSubject] = useState('');
+  const [composeBody, setComposeBody] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [sendStatus, setSendStatus] = useState<'' | 'sending' | 'sent' | 'error'>('');
 
-  const loadList = async () => {
-    setLoading(true);
-    const data = await callEmail('list', { email: userEmail });
-    setEmails(data.emails ?? []);
-    setLoading(false);
-  };
+  const loadInbox = useCallback(async () => {
+    setListLoading(true);
+    try {
+      const d = await emailApi({ action: 'list-inbox', email: userEmail });
+      setInbox(d.messages ?? []);
+    } catch { /* silent */ } finally { setListLoading(false); }
+  }, [userEmail]);
+
+  const loadDrafts = useCallback(async () => {
+    setListLoading(true);
+    try {
+      const d = await emailApi({ action: 'list-drafts', email: userEmail });
+      setDrafts(d.drafts ?? []);
+    } catch { /* silent */ } finally { setListLoading(false); }
+  }, [userEmail]);
 
   useEffect(() => {
-    loadList();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    emailApi({ action: 'check-connected', email: userEmail }).then(d => {
+      setConnected(d.connected);
+      setGmailAddress(d.gmail_address);
+      if (d.connected) loadInbox();
+    }).catch(() => setConnected(false));
+  }, [userEmail, loadInbox]);
 
-  const goList = () => {
+  useEffect(() => {
+    if (!connected) return;
+    if (tab === 'inbox') loadInbox();
+    else loadDrafts();
+  }, [tab, connected, loadInbox, loadDrafts]);
+
+  useEffect(() => {
+    if (view !== 'list') return;
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type !== 'gmail_callback') return;
+      const { code, state } = e.data;
+      emailApi({ action: 'callback', email: userEmail, code, state }).then(d => {
+        setConnected(true);
+        setGmailAddress(d.gmail_address);
+        loadInbox();
+      }).catch(err => setError(String(err)));
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [view, userEmail, loadInbox]);
+
+  const connectGmail = async () => {
+    setError('');
+    try {
+      const d = await emailApi({ action: 'auth-url', email: userEmail });
+      window.open(d.url, 'gmail_auth', 'width=500,height=650,left=100,top=100');
+    } catch (e) { setError(String(e)); }
+  };
+
+  const openMessage = async (id: string) => {
+    setLoading(true);
+    try {
+      const d = await emailApi({ action: 'get-message', email: userEmail, messageId: id });
+      setSelectedMsg(d);
+      setView('read-message');
+    } catch (e) { setError(String(e)); } finally { setLoading(false); }
+  };
+
+  const openDraft = async (draftId: string) => {
+    setLoading(true);
+    try {
+      const d = await emailApi({ action: 'get-draft', email: userEmail, draftId });
+      setSelectedDraft(d);
+      setView('read-draft');
+    } catch (e) { setError(String(e)); } finally { setLoading(false); }
+  };
+
+  const trashMessage = async (id: string) => {
+    if (!window.confirm('Move this email to trash?')) return;
+    await emailApi({ action: 'trash-message', email: userEmail, messageId: id });
     setView('list');
-    setError('');
-    setNotice('');
-    loadList();
+    loadInbox();
   };
 
-  const openCompose = () => {
-    setTo('');
-    setSubject('');
-    setBody('');
-    setError('');
-    setNotice('');
-    setActive(null);
-    setView('compose');
-  };
-
-  const openRead = (email: Email) => {
-    setActive(email);
-    setView('read');
-  };
-
-  const openEdit = (email: Email) => {
-    setTo(email.recipient);
-    setSubject(email.subject);
-    setBody(email.body);
-    setError('');
-    setNotice('');
-    setActive(email);
-    setView('edit');
+  const deleteDraft = async (draftId: string) => {
+    if (!window.confirm('Delete this draft?')) return;
+    await emailApi({ action: 'delete-draft', email: userEmail, draftId });
+    setView('list');
+    setTab('drafts');
+    loadDrafts();
   };
 
   const saveDraft = async () => {
-    setBusy(true);
-    setError('');
-    if (active) {
-      await callEmail('update', { email: userEmail, id: active.id, recipient: to, subject, body });
-    } else {
-      await callEmail('create', { email: userEmail, recipient: to, subject, body });
-    }
-    setBusy(false);
-    goList();
+    if (!composeBody.trim()) { setError('Body is required.'); return; }
+    setLoading(true); setError('');
+    try {
+      await emailApi({ action: 'create-draft', email: userEmail, to: composeTo, subject: composeSubject, body: composeBody });
+      setView('list'); setTab('drafts'); loadDrafts();
+      setComposeTo(''); setComposeSubject(''); setComposeBody('');
+    } catch (e) { setError(String(e)); } finally { setLoading(false); }
   };
 
-  const send = async () => {
-    if (!to.trim() || !body.trim()) {
-      setError('Recipient and message are required');
-      return;
-    }
-    setBusy(true);
-    setError('');
-    const res = await callEmail('send', {
-      email: userEmail,
-      id: active?.id,
-      recipient: to,
-      subject,
-      body,
-    });
-    setBusy(false);
-    if (res.error) {
-      setError('Could not send. Please try again.');
-      return;
-    }
-    setNotice('Sent!');
-    setTimeout(goList, 900);
+  const sendNew = async () => {
+    if (!composeTo.trim() || !composeBody.trim()) { setError('To and Body are required.'); return; }
+    setSendStatus('sending'); setError('');
+    try {
+      await emailApi({ action: 'send-message', email: userEmail, to: composeTo, subject: composeSubject, body: composeBody });
+      setSendStatus('sent');
+      setTimeout(() => { setSendStatus(''); setView('list'); setTab('inbox'); loadInbox(); setComposeTo(''); setComposeSubject(''); setComposeBody(''); }, 1500);
+    } catch (e) { setSendStatus('error'); setError(String(e)); }
   };
 
-  const remove = async (email: Email) => {
-    if (!confirm('Delete this email?')) return;
-    await callEmail('delete', { email: userEmail, id: email.id });
-    goList();
+  const updateDraft = async () => {
+    if (!selectedDraft) return;
+    setLoading(true); setError('');
+    try {
+      await emailApi({ action: 'update-draft', email: userEmail, draftId: selectedDraft.draftId, to: composeTo, subject: composeSubject, body: composeBody });
+      setView('list'); setTab('drafts'); loadDrafts();
+    } catch (e) { setError(String(e)); } finally { setLoading(false); }
   };
 
-  const overlay: React.CSSProperties = {
-    position: 'fixed',
-    inset: 0,
-    background: '#000',
-    zIndex: 1000,
-    fontFamily: 'Fredoka, sans-serif',
-    overflowY: 'auto',
+  const sendDraft = async () => {
+    if (!selectedDraft) return;
+    setSendStatus('sending'); setError('');
+    try {
+      await emailApi({ action: 'send-draft', email: userEmail, draftId: selectedDraft.draftId });
+      setSendStatus('sent');
+      setTimeout(() => { setSendStatus(''); setView('list'); setTab('inbox'); loadInbox(); }, 1500);
+    } catch (e) { setSendStatus('error'); setError(String(e)); }
   };
 
   const container: React.CSSProperties = {
-    padding: '1.25rem',
-    maxWidth: '480px',
-    margin: '0 auto',
-    width: '100%',
-    boxSizing: 'border-box',
+    position: 'fixed', inset: 0, background: '#000', zIndex: 1000,
+    display: 'flex', flexDirection: 'column', fontFamily: 'Fredoka, sans-serif',
+  };
+  const topBar: React.CSSProperties = {
+    padding: '1.25rem 1.25rem 0', maxWidth: 480, margin: '0 auto',
+    width: '100%', boxSizing: 'border-box',
+  };
+  const scrollArea: React.CSSProperties = {
+    flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto',
+    width: '100%', padding: '1rem 1.25rem', boxSizing: 'border-box',
   };
 
-  const BackButton: FC<{ onClick: () => void }> = ({ onClick }) => (
-    <button onClick={onClick} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
-      <div style={{ width: '42px', height: '42px', background: '#00F7FF', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
-          <path d="M17 7H1M7 1L1 7l6 6" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-    </button>
-  );
+  const formatDate = (d: string) => {
+    try { return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }); } catch { return d; }
+  };
 
-  const Heading: FC = () => (
-    <span style={{ color: '#FFFFFF', fontSize: '2.4rem', fontWeight: 700, display: 'block', margin: '1.25rem 0' }}>Email</span>
-  );
-
-  const renderForm = (mode: 'compose' | 'edit') => (
-    <div style={container}>
-      <BackButton onClick={goList} />
-      <Heading />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div>
-          <label style={labelStyle}>To</label>
-          <input style={inputStyle} type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
-        </div>
-        <div>
-          <label style={labelStyle}>Subject</label>
-          <input style={inputStyle} type="text" value={subject} onChange={(e) => setSubject(e.target.value)} />
-        </div>
-        <div>
-          <label style={labelStyle}>Message</label>
-          <textarea style={{ ...inputStyle, minHeight: '9rem', resize: 'vertical' }} rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
-        </div>
-        {error && <span style={{ color: '#FA0000', fontSize: '0.9rem' }}>{error}</span>}
-        {notice && <span style={{ color: '#00F7FF', fontSize: '0.9rem' }}>{notice}</span>}
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button style={{ ...magentaOutlineButton, flex: 1 }} disabled={busy} onClick={saveDraft}>
-            {mode === 'edit' ? 'Update Draft' : 'Save Draft'}
-          </button>
-          <button style={{ ...cyanButton, flex: 1 }} disabled={busy} onClick={send}>
-            {busy ? 'Sending...' : 'Send'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  if (view === 'compose') return <div style={overlay}>{renderForm('compose')}</div>;
-  if (view === 'edit') return <div style={overlay}>{renderForm('edit')}</div>;
-
-  if (view === 'read' && active) {
+  // --- Not connected ---
+  if (connected === false) {
     return (
-      <div style={overlay}>
-        <div style={container}>
-          <BackButton onClick={goList} />
-          <Heading />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <div>
-              <label style={labelStyle}>From</label>
-              <span style={{ color: '#fff' }}>NAVI / realnavicorp@gmail.com</span>
-            </div>
-            <div>
-              <label style={labelStyle}>To</label>
-              <span style={{ color: '#fff' }}>{active.recipient || '(none)'}</span>
-            </div>
-            <div>
-              <label style={labelStyle}>Subject</label>
-              <span style={{ color: '#fff' }}>{active.subject || '(no subject)'}</span>
-            </div>
-            <div>
-              <label style={labelStyle}>Date</label>
-              <span style={{ color: '#fff' }}>{relativeDate(active.sent_at ?? active.created_at)}</span>
-            </div>
-            <div>
-              <label style={labelStyle}>Message</label>
-              <span style={{ color: '#fff', whiteSpace: 'pre-wrap' }}>{active.body}</span>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-              {active.status === 'draft' && (
-                <button style={{ ...cyanButton, flex: 1 }} onClick={() => openEdit(active)}>Edit</button>
-              )}
-              <button style={{ ...magentaOutlineButton, flex: 1 }} onClick={() => remove(active)}>Delete</button>
-            </div>
+      <div style={container}>
+        <div style={topBar}><BackBtn onClick={onBack} /></div>
+        <div style={{ ...scrollArea, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+          <span style={{ color: CYAN, fontSize: '2rem', fontWeight: 700, marginBottom: '1rem' }}>NAVI Email</span>
+          <span style={{ color: '#888', fontSize: '1rem', marginBottom: '1.5rem', lineHeight: 1.5 }}>
+            Connect your Gmail account to read and manage your emails.
+          </span>
+          {error && <span style={{ color: RED, fontSize: '0.9rem', marginBottom: '1rem' }}>{error}</span>}
+          <button style={{ ...btnCyan, width: '100%', marginBottom: '0.75rem' }} onClick={connectGmail}>
+            Connect Gmail
+          </button>
+          <span style={{ color: '#333', fontSize: '0.75rem', lineHeight: 1.4 }}>
+            NAVI only requests permission to read and manage your Gmail.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Loading check ---
+  if (connected === null) {
+    return (
+      <div style={container}>
+        <div style={topBar}><BackBtn onClick={onBack} /></div>
+        <div style={{ ...scrollArea, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <span style={{ color: '#555' }}>Loading…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Compose ---
+  if (view === 'compose') {
+    return (
+      <div style={container}>
+        <div style={topBar}><BackBtn onClick={() => { setView('list'); setError(''); setSendStatus(''); }} /></div>
+        <div style={scrollArea}>
+          <div style={{ color: '#fff', fontSize: '1.8rem', fontWeight: 700, marginBottom: '1.25rem' }}>New Email</div>
+          {sendStatus === 'sent' && <div style={{ color: CYAN, fontSize: '1rem', marginBottom: '1rem', fontWeight: 700 }}>Sent!</div>}
+          {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
+          <label style={labelStyle}>To</label>
+          <input type="email" value={composeTo} onChange={e => setComposeTo(e.target.value)} style={{ ...inputStyle, marginBottom: '0.75rem' }} placeholder="recipient@example.com" />
+          <label style={labelStyle}>Subject</label>
+          <input type="text" value={composeSubject} onChange={e => setComposeSubject(e.target.value)} style={{ ...inputStyle, marginBottom: '0.75rem' }} placeholder="Subject" />
+          <label style={labelStyle}>Body</label>
+          <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} rows={8} style={{ ...inputStyle, marginBottom: '1rem', resize: 'vertical' }} placeholder="Write your message…" />
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button style={{ ...btnMag, flex: 1 }} onClick={saveDraft} disabled={loading}>{loading ? 'Saving…' : 'Save Draft'}</button>
+            <button style={{ ...btnCyan, flex: 1 }} onClick={sendNew} disabled={sendStatus === 'sending'}>{sendStatus === 'sending' ? 'Sending…' : 'Send'}</button>
           </div>
         </div>
       </div>
     );
   }
 
-  const visible = emails.filter((e) => e.status === tab);
-
-  return (
-    <div style={overlay}>
+  // --- Read message ---
+  if (view === 'read-message' && selectedMsg) {
+    return (
       <div style={container}>
-        <BackButton onClick={onBack} />
-        <Heading />
-        <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.25rem' }}>
-          <button
-            onClick={() => setTab('draft')}
-            style={{ background: 'none', border: 'none', color: '#fff', fontFamily: 'Fredoka, sans-serif', fontSize: '1rem', fontWeight: 700, padding: '0 0 6px', cursor: 'pointer', borderBottom: tab === 'draft' ? '2px solid #FA00FF' : '2px solid #333' }}
-          >
-            Drafts
-          </button>
-          <button
-            onClick={() => setTab('sent')}
-            style={{ background: 'none', border: 'none', color: '#fff', fontFamily: 'Fredoka, sans-serif', fontSize: '1rem', fontWeight: 700, padding: '0 0 6px', cursor: 'pointer', borderBottom: tab === 'sent' ? '2px solid #FA00FF' : '2px solid #333' }}
-          >
-            Sent
-          </button>
+        <div style={topBar}><BackBtn onClick={() => setView('list')} /></div>
+        <div style={scrollArea}>
+          <div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700, marginBottom: '0.5rem', lineHeight: 1.3 }}>{selectedMsg.subject || '(No subject)'}</div>
+          <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: '0.25rem' }}>From: {selectedMsg.from}</div>
+          <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: '0.25rem' }}>To: {selectedMsg.to}</div>
+          <div style={{ color: '#555', fontSize: '0.8rem', marginBottom: '1rem' }}>{selectedMsg.date}</div>
+          <div style={{ borderTop: '1px solid #111', marginBottom: '1rem' }} />
+          <div style={{ color: '#fff', fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: '1.5rem' }}>{selectedMsg.body}</div>
+          <button style={{ ...btnMag, width: '100%' }} onClick={() => trashMessage(selectedMsg.id)}>Move to Trash</button>
         </div>
+      </div>
+    );
+  }
 
-        {loading ? (
-          <span style={{ color: '#555' }}>Loading...</span>
-        ) : visible.length === 0 ? (
-          <span style={{ color: '#555' }}>No {tab === 'draft' ? 'drafts' : 'sent emails'} yet</span>
-        ) : (
-          visible.map((email) => (
-            <div
-              key={email.id}
-              onClick={() => openRead(email)}
-              style={{ background: '#111', borderRadius: '10px', padding: '1rem', marginBottom: '0.75rem', cursor: 'pointer' }}
-            >
-              <div style={{ color: '#fff', fontWeight: 700 }}>{email.recipient || '(no recipient)'}</div>
-              <div style={{ color: '#aaa', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {email.subject || '(no subject)'}
-              </div>
-              <div style={{ color: '#555', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                {relativeDate(email.sent_at ?? email.created_at)}
-              </div>
-            </div>
-          ))
+  // --- Read draft ---
+  if (view === 'read-draft' && selectedDraft) {
+    return (
+      <div style={container}>
+        <div style={topBar}><BackBtn onClick={() => { setView('list'); setTab('drafts'); }} /></div>
+        <div style={scrollArea}>
+          <div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700, marginBottom: '0.5rem' }}>{selectedDraft.subject || '(No subject)'}</div>
+          <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: '0.25rem' }}>To: {selectedDraft.to || '(No recipient)'}</div>
+          <div style={{ color: '#555', fontSize: '0.8rem', marginBottom: '1rem' }}>{selectedDraft.date}</div>
+          <div style={{ borderTop: '1px solid #111', marginBottom: '1rem' }} />
+          <div style={{ color: '#fff', fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: '1.5rem' }}>{selectedDraft.body}</div>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button style={{ ...btnCyan, flex: 1 }} onClick={() => {
+              setComposeTo(selectedDraft.to); setComposeSubject(selectedDraft.subject); setComposeBody(selectedDraft.body);
+              setView('edit-draft');
+            }}>Edit Draft</button>
+            <button style={{ ...btnMag, flex: 1 }} onClick={() => deleteDraft(selectedDraft.draftId)}>Delete Draft</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Edit draft ---
+  if (view === 'edit-draft' && selectedDraft) {
+    return (
+      <div style={container}>
+        <div style={topBar}><BackBtn onClick={() => { setView('read-draft'); setError(''); setSendStatus(''); }} /></div>
+        <div style={scrollArea}>
+          <div style={{ color: '#fff', fontSize: '1.8rem', fontWeight: 700, marginBottom: '1.25rem' }}>Edit Draft</div>
+          {sendStatus === 'sent' && <div style={{ color: CYAN, fontSize: '1rem', marginBottom: '1rem', fontWeight: 700 }}>Sent!</div>}
+          {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
+          <label style={labelStyle}>To</label>
+          <input type="email" value={composeTo} onChange={e => setComposeTo(e.target.value)} style={{ ...inputStyle, marginBottom: '0.75rem' }} />
+          <label style={labelStyle}>Subject</label>
+          <input type="text" value={composeSubject} onChange={e => setComposeSubject(e.target.value)} style={{ ...inputStyle, marginBottom: '0.75rem' }} />
+          <label style={labelStyle}>Body</label>
+          <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} rows={8} style={{ ...inputStyle, marginBottom: '1rem', resize: 'vertical' }} />
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button style={{ ...btnMag, flex: 1 }} onClick={updateDraft} disabled={loading}>{loading ? 'Saving…' : 'Update Draft'}</button>
+            <button style={{ ...btnCyan, flex: 1 }} onClick={sendDraft} disabled={sendStatus === 'sending'}>{sendStatus === 'sending' ? 'Sending…' : 'Send'}</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- List view (default) ---
+  return (
+    <div style={container}>
+      <div style={topBar}><BackBtn onClick={onBack} /></div>
+      <div style={{ maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 0', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '1.5rem' }}>
+            {(['inbox', 'drafts'] as Tab[]).map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{
+                background: 'none', border: 'none', padding: '0 0 6px', cursor: 'pointer',
+                color: tab === t ? '#fff' : '#444',
+                fontFamily: 'Fredoka, sans-serif', fontSize: '1.2rem', fontWeight: 700,
+                borderBottom: tab === t ? `2px solid ${CYAN}` : '2px solid transparent',
+              }}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          <span style={{ color: '#333', fontSize: '0.75rem' }}>{gmailAddress}</span>
+        </div>
+      </div>
+      <div style={scrollArea}>
+        {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
+        {listLoading && <div style={{ color: '#555', textAlign: 'center', padding: '2rem 0' }}>Loading…</div>}
+
+        {!listLoading && tab === 'inbox' && (
+          inbox.length === 0
+            ? <div style={{ color: '#333', textAlign: 'center', padding: '2rem 0' }}>No messages</div>
+            : inbox.map(msg => (
+              <button key={msg.id} onClick={() => openMessage(msg.id)} style={{ display: 'block', width: '100%', background: '#111', border: 'none', borderRadius: 10, padding: '1rem', marginBottom: '0.5rem', cursor: 'pointer', textAlign: 'left' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', fontFamily: 'Fredoka, sans-serif' }}>{msg.from.split('<')[0].trim() || msg.from}</span>
+                  <span style={{ color: '#555', fontSize: '0.8rem', fontFamily: 'Fredoka, sans-serif' }}>{formatDate(msg.date)}</span>
+                </div>
+                <div style={{ color: '#fff', fontSize: '0.9rem', fontFamily: 'Fredoka, sans-serif', marginBottom: 3 }}>{msg.subject || '(No subject)'}</div>
+                <div style={{ color: '#888', fontSize: '0.82rem', fontFamily: 'Fredoka, sans-serif', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{msg.snippet}</div>
+              </button>
+            ))
         )}
 
-        <button style={{ ...cyanButton, width: '100%', marginTop: '1rem' }} onClick={openCompose}>Compose</button>
+        {!listLoading && tab === 'drafts' && (
+          drafts.length === 0
+            ? <div style={{ color: '#333', textAlign: 'center', padding: '2rem 0' }}>No drafts</div>
+            : drafts.map(d => (
+              <button key={d.draftId} onClick={() => openDraft(d.draftId)} style={{ display: 'block', width: '100%', background: '#111', border: 'none', borderRadius: 10, padding: '1rem', marginBottom: '0.5rem', cursor: 'pointer', textAlign: 'left' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', fontFamily: 'Fredoka, sans-serif' }}>{d.to || 'No recipient'}</span>
+                  <span style={{ color: '#555', fontSize: '0.8rem', fontFamily: 'Fredoka, sans-serif' }}>{formatDate(d.date)}</span>
+                </div>
+                <div style={{ color: '#fff', fontSize: '0.9rem', fontFamily: 'Fredoka, sans-serif', marginBottom: 3 }}>{d.subject || '(No subject)'}</div>
+                <div style={{ color: '#888', fontSize: '0.82rem', fontFamily: 'Fredoka, sans-serif', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.snippet}</div>
+              </button>
+            ))
+        )}
+
+        <button style={{ ...btnCyan, width: '100%', marginTop: '1rem' }} onClick={() => { setComposeTo(''); setComposeSubject(''); setComposeBody(''); setError(''); setSendStatus(''); setView('compose'); }}>
+          + Compose
+        </button>
       </div>
     </div>
   );
