@@ -1,6 +1,6 @@
 import { FC, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { sendMagicLink } from '../lib/navi-supabase';
+import { sendMagicLink, getSubscriptionStatus, cancelSubscription } from '../lib/navi-supabase';
 
 interface Props {
   session: any;
@@ -18,6 +18,7 @@ interface Profile {
 
 const CYAN = '#00F7FF';
 const MAGENTA = '#FA00FF';
+const RED = '#FF3B3B';
 
 const tierColor = (tier: string): string => {
   if (tier === 'max') return CYAN;
@@ -31,6 +32,16 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+
+  // Subscription cancellation state. `paidTier` is the authoritative paid status
+  // from navi_subscriptions (the profiles.subscription_tier column is not synced
+  // on activate), and drives whether the Cancel Subscription button is shown.
+  const [paidTier, setPaidTier] = useState<'mini' | 'max' | null>(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelDone, setCancelDone] = useState(false);
+  const [cancelError, setCancelError] = useState('');
+
   const [profile, setProfile] = useState<Profile>({
     email: '',
     full_name: '',
@@ -146,6 +157,42 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Resolve the user's real paid status from navi_subscriptions (the source of
+  // truth the rest of the app gates on). Decides if the Cancel button shows.
+  useEffect(() => {
+    let active = true;
+    const email = profile.email;
+    if (!email) return;
+    (async () => {
+      try {
+        const sub = await getSubscriptionStatus(email);
+        if (active) setPaidTier(sub.active ? sub.tier : null);
+      } catch {
+        /* leave paidTier as-is */
+      }
+    })();
+    return () => { active = false; };
+  }, [profile.email]);
+
+  // Cancel the active subscription: cancels at PayPal and downgrades to free
+  // in Supabase, then returns the UI to its free-tier state.
+  const handleCancel = async () => {
+    if (!profile.email) return;
+    setCancelling(true);
+    setCancelError('');
+    const res = await cancelSubscription(profile.email);
+    setCancelling(false);
+    if (res.error || !res.success) {
+      setCancelError(res.error || 'Could not cancel your subscription. Please try again.');
+      return;
+    }
+    setPaidTier(null);
+    setProfile(p => ({ ...p, subscription_tier: 'free', subscription_status: 'cancelled' }));
+    setShowCancelConfirm(false);
+    setCancelDone(true);
+    setTimeout(() => setCancelDone(false), 4000);
   };
 
   // Sign the user out. App.tsx's onAuthStateChange fires on signOut and clears
@@ -393,6 +440,35 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
               {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save'}
             </button>
 
+            {cancelDone && (
+              <div style={{ color: '#A8FF00', fontSize: '0.92rem', marginTop: '0.85rem', textAlign: 'center' }}>
+                Your subscription has been cancelled. You're now on the free plan.
+              </div>
+            )}
+
+            {/* Cancel Subscription — only for users currently on a paid plan */}
+            {paidTier && (
+              <button
+                onClick={() => { setCancelError(''); setShowCancelConfirm(true); }}
+                style={{
+                  width: '100%',
+                  marginTop: '0.85rem',
+                  background: 'transparent',
+                  color: RED,
+                  border: `1px solid ${RED}`,
+                  borderRadius: '12px',
+                  padding: '0.9rem',
+                  fontFamily: 'Fredoka, sans-serif',
+                  fontSize: '1.05rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'opacity 0.15s',
+                }}
+              >
+                Cancel Subscription
+              </button>
+            )}
+
             {/* Sign Out — clears the Supabase session; App.tsx reacts via onAuthStateChange */}
             <button
               onClick={signOut}
@@ -418,6 +494,94 @@ const NaviProfile: FC<Props> = ({ session, onClose }) => {
           </>
         )}
       </div>
+
+      {/* Cancel confirmation overlay — stays on the page, no navigation */}
+      {showCancelConfirm && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.78)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1.5rem',
+            fontFamily: 'Fredoka, sans-serif',
+          }}
+          onClick={() => { if (!cancelling) setShowCancelConfirm(false); }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: '380px',
+              background: '#0a0a0a',
+              border: `1px solid ${RED}`,
+              borderRadius: '18px',
+              padding: '1.75rem 1.5rem',
+              boxSizing: 'border-box',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+            }}
+          >
+            <h2 style={{ color: RED, fontSize: '1.5rem', fontWeight: 700, margin: '0 0 0.75rem' }}>
+              Cancel Subscription
+            </h2>
+            <p style={{ color: '#cfcfcf', fontSize: '1rem', lineHeight: 1.6, margin: '0 0 1.5rem' }}>
+              Are you sure you want to cancel your subscription?
+            </p>
+
+            {cancelError && (
+              <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '1rem' }}>{cancelError}</div>
+            )}
+
+            {/* Confirm Cancel (destructive) */}
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              style={{
+                width: '100%',
+                background: RED,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '12px',
+                padding: '0.9rem',
+                fontFamily: 'Fredoka, sans-serif',
+                fontSize: '1.05rem',
+                fontWeight: 700,
+                cursor: cancelling ? 'not-allowed' : 'pointer',
+                opacity: cancelling ? 0.6 : 1,
+                transition: 'opacity 0.15s',
+              }}
+            >
+              {cancelling ? 'Cancelling…' : 'Confirm Cancel'}
+            </button>
+
+            {/* Keep Subscription (secondary) */}
+            <button
+              onClick={() => setShowCancelConfirm(false)}
+              disabled={cancelling}
+              style={{
+                width: '100%',
+                marginTop: '0.85rem',
+                background: 'transparent',
+                color: CYAN,
+                border: `1px solid ${CYAN}`,
+                borderRadius: '12px',
+                padding: '0.9rem',
+                fontFamily: 'Fredoka, sans-serif',
+                fontSize: '1.05rem',
+                fontWeight: 700,
+                cursor: cancelling ? 'not-allowed' : 'pointer',
+                opacity: cancelling ? 0.6 : 1,
+                transition: 'opacity 0.15s',
+              }}
+            >
+              Keep Subscription
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
