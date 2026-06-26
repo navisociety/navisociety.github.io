@@ -23,7 +23,7 @@ const NaviMenu: FC<Props> = ({ onClose, onSelect, mode, email, onProfileOpen }) 
   }, [mode, email]);
 
   const barColor = mode === 'mini' ? '#FA00FF' : '#00F7FF';
-  const NAV_ITEMS = ['Upgrade', 'My Profile', 'Chats'];
+  const NAV_ITEMS = ['Upgrade', 'My Profile', 'Chats', 'Tools'];
 
   const handleItem = (label: string) => {
     if (label === 'My Profile' && onProfileOpen) {
