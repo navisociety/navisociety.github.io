@@ -4,6 +4,7 @@ import NaviMenu from './components/NaviMenu';
 import NaviProfile from './components/NaviProfile';
 import ChatsScreen from './components/ChatsScreen';
 import NaviSubscribe from './components/NaviSubscribe';
+import ToolsScreen from './components/ToolsScreen';
 import { supabase } from './lib/supabase';
 import { callNaviPro, getSubscriptionStatus, saveMessage, createChatSession, renameChatSession, loadSessionMessages, sendMagicLink, type NaviSession, type ChatSession, } from './lib/navi-supabase';
 
@@ -53,6 +54,7 @@ export default function App() {
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [subscribeMode, setSubscribeMode] = useState<'mini' | 'max'>('mini');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
   // Inline "save this chat" nudge — shown once the first user+NAVI exchange is
   // done and the user is not signed in. Auto-hides once a session exists.
   const [firstExchangeDone, setFirstExchangeDone] = useState(false);
@@ -258,6 +260,7 @@ export default function App() {
     setMenuOpen(false);
     if (item === 'Chats') setChatsOpen(true);
     if (item === 'Upgrade') { setSubscribeMode(mode === 'max' ? 'max' : 'mini'); setShowSubscribe(true); }
+    if (item === 'Tools') setToolsOpen(true);
   };
 
   // The inline nudge appears only after the first exchange is done, while the
@@ -475,6 +478,7 @@ export default function App() {
       {showProfile && <NaviProfile session={naviSession} onClose={() => setShowProfile(false)} />}
       {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} onContinueSession={handleContinueSession} onNewChat={handleNewChat} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} session={naviSession} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
+      {toolsOpen && <ToolsScreen onClose={() => setToolsOpen(false)} />}
     </div>
   );
 }
