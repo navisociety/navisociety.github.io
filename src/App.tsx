@@ -140,6 +140,17 @@ export default function App() {
     setTimeout(() => taRef.current?.focus(), 120);
   }, [naviSession]);
 
+  // Start a brand-new chat: clear the current session pointer and messages so
+  // the next message opens a fresh session (created lazily in send()), then
+  // drop the user back into the main view with NAVI's greeting.
+  const handleNewChat = useCallback(() => {
+    setChatsOpen(false);
+    setCurrentSessionId(null);
+    setMessages([{ id: '0', role: 'assistant', content: navi.getGreeting() }]);
+    setStatus('ready');
+    setTimeout(() => taRef.current?.focus(), 120);
+  }, []);
+
   const stream = useCallback((text: string, msgId: string) => {
     if (timerRef.current) clearInterval(timerRef.current);
     let i = 0;
@@ -462,7 +473,7 @@ export default function App() {
 
       {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} onProfileOpen={() => { setMenuOpen(false); setShowProfile(true); }} />}
       {showProfile && <NaviProfile session={naviSession} onClose={() => setShowProfile(false)} />}
-      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} onContinueSession={handleContinueSession} />}
+      {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} onContinueSession={handleContinueSession} onNewChat={handleNewChat} />}
       {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
   );
