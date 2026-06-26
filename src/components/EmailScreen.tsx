@@ -6,7 +6,7 @@ interface Props {
 }
 
 type View = 'list' | 'compose' | 'read-message' | 'read-draft' | 'edit-draft';
-type Tab = 'inbox' | 'drafts';
+type Tab = 'inbox' | 'sent' | 'drafts';
 
 interface InboxItem {
   id: string;
@@ -99,6 +99,7 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [gmailAddress, setGmailAddress] = useState<string | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [sent, setSent] = useState<InboxItem[]>([]);
   const [drafts, setDrafts] = useState<DraftItem[]>([]);
   const [selectedMsg, setSelectedMsg] = useState<FullMessage | null>(null);
   const [selectedDraft, setSelectedDraft] = useState<FullDraft | null>(null);
@@ -115,6 +116,14 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
     try {
       const d = await emailApi({ action: 'list-inbox', email: userEmail });
       setInbox(d.messages ?? []);
+    } catch { /* silent */ } finally { setListLoading(false); }
+  }, [userEmail]);
+
+  const loadSent = useCallback(async () => {
+    setListLoading(true);
+    try {
+      const d = await emailApi({ action: 'list-sent', email: userEmail });
+      setSent(d.messages ?? []);
     } catch { /* silent */ } finally { setListLoading(false); }
   }, [userEmail]);
 
@@ -137,8 +146,9 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
   useEffect(() => {
     if (!connected) return;
     if (tab === 'inbox') loadInbox();
+    else if (tab === 'sent') loadSent();
     else loadDrafts();
-  }, [tab, connected, loadInbox, loadDrafts]);
+  }, [tab, connected, loadInbox, loadSent, loadDrafts]);
 
   useEffect(() => {
     if (view !== 'list') return;
@@ -185,7 +195,7 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
     if (!window.confirm('Move this email to trash?')) return;
     await emailApi({ action: 'trash-message', email: userEmail, messageId: id });
     setView('list');
-    loadInbox();
+    if (tab === 'sent') loadSent(); else loadInbox();
   };
 
   const deleteDraft = async (draftId: string) => {
@@ -212,7 +222,7 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
     try {
       await emailApi({ action: 'send-message', email: userEmail, to: composeTo, subject: composeSubject, body: composeBody });
       setSendStatus('sent');
-      setTimeout(() => { setSendStatus(''); setView('list'); setTab('inbox'); loadInbox(); setComposeTo(''); setComposeSubject(''); setComposeBody(''); }, 1500);
+      setTimeout(() => { setSendStatus(''); setView('list'); setTab('sent'); loadSent(); setComposeTo(''); setComposeSubject(''); setComposeBody(''); }, 1500);
     } catch (e) { setSendStatus('error'); setError(String(e)); }
   };
 
@@ -231,7 +241,7 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
     try {
       await emailApi({ action: 'send-draft', email: userEmail, draftId: selectedDraft.draftId });
       setSendStatus('sent');
-      setTimeout(() => { setSendStatus(''); setView('list'); setTab('inbox'); loadInbox(); }, 1500);
+      setTimeout(() => { setSendStatus(''); setView('list'); setTab('sent'); loadSent(); }, 1500);
     } catch (e) { setSendStatus('error'); setError(String(e)); }
   };
 
@@ -382,7 +392,7 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
       <div style={{ maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 0', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
           <div style={{ display: 'flex', gap: '1.5rem' }}>
-            {(['inbox', 'drafts'] as Tab[]).map(t => (
+            {(['inbox', 'sent', 'drafts'] as Tab[]).map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 background: 'none', border: 'none', padding: '0 0 6px', cursor: 'pointer',
                 color: tab === t ? '#fff' : '#444',
@@ -407,6 +417,21 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
               <button key={msg.id} onClick={() => openMessage(msg.id)} style={{ display: 'block', width: '100%', background: '#111', border: 'none', borderRadius: 10, padding: '1rem', marginBottom: '0.5rem', cursor: 'pointer', textAlign: 'left' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', fontFamily: 'Fredoka, sans-serif' }}>{msg.from.split('<')[0].trim() || msg.from}</span>
+                  <span style={{ color: '#555', fontSize: '0.8rem', fontFamily: 'Fredoka, sans-serif' }}>{formatDate(msg.date)}</span>
+                </div>
+                <div style={{ color: '#fff', fontSize: '0.9rem', fontFamily: 'Fredoka, sans-serif', marginBottom: 3 }}>{msg.subject || '(No subject)'}</div>
+                <div style={{ color: '#888', fontSize: '0.82rem', fontFamily: 'Fredoka, sans-serif', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{msg.snippet}</div>
+              </button>
+            ))
+        )}
+
+        {!listLoading && tab === 'sent' && (
+          sent.length === 0
+            ? <div style={{ color: '#333', textAlign: 'center', padding: '2rem 0' }}>No sent emails</div>
+            : sent.map(msg => (
+              <button key={msg.id} onClick={() => openMessage(msg.id)} style={{ display: 'block', width: '100%', background: '#111', border: 'none', borderRadius: 10, padding: '1rem', marginBottom: '0.5rem', cursor: 'pointer', textAlign: 'left' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', fontFamily: 'Fredoka, sans-serif' }}>To: {msg.to.split('<')[0].trim() || msg.to || '(No recipient)'}</span>
                   <span style={{ color: '#555', fontSize: '0.8rem', fontFamily: 'Fredoka, sans-serif' }}>{formatDate(msg.date)}</span>
                 </div>
                 <div style={{ color: '#fff', fontSize: '0.9rem', fontFamily: 'Fredoka, sans-serif', marginBottom: 3 }}>{msg.subject || '(No subject)'}</div>
