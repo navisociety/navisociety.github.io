@@ -5,6 +5,9 @@ interface NaviSubscribeProps {
   mode: 'mini' | 'max';
   onAuthenticated: (session: NaviSession) => void;
   onClose: () => void;
+  // When the user is already logged in, their Supabase session is passed in so
+  // we can skip the email/magic-link step and pull the email straight from auth.
+  session?: NaviSession | null;
 }
 
 type Step = 'email' | 'upgrade' | 'success';
@@ -28,9 +31,12 @@ function loadPayPalSdk(): Promise<void> {
   return paypalSdkPromise;
 }
 
-export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSubscribeProps) {
-  const [step, setStep] = useState<Step>('email');
-  const [email, setEmail] = useState('');
+export default function NaviSubscribe({ mode, onAuthenticated, onClose, session }: NaviSubscribeProps) {
+  // If a logged-in session is present, use its email and jump straight to the
+  // payment step — magic-link email auth is for login only, not upgrading.
+  const loggedInEmail = session?.email ?? '';
+  const [step, setStep] = useState<Step>(loggedInEmail ? 'upgrade' : 'email');
+  const [email, setEmail] = useState(loggedInEmail);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [payReady, setPayReady] = useState(false);
@@ -186,7 +192,7 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
           <>
             <div style={{ textAlign: 'center', fontSize: '24px', fontWeight: 700, color: accent }}>Upgrade to {label}</div>
             <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.7, textAlign: 'center' }}>
-              Verified as <span style={{ color: '#fff' }}>{email}</span>.
+              {session?.email ? 'Signed in as ' : 'Verified as '}<span style={{ color: '#fff' }}>{email}</span>.
             </div>
             <div style={{ background: '#111', border: `1px solid ${accent}33`, borderRadius: '12px', padding: '20px', textAlign: 'center' }}>
               <div style={{ color: accent, fontWeight: 700, fontSize: '22px' }}>
@@ -214,7 +220,9 @@ export default function NaviSubscribe({ mode, onAuthenticated, onClose }: NaviSu
             <div style={{ fontSize: '40px' }}>✓</div>
             <div style={{ fontSize: '24px', fontWeight: 700, color: accent }}>Welcome to {label}</div>
             <div style={{ color: '#aaa', fontSize: '14px', lineHeight: 1.6 }}>
-              Your subscription is active! Check your inbox for a verification email from NAVI — click the link to unlock Mini/Max in this session.
+              {session?.email
+                ? 'Your subscription is active! Mini/Max is unlocked for this session.'
+                : 'Your subscription is active! Check your inbox for a verification email from NAVI — click the link to unlock Mini/Max in this session.'}
             </div>
           </div>
         )}
