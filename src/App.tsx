@@ -474,7 +474,7 @@ export default function App() {
       {menuOpen && <NaviMenu onClose={() => setMenuOpen(false)} onSelect={handleMenuSelect} mode={mode} email={naviSession?.email ?? null} onProfileOpen={() => { setMenuOpen(false); setShowProfile(true); }} />}
       {showProfile && <NaviProfile session={naviSession} onClose={() => setShowProfile(false)} />}
       {chatsOpen && <ChatsScreen onClose={() => setChatsOpen(false)} session={naviSession} onAuth={handleAuth} onContinueSession={handleContinueSession} onNewChat={handleNewChat} />}
-      {showSubscribe && <NaviSubscribe mode={subscribeMode} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
+      {showSubscribe && <NaviSubscribe mode={subscribeMode} session={naviSession} onAuthenticated={handleAuth} onClose={() => setShowSubscribe(false)} />}
     </div>
   );
 }
