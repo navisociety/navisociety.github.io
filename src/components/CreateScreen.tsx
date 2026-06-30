@@ -130,7 +130,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const [canvaStatus, setCanvaStatus] = useState<CanvaStatus | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
-  const [toast, setToast] = useState('');
 
   const loadCreations = useCallback(async () => {
     if (!email) return;
@@ -164,10 +163,8 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
       params.delete('canva_connected');
       const qs = params.toString();
       window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
-      setToast('Canva connected!');
       setShowConnect(false);
       loadCanvaStatus();
-      setTimeout(() => setToast(''), 3000);
     }
   }, [email, loadCanvaStatus]);
 
@@ -244,11 +241,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const editUrl = activeCreation?.canva_edit_url;
   const isConnected = canvaStatus?.connected ?? false;
 
-  const Toast = toast ? (
-    <div style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', background: LIME, color: '#000', fontWeight: 700, padding: '0.6rem 1.2rem', borderRadius: 999, zIndex: 1100, fontFamily: 'Fredoka, sans-serif' }}>
-      {toast}
-    </div>
-  ) : null;
 
 
   // --- Creation view ---
@@ -256,8 +248,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     const needPanel = showConnect || (!isConnected);
     return (
       <div style={container}>
-        {Toast}
-        <div style={topBar}>
+          <div style={topBar}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               <BackBtn onClick={() => { setView('list'); setError(''); loadCreations(); }} />
@@ -308,7 +299,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   // --- List view ---
   return (
     <div style={container}>
-      {Toast}
       <div style={topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
