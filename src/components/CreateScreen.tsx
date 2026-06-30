@@ -196,13 +196,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     } catch (e) { setError(String(e)); } finally { setConnecting(false); }
   };
 
-  const disconnectCanva = async () => {
-    if (!window.confirm('Disconnect your Canva account?')) return;
-    try {
-      await callApi(CANVA_API, { action: 'disconnect', email });
-      setCanvaStatus({ connected: false, setupPending: canvaStatus?.setupPending ?? false });
-    } catch (e) { setError(String(e)); }
-  };
 
   const openCreation = (cr: Creation) => {
     setActiveCreation(cr);
@@ -257,16 +250,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     </div>
   ) : null;
 
-  const CanvaPill = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {isConnected ? (
-        <>
-          <span style={{ color: LIME, fontSize: '0.72rem', fontWeight: 700, border: `1px solid ${LIME}`, borderRadius: 999, padding: '2px 10px' }}>Canva connected</span>
-          <span onClick={disconnectCanva} style={{ color: '#555', fontSize: '0.75rem', cursor: 'pointer' }}>Disconnect</span>
-        </>
-      ) : null}
-    </div>
-  );
 
   // --- Creation view ---
   if (view === 'creation') {
@@ -280,7 +263,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
               <BackBtn onClick={() => { setView('list'); setError(''); loadCreations(); }} />
               <span style={{ color: '#444', fontSize: '1.1rem', fontWeight: 700 }}>Creations</span>
             </div>
-            {CanvaPill}
           </div>
         </div>
         <div style={scrollArea}>
@@ -333,7 +315,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
             <BackBtn onClick={onClose} />
             <span style={{ color: '#fff', fontSize: '1.6rem', fontWeight: 700 }}>Create</span>
           </div>
-          {CanvaPill}
         </div>
       </div>
       <div style={scrollArea}>
