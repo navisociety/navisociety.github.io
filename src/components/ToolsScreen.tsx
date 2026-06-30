@@ -48,11 +48,11 @@ const ToolsScreen: FC<Props> = ({ onClose, session }) => {
         <div style={{ padding: '1.5rem 0', borderBottom: '1px solid #111' }}>
           <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Tools</span>
         </div>
-        <button onClick={() => setSub('create')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
-          <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>&#10022; Create</span>
-        </button>
         <button onClick={() => setSub('email')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
           <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Email</span>
+        </button>
+        <button onClick={() => setSub('create')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
+          <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Create</span>
         </button>
       </div>
     </div>
