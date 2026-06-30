@@ -1,4 +1,5 @@
-// navi-canva-auth: per-user Canva OAuth for the NAVI Create tool
+// navi-canva-auth: per-user Canva OAuth for the NAVI Create tool.
+// Handles start-oauth, callback, get-status, disconnect, refresh-token.
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
