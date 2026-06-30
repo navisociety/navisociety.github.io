@@ -42,6 +42,59 @@ async function naviRespond(message: string, history: NaviMessage[]): Promise<str
 const CYAN = '#00F7FF';
 const MAGENTA = '#FA00FF';
 
+// ── Email-in-chat ───────────────────────────────────────────────────────────
+const NAVI_EMAIL_API = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/navi-email`;
+
+const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+// Verbs that signal the user actually wants to send/draft an email (vs. merely
+// mentioning an address). Auto-detect only fires when one of these is present.
+const EMAIL_INTENT_WORDS = ['email', 'send', 'draft', 'message', 'write to', 'tell', 'inform', 'notify'];
+
+type EmailDraft = { recipient: string; subject: string; body: string };
+
+// Pull a recipient + subject + body out of free-form text. Returns null when
+// there's no usable recipient/body pair.
+function parseEmailDraft(text: string): EmailDraft | null {
+  const match = text.match(EMAIL_REGEX);
+  if (!match) return null;
+  const recipient = match[0];
+  const body = text.replace(recipient, '').replace(/^[\s,:;\-]+/, '').replace(/[\s,:;\-]+$/, '').trim();
+  if (!body || body.length < 5) return null;
+  // Subject: first line/sentence, capped at 60 chars.
+  const firstLine = body.split(/[\n.!?]/)[0].trim();
+  const raw = firstLine || body;
+  const subject = (raw.length > 60 ? raw.slice(0, 60).trim() : raw) || 'Message from NAVI';
+  return { recipient, subject, body };
+}
+
+// True when a non-/email message both names an address AND uses an intent verb.
+function hasAutoEmailIntent(text: string): boolean {
+  if (!EMAIL_REGEX.test(text)) return false;
+  const lower = text.toLowerCase();
+  return EMAIL_INTENT_WORDS.some(w => lower.includes(w));
+}
+
+async function createEmailDraft(userEmail: string, draft: EmailDraft): Promise<boolean> {
+  try {
+    const res = await fetch(NAVI_EMAIL_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create-draft',
+        email: userEmail,
+        to: draft.recipient,
+        subject: draft.subject,
+        body: draft.body,
+      }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data?.email;
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [status, setStatus] = useState<Status>('booting');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -208,6 +261,44 @@ export default function App() {
     setStatus('thinking');
 
     const fullHistory = [...history, { role: 'user' as const, content: text }];
+
+    // ── Email-in-chat interception (all tiers) ──────────────────────────────
+    // Runs before any inference. The /email command always triggers; plain
+    // messages only trigger when they name an address AND use an intent verb.
+    const isEmailCommand = /^\/email\b/i.test(text);
+    if (isEmailCommand || hasAutoEmailIntent(text)) {
+      const reply = (msg: string) => {
+        stream(msg, naviId);
+        if (naviSession) {
+          saveMessage(naviSession.email, 'user', text, mode, currentSessionId ?? undefined);
+          saveMessage(naviSession.email, 'assistant', msg, mode, currentSessionId ?? undefined);
+        }
+      };
+
+      if (!naviSession) {
+        reply('Sign in to use the email tool. Click on your profile icon to sign in.');
+        return;
+      }
+
+      const userEmail = naviSession.email;
+      // For /email, strip the command word before parsing the recipient/body.
+      const payloadText = isEmailCommand ? text.replace(/^\/email\b[\s:]*/i, '').trim() : text;
+      const draft = parseEmailDraft(payloadText);
+
+      if (!draft) {
+        if (isEmailCommand) {
+          reply('To use the email tool, type: /email recipient@example.com Your message here.');
+          return;
+        }
+        // Auto-detect with no usable draft → fall through to normal inference.
+      } else {
+        const ok = await createEmailDraft(userEmail, draft);
+        reply(ok
+          ? `I've drafted that email to ${draft.recipient}. Open Email in your Tools menu to review and send it.`
+          : "I couldn't create that draft just now. Please try again, or open Email in your Tools menu to write it manually.");
+        return;
+      }
+    }
 
     // Mini/Max route to the server-side NAVI tiers; free stays on navi-chat.
     if ((mode === 'mini' || mode === 'max') && naviSession) {
