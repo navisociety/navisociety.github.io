@@ -27,6 +27,8 @@ const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? '';
 const REDIRECT_URI = 'https://navisociety.github.io';
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
 
+const STORED_COLS = 'id,recipient,subject,body,status,sent_at,created_at';
+
 async function refreshToken(rt: string) {
   const r = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -47,6 +49,11 @@ async function getToken(userEmail: string): Promise<string> {
     return fresh.access_token;
   }
   return data.access_token;
+}
+
+async function fromAddress(userEmail: string): Promise<string> {
+  const { data } = await sb.from('navi_gmail_tokens').select('gmail_address').eq('user_email', userEmail).single();
+  return data?.gmail_address ?? userEmail;
 }
 
 function b64url(s: string): string {
@@ -91,15 +98,6 @@ async function gPost(token: string, path: string, body: unknown) {
   if (!r.ok) throw new Error(`Gmail ${r.status}: ${await r.text()}`);
   return r.json();
 }
-async function gPut(token: string, path: string, body: unknown) {
-  const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`Gmail ${r.status}: ${await r.text()}`);
-  return r.json();
-}
-async function gDelete(token: string, path: string) {
-  const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok && r.status !== 204) throw new Error(`Gmail ${r.status}`);
-}
 
 serve(async (req) => {
   const origin = req.headers.get('Origin');
@@ -108,7 +106,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, email, code, messageId, draftId, to, subject, body: msgBody } = body;
+    const { action, email, code, messageId, id, to, subject, body: msgBody } = body;
 
     if (action === 'auth-url') {
       if (!CLIENT_ID) return Response.json({ error: 'Google OAuth not configured' }, { status: 503, headers: c });
@@ -137,53 +135,55 @@ serve(async (req) => {
       return Response.json({ ok: true }, { headers: c });
     }
 
-    const token = await getToken(email);
-
-    if (action === 'list-inbox') {
-      const list = await gGet(token, 'messages?labelIds=INBOX&maxResults=20');
-      const msgs = list.messages ?? [];
-      const details = await Promise.all(msgs.map((m: { id: string }) =>
-        gGet(token, `messages/${m.id}?format=metadata&metadataHeaders=Subject,From,Date,To`)
-          .then((msg: { id: string; snippet: string; payload: { headers: { name: string; value: string }[] } }) => ({
-            id: msg.id, snippet: msg.snippet,
-            subject: hdr(msg.payload.headers, 'Subject'),
-            from: hdr(msg.payload.headers, 'From'),
-            to: hdr(msg.payload.headers, 'To'),
-            date: hdr(msg.payload.headers, 'Date'),
-          })).catch(() => null)
-      ));
-      return Response.json({ messages: details.filter(Boolean) }, { headers: c });
-    }
+    // --- navi_emails-backed actions (no Gmail token required) ---
 
     if (action === 'list-sent') {
-      const list = await gGet(token, 'messages?labelIds=SENT&maxResults=20');
-      const msgs = list.messages ?? [];
-      const details = await Promise.all(msgs.map((m: { id: string }) =>
-        gGet(token, `messages/${m.id}?format=metadata&metadataHeaders=Subject,From,Date,To`)
-          .then((msg: { id: string; snippet: string; payload: { headers: { name: string; value: string }[] } }) => ({
-            id: msg.id, snippet: msg.snippet,
-            subject: hdr(msg.payload.headers, 'Subject'),
-            from: hdr(msg.payload.headers, 'From'),
-            to: hdr(msg.payload.headers, 'To'),
-            date: hdr(msg.payload.headers, 'Date'),
-          })).catch(() => null)
-      ));
-      return Response.json({ messages: details.filter(Boolean) }, { headers: c });
+      const { data, error } = await sb.from('navi_emails').select(STORED_COLS).eq('user_email', email).eq('status', 'sent').order('sent_at', { ascending: false });
+      if (error) throw new Error(error.message);
+      return Response.json({ emails: data ?? [] }, { headers: c });
     }
 
     if (action === 'list-drafts') {
-      const list = await gGet(token, 'drafts?maxResults=20');
-      const drafts = list.drafts ?? [];
-      const details = await Promise.all(drafts.map((d: { id: string }) =>
-        gGet(token, `drafts/${d.id}`)
-          .then((draft: { id: string; message: { id: string; snippet: string; payload: { headers: { name: string; value: string }[] } } }) => ({
-            draftId: draft.id, messageId: draft.message.id, snippet: draft.message.snippet,
-            subject: hdr(draft.message.payload.headers, 'Subject'),
-            to: hdr(draft.message.payload.headers, 'To'),
-            date: hdr(draft.message.payload.headers, 'Date'),
+      const { data, error } = await sb.from('navi_emails').select(STORED_COLS).eq('user_email', email).eq('status', 'draft').order('created_at', { ascending: false });
+      if (error) throw new Error(error.message);
+      return Response.json({ emails: data ?? [] }, { headers: c });
+    }
+
+    if (action === 'create-draft') {
+      const { data, error } = await sb.from('navi_emails').insert({ user_email: email, recipient: to ?? '', subject: subject ?? '', body: msgBody ?? '', status: 'draft' }).select(STORED_COLS).single();
+      if (error) throw new Error(error.message);
+      return Response.json({ email: data }, { headers: c });
+    }
+
+    if (action === 'update-draft') {
+      const { data, error } = await sb.from('navi_emails').update({ recipient: to ?? '', subject: subject ?? '', body: msgBody ?? '', updated_at: new Date().toISOString() }).eq('id', id).eq('user_email', email).eq('status', 'draft').select(STORED_COLS).single();
+      if (error) throw new Error(error.message);
+      return Response.json({ email: data }, { headers: c });
+    }
+
+    if (action === 'delete-email') {
+      const { error } = await sb.from('navi_emails').delete().eq('id', id).eq('user_email', email);
+      if (error) throw new Error(error.message);
+      return Response.json({ ok: true }, { headers: c });
+    }
+
+    // --- Gmail-backed actions (token required) ---
+    const token = await getToken(email);
+
+    if (action === 'list-inbox') {
+      const list = await gGet(token, 'messages?maxResults=20');
+      const msgs = list.messages ?? [];
+      const details = await Promise.all(msgs.map((m: { id: string }) =>
+        gGet(token, `messages/${m.id}?format=metadata&metadataHeaders=Subject,From,Date,To`)
+          .then((msg: { id: string; snippet: string; payload: { headers: { name: string; value: string }[] } }) => ({
+            id: msg.id, snippet: msg.snippet,
+            subject: hdr(msg.payload.headers, 'Subject'),
+            from: hdr(msg.payload.headers, 'From'),
+            to: hdr(msg.payload.headers, 'To'),
+            date: hdr(msg.payload.headers, 'Date'),
           })).catch(() => null)
       ));
-      return Response.json({ drafts: details.filter(Boolean) }, { headers: c });
+      return Response.json({ messages: details.filter(Boolean) }, { headers: c });
     }
 
     if (action === 'get-message') {
@@ -192,48 +192,26 @@ serve(async (req) => {
       return Response.json({ id: msg.id, subject: hdr(h, 'Subject'), from: hdr(h, 'From'), to: hdr(h, 'To'), date: hdr(h, 'Date'), body: extractBody(msg.payload), labelIds: msg.labelIds }, { headers: c });
     }
 
-    if (action === 'get-draft') {
-      const draft = await gGet(token, `drafts/${draftId}`);
-      const h = draft.message.payload.headers;
-      return Response.json({ draftId: draft.id, messageId: draft.message.id, subject: hdr(h, 'Subject'), to: hdr(h, 'To'), date: hdr(h, 'Date'), body: extractBody(draft.message.payload) }, { headers: c });
-    }
-
-    if (action === 'create-draft') {
-      const { data: row } = await sb.from('navi_gmail_tokens').select('gmail_address').eq('user_email', email).single();
-      const from = row?.gmail_address ?? email;
+    if (action === 'send-message') {
+      const from = await fromAddress(email);
       const raw = buildMime(to ?? '', from, subject ?? '', msgBody ?? '');
-      const draft = await gPost(token, 'drafts', { message: { raw } });
-      return Response.json({ draftId: draft.id }, { headers: c });
-    }
-
-    if (action === 'update-draft') {
-      const { data: row } = await sb.from('navi_gmail_tokens').select('gmail_address').eq('user_email', email).single();
-      const from = row?.gmail_address ?? email;
-      const raw = buildMime(to ?? '', from, subject ?? '', msgBody ?? '');
-      const draft = await gPut(token, `drafts/${draftId}`, { message: { raw } });
-      return Response.json({ draftId: draft.id }, { headers: c });
-    }
-
-    if (action === 'send-draft') {
-      await gPost(token, 'drafts/send', { id: draftId });
+      await gPost(token, 'messages/send', { raw });
+      await sb.from('navi_emails').insert({ user_email: email, recipient: to ?? '', subject: subject ?? '', body: msgBody ?? '', status: 'sent', sent_at: new Date().toISOString() });
       return Response.json({ ok: true }, { headers: c });
     }
 
-    if (action === 'send-message') {
-      const { data: row } = await sb.from('navi_gmail_tokens').select('gmail_address').eq('user_email', email).single();
-      const from = row?.gmail_address ?? email;
-      const raw = buildMime(to ?? '', from, subject ?? '', msgBody ?? '');
+    if (action === 'send-draft') {
+      const { data: row, error } = await sb.from('navi_emails').select('recipient,subject,body').eq('id', id).eq('user_email', email).single();
+      if (error || !row) throw new Error('Draft not found');
+      const from = await fromAddress(email);
+      const raw = buildMime(row.recipient ?? '', from, row.subject ?? '', row.body ?? '');
       await gPost(token, 'messages/send', { raw });
+      await sb.from('navi_emails').update({ status: 'sent', sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id).eq('user_email', email);
       return Response.json({ ok: true }, { headers: c });
     }
 
     if (action === 'trash-message') {
       await gPost(token, `messages/${messageId}/trash`, {});
-      return Response.json({ ok: true }, { headers: c });
-    }
-
-    if (action === 'delete-draft') {
-      await gDelete(token, `drafts/${draftId}`);
       return Response.json({ ok: true }, { headers: c });
     }
 
