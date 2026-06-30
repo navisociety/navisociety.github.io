@@ -63,7 +63,7 @@ async function callCanvaCreate(accessToken: string): Promise<Response> {
   return fetch(DESIGNS_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ design_type: { type: 'preset', name: 'Presentation' } }),
+    body: JSON.stringify({ design_type: { type: 'preset', name: 'presentation' } }),
   });
 }
 
