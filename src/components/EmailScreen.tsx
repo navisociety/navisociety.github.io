@@ -104,27 +104,27 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
   const [sendStatus, setSendStatus] = useState<'' | 'sending' | 'sent' | 'error'>('');
 
   const loadInbox = useCallback(async () => {
-    setListLoading(true);
+    setListLoading(true); setError('');
     try {
       const d = await emailApi({ action: 'list-inbox', email: userEmail });
       setInbox(d.messages ?? []);
-    } catch { /* silent */ } finally { setListLoading(false); }
+    } catch (e) { setError(String(e)); } finally { setListLoading(false); }
   }, [userEmail]);
 
   const loadSent = useCallback(async () => {
-    setListLoading(true);
+    setListLoading(true); setError('');
     try {
       const d = await emailApi({ action: 'list-sent', email: userEmail });
       setSent(d.emails ?? []);
-    } catch { /* silent */ } finally { setListLoading(false); }
+    } catch (e) { setError(String(e)); } finally { setListLoading(false); }
   }, [userEmail]);
 
   const loadDrafts = useCallback(async () => {
-    setListLoading(true);
+    setListLoading(true); setError('');
     try {
       const d = await emailApi({ action: 'list-drafts', email: userEmail });
       setDrafts(d.emails ?? []);
-    } catch { /* silent */ } finally { setListLoading(false); }
+    } catch (e) { setError(String(e)); } finally { setListLoading(false); }
   }, [userEmail]);
 
   useEffect(() => {

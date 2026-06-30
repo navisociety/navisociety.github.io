@@ -68,8 +68,8 @@ function toB64url(s: string): string {
   return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function hdr(headers: { name: string; value: string }[], name: string) {
-  return headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+function hdr(headers: { name: string; value: string }[] | undefined, name: string) {
+  return (headers ?? []).find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 }
 
 function extractBody(payload: { body?: { data?: string }; parts?: { mimeType: string; body?: { data?: string } }[] }): string {
@@ -174,7 +174,7 @@ serve(async (req) => {
       const list = await gGet(token, 'messages?maxResults=20');
       const msgs = list.messages ?? [];
       const details = await Promise.all(msgs.map((m: { id: string }) =>
-        gGet(token, `messages/${m.id}?format=metadata&metadataHeaders=Subject,From,Date,To`)
+        gGet(token, `messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=To`)
           .then((msg: { id: string; snippet: string; payload: { headers: { name: string; value: string }[] } }) => ({
             id: msg.id, snippet: msg.snippet,
             subject: hdr(msg.payload.headers, 'Subject'),
