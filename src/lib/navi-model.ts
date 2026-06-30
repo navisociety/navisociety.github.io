@@ -3186,6 +3186,15 @@ const KNOWLEDGE: KNode[] = [
     priority: 6,
   },
 
+  // ── Email tool ─────────────────────────────────────────────────────────────
+  {
+    triggers: ['email', 'send email', 'draft email', '/email', 'message someone', 'write email', 'compose email'],
+    responses: [
+      "I can help you draft and send emails. Just include the recipient's email address and your message in the chat — I'll create a draft automatically. Or type /email followed by the recipient and your message.",
+    ],
+    priority: 2,
+  },
+
 ];
 
 // ── NaviModel ─────────────────────────────────────────────────────────────────
