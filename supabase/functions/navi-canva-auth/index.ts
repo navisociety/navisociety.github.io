@@ -1,5 +1,3 @@
-// navi-canva-auth: per-user Canva OAuth for the NAVI Create tool.
-// Handles start-oauth, callback, get-status, disconnect, refresh-token.
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -26,31 +24,51 @@ const sb = createClient(
 
 const CLIENT_ID = Deno.env.get('CANVA_CLIENT_ID') ?? '';
 const CLIENT_SECRET = Deno.env.get('CANVA_CLIENT_SECRET') ?? '';
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
-const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/navi-canva-auth?action=callback`;
+// Redirect URI must exactly match what is registered in the Canva integration (no query params)
+const REDIRECT_URI = 'https://irssegzkvxyewuxgqpwi.supabase.co/functions/v1/navi-canva-auth';
 const APP_URL = 'https://navisociety.github.io';
-const SCOPE = 'design:content:read design:content:write design:meta:read';
-
+const SCOPE = 'design:content:read design:content:write design:meta:read asset:read profile:read';
 const TOKEN_URL = 'https://api.canva.com/rest/v1/oauth/token';
 const AUTH_URL = 'https://www.canva.com/api/oauth/authorize';
 
+function b64url(buf: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 function b64urlEncode(s: string): string {
-  return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return btoa(unescape(encodeURIComponent(s)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function b64urlDecode(s: string): string {
   const base64 = s.replace(/-/g, '+').replace(/_/g, '/');
-  return decodeURIComponent(atob(base64).split('').map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
+  return decodeURIComponent(
+    atob(base64).split('').map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+  );
 }
 
-async function exchangeCode(code: string): Promise<{ access_token: string; refresh_token?: string; expires_in: number }> {
+async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
+  const array = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = b64url(array.buffer);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = b64url(digest);
+  return { verifier, challenge };
+}
+
+async function exchangeCode(code: string, codeVerifier: string) {
   const basic = btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
   const r = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
-    body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI }),
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: codeVerifier,
+    }),
   });
-  if (!r.ok) throw new Error(`Canva token exchange failed: ${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(`Token exchange failed: ${r.status} ${await r.text()}`);
   return r.json();
 }
 
@@ -63,7 +81,7 @@ async function refreshUserToken(email: string): Promise<string> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
     body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: data.refresh_token }),
   });
-  if (!r.ok) throw new Error(`Canva token refresh failed: ${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(`Token refresh failed: ${r.status} ${await r.text()}`);
   const d = await r.json();
   const expiresAt = new Date(Date.now() + (d.expires_in ?? 0) * 1000).toISOString();
   await sb.from('navi_canva_tokens').update({
@@ -81,19 +99,18 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: c });
 
   const url = new URL(req.url);
-  const queryAction = url.searchParams.get('action');
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
 
-  // --- OAuth callback (GET redirect from Canva) ---
-  if (req.method === 'GET' && queryAction === 'callback') {
+  // OAuth callback: GET request with code + state from Canva
+  if (req.method === 'GET' && code && state) {
     try {
-      const code = url.searchParams.get('code') ?? '';
-      const state = url.searchParams.get('state') ?? '';
-      if (!code || !state) throw new Error('Missing code or state');
       const decoded = JSON.parse(b64urlDecode(state));
       const email = decoded.email as string;
-      if (!email) throw new Error('Missing email in state');
+      const codeVerifier = decoded.cv as string;
+      if (!email || !codeVerifier) throw new Error('Invalid state');
 
-      const tokens = await exchangeCode(code);
+      const tokens = await exchangeCode(code, codeVerifier);
       const expiresAt = new Date(Date.now() + (tokens.expires_in ?? 0) * 1000).toISOString();
       await sb.from('navi_canva_tokens').upsert({
         user_email: email,
@@ -105,25 +122,33 @@ serve(async (req) => {
 
       return new Response(null, { status: 302, headers: { Location: `${APP_URL}/?canva_connected=true` } });
     } catch (e) {
-      return new Response(null, { status: 302, headers: { Location: `${APP_URL}/?canva_error=${encodeURIComponent(String(e))}` } });
+      return new Response(null, {
+        status: 302,
+        headers: { Location: `${APP_URL}/?canva_error=${encodeURIComponent(String(e))}` },
+      });
     }
   }
 
   try {
     const body = req.method === 'POST' ? await req.json() : {};
-    const action = body.action ?? queryAction;
+    const action = body.action ?? url.searchParams.get('action');
     const email = body.email;
 
     if (action === 'start-oauth') {
       if (!email) return Response.json({ error: 'email required' }, { status: 400, headers: c });
       if (!CLIENT_ID) return Response.json({ connected: false, setupPending: true }, { headers: c });
-      const state = b64urlEncode(JSON.stringify({ email, ts: Date.now() }));
+
+      const { verifier, challenge } = await generatePKCE();
+      const stateVal = b64urlEncode(JSON.stringify({ email, ts: Date.now(), cv: verifier }));
+
       const p = new URLSearchParams({
         response_type: 'code',
         client_id: CLIENT_ID,
         redirect_uri: REDIRECT_URI,
         scope: SCOPE,
-        state,
+        state: stateVal,
+        code_challenge_method: 'S256',
+        code_challenge: challenge,
       });
       return Response.json({ url: `${AUTH_URL}?${p.toString()}` }, { headers: c });
     }
