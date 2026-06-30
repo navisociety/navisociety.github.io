@@ -85,6 +85,12 @@ const btnMag: React.CSSProperties = {
   padding: '0.65rem 1.2rem', cursor: 'pointer',
 };
 
+const btnDanger: React.CSSProperties = {
+  background: 'none', color: RED, border: `2px solid ${RED}`, borderRadius: 10,
+  fontFamily: 'Fredoka, sans-serif', fontWeight: 700, fontSize: '1rem',
+  padding: '0.65rem 1.2rem', cursor: 'pointer',
+};
+
 const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
   const [view, setView] = useState<View>('list');
   const [tab, setTab] = useState<Tab>('inbox');
@@ -100,6 +106,7 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
   const [composeBody, setComposeBody] = useState('');
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState('');
   const [sendStatus, setSendStatus] = useState<'' | 'sending' | 'sent' | 'error'>('');
 
@@ -184,6 +191,19 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
     await emailApi({ action: 'trash-message', email: userEmail, messageId: id });
     setView('list');
     loadInbox();
+  };
+
+  const clearInbox = async () => {
+    if (inbox.length === 0) return;
+    if (!window.confirm(`Move all ${inbox.length} loaded inbox emails to trash?`)) return;
+    setClearing(true); setError('');
+    try {
+      for (const msg of inbox) {
+        await emailApi({ action: 'trash-message', email: userEmail, messageId: msg.id });
+      }
+      setInbox([]);
+      await loadInbox();
+    } catch (e) { setError(String(e)); } finally { setClearing(false); }
   };
 
   const deleteStored = async (item: StoredEmail) => {
@@ -453,6 +473,16 @@ const EmailScreen: FC<Props> = ({ userEmail, onBack }) => {
         <button style={{ ...btnCyan, width: '100%', marginTop: '1rem' }} onClick={() => { setComposeTo(''); setComposeSubject(''); setComposeBody(''); setError(''); setSendStatus(''); setView('compose'); }}>
           + Compose
         </button>
+
+        {tab === 'inbox' && (
+          <button
+            style={{ ...btnDanger, width: '100%', marginTop: '0.75rem', opacity: (clearing || inbox.length === 0) ? 0.5 : 1, cursor: (clearing || inbox.length === 0) ? 'default' : 'pointer' }}
+            onClick={clearInbox}
+            disabled={clearing || inbox.length === 0}
+          >
+            {clearing ? 'Clearing...' : 'Clear Inbox'}
+          </button>
+        )}
       </div>
     </div>
   );
