@@ -176,7 +176,7 @@ function matchColor(patterns: string[], text: string): string | undefined {
 const FONT_NAMES = [
   'Comic Sans MS', 'Times New Roman', 'Trebuchet MS', 'Courier New', 'Open Sans',
   'Arial', 'Helvetica', 'Georgia', 'Verdana', 'Calibri', 'Impact', 'Montserrat',
-  'Roboto', 'Poppins', 'Lato', 'Futura', 'Garamond', 'Tahoma',
+  'Roboto', 'Poppins', 'Lato', 'Futura', 'Garamond', 'Tahoma', 'Fredoka',
 ].sort((a, b) => b.length - a.length);
 
 function luminance(hex: string): number {
@@ -208,6 +208,17 @@ function deriveStyle(prompt: string): Style {
     `\\b${COLOR_TOKEN}\\s*(?:accent|element)s?\\b`,
   ], p);
 
+  // Any hex code (e.g. #00F7FF) not already claimed by a qualified
+  // background/text/element match defaults to the background - the most
+  // common intent when a user just drops a brand hex into the prompt with
+  // no "background"/"text" qualifier word at all.
+  if (!style.bg) {
+    const claimed = new Set([style.text, style.accent].filter(Boolean));
+    const hexes = p.match(/#[0-9a-fA-F]{6}/g) ?? [];
+    const free = hexes.map((h) => h.slice(1).toUpperCase()).find((h) => !claimed.has(h));
+    if (free) style.bg = free;
+  }
+
   const fontRe = new RegExp(`\\b(${FONT_NAMES.join('|')})\\b`, 'i');
   const fontMatch = fontRe.exec(p);
   if (fontMatch) {
@@ -215,7 +226,11 @@ function deriveStyle(prompt: string): Style {
     style.font = FONT_NAMES.find((f) => f.toLowerCase() === found);
   }
 
-  const explicitSize = /\b(\d{1,3})\s*(?:pt|px)\b/i.exec(p) ?? /\bsize\s*(\d{1,3})\b/i.exec(p);
+  const explicitSize =
+    /\b(\d{1,3})\s*(?:pt|px|point|points)\b/i.exec(p) ??
+    /\bfont\s*size\s*(?:of\s*)?(\d{1,3})\b/i.exec(p) ??
+    /\btext\s*size\s*(?:of\s*)?(\d{1,3})\b/i.exec(p) ??
+    /\bsize\s*(?:of\s*)?(\d{1,3})\b/i.exec(p);
   if (explicitSize) {
     style.sizePt = clamp(parseInt(explicitSize[1], 10), 12, 120);
   } else if (/\b(large|big|huge|bigger)\b/i.test(p)) {
