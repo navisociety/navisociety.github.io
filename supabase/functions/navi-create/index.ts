@@ -167,6 +167,41 @@ interface Style {
   font?: string;
   sizePt?: number;
   sizeMult?: number;
+  shape?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Decorative element (shape) detection. We can't reach into Canva's own free
+// stock-graphics library through the public Connect API (no third-party
+// search/insert endpoint exists for it - the same platform wall documented
+// for Autofill), but pptxgenjs can draw real native shapes into the
+// generated .pptx, which Canva's importer turns into a normal, fully
+// editable shape element. This covers the common "add a circle/star/line
+// accent" style requests without needing AI or any paid Canva tier.
+//
+// Bare shape words are NOT enough to trigger this - "add a shape/element/
+// accent/icon/graphic/badge" qualifier is required, so ordinary body copy
+// (e.g. "carry your cross", "rising star") is never misread as a shape request.
+// ---------------------------------------------------------------------------
+const SHAPE_WORDS: Record<string, string> = {
+  circle: 'ellipse', circular: 'ellipse', oval: 'ellipse', ellipse: 'ellipse',
+  star: 'star5', triangle: 'triangle', arrow: 'rightArrow',
+  diamond: 'diamond', rhombus: 'diamond', heart: 'heart',
+  hexagon: 'hexagon', pentagon: 'pentagon', cross: 'plus', plus: 'plus',
+  line: 'line', bar: 'rect', square: 'rect', rectangle: 'rect', box: 'rect',
+};
+const SHAPE_NAMES = Object.keys(SHAPE_WORDS).sort((a, b) => b.length - a.length).join('|');
+const ELEMENT_QUALIFIER = 'shape|element|accent|icon|graphic|badge';
+
+function deriveShape(prompt: string): string | undefined {
+  const p = prompt.toLowerCase();
+  const m =
+    new RegExp(`\\b(${SHAPE_NAMES})\\s+(?:${ELEMENT_QUALIFIER})\\b`, 'i').exec(p) ??
+    new RegExp(`\\b(?:${ELEMENT_QUALIFIER})\\s+(?:of\\s+(?:a|an)\\s+)?(${SHAPE_NAMES})\\b`, 'i').exec(p) ??
+    new RegExp(`\\badd\\s+(?:a|an)\\s+(${SHAPE_NAMES})\\b`, 'i').exec(p);
+  if (!m) return undefined;
+  const shape = SHAPE_WORDS[m[1].toLowerCase()];
+  return shape === 'rect' && /\brounded\b/i.test(p) ? 'roundRect' : shape;
 }
 
 const COLOR_MAP: Record<string, string> = {
@@ -179,10 +214,16 @@ const COLOR_MAP: Record<string, string> = {
   lavender: 'E6E6FA',
 };
 const COLOR_NAMES = Object.keys(COLOR_MAP).sort((a, b) => b.length - a.length).join('|');
-const COLOR_TOKEN = `(#[0-9a-fA-F]{6}|${COLOR_NAMES})`;
+// Both 3-digit shorthand (#0FF) and full 6-digit (#00FFFF) hex are accepted -
+// ANY RGB value is allowed, not just the curated named-color list above.
+const COLOR_TOKEN = `(#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?|${COLOR_NAMES})`;
+
+function expandHex(hex: string): string {
+  return hex.length === 3 ? hex.split('').map((ch) => ch + ch).join('') : hex;
+}
 
 function resolveColor(tok: string): string {
-  return tok.startsWith('#') ? tok.slice(1).toUpperCase() : (COLOR_MAP[tok.toLowerCase()] ?? '000000');
+  return tok.startsWith('#') ? expandHex(tok.slice(1)).toUpperCase() : (COLOR_MAP[tok.toLowerCase()] ?? '000000');
 }
 
 function matchColor(patterns: string[], text: string): string | undefined {
@@ -193,11 +234,60 @@ function matchColor(patterns: string[], text: string): string | undefined {
   return undefined;
 }
 
+// Curated list of common font names recognized even as a bare mention
+// (no "font" keyword needed) - kept small and deliberate so ordinary words
+// don't get misread as font requests. Any OTHER font name (including any of
+// Canva's hundreds of free fonts) is still accepted via deriveExplicitFont()
+// below, as long as the user says so with an explicit "font" phrase.
 const FONT_NAMES = [
   'Comic Sans MS', 'Times New Roman', 'Trebuchet MS', 'Courier New', 'Open Sans',
   'Arial', 'Helvetica', 'Georgia', 'Verdana', 'Calibri', 'Impact', 'Montserrat',
   'Roboto', 'Poppins', 'Lato', 'Futura', 'Garamond', 'Tahoma', 'Fredoka',
 ].sort((a, b) => b.length - a.length);
+
+const FONT_STOPWORDS = new Set(['a', 'an', 'the', 'using', 'use', 'in', 'with', 'on', 'set', 'make', 'font', 'fonts', 'family']);
+
+function stripFontStopwords(phrase: string): string {
+  const words = phrase.trim().split(/\s+/).filter(Boolean);
+  while (words.length && FONT_STOPWORDS.has(words[0].toLowerCase())) words.shift();
+  return words.join(' ');
+}
+
+// Lets the user request ANY font by name (Canva has hundreds; we can't
+// hardcode them all) as long as they say so via an explicit "font" phrase -
+// "font: Bebas Neue", "in Bebas Neue font", "using the Bebas Neue font".
+// Falls through to the curated FONT_NAMES bare-word match below when absent.
+function deriveExplicitFont(p: string): string | undefined {
+  const quoted = /\bfont\s*(?:family)?\s*:?\s*"([^"]{1,40})"/i.exec(p);
+  if (quoted?.[1]) return quoted[1].trim();
+
+  const labeled = /\bfont\s*(?:family)?\s*:\s*([A-Za-z][A-Za-z0-9 '-]{0,39})/i.exec(p);
+  if (labeled?.[1]) {
+    const name = stripFontStopwords(labeled[1].split(/[,.\n]/)[0]);
+    if (name) return name;
+  }
+
+  // "<Name> font" - walk backward WORD BY WORD from the word "font"/"fonts"
+  // (not a single greedy regex - that can anchor at an earlier, unrelated
+  // starting word and swallow it into the name). Stops at punctuation or at
+  // a connector/filler word, so only the words truly adjacent to "font" -
+  // including real multi-word names like "Times New Roman" - are captured.
+  const tokens = p.split(/(\s+|[,.;!?])/).filter((t) => t.trim() !== '');
+  const fontIdx = tokens.findIndex((t) => /^fonts?$/i.test(t));
+  if (fontIdx > 0) {
+    const words: string[] = [];
+    for (let i = fontIdx - 1; i >= 0 && words.length < 4; i--) {
+      const tok = tokens[i];
+      if (!/^[A-Za-z][A-Za-z0-9'-]*$/.test(tok)) break;
+      if (FONT_STOPWORDS.has(tok.toLowerCase())) break;
+      words.unshift(tok);
+    }
+    const name = words.join(' ').trim();
+    if (name) return name;
+  }
+
+  return undefined;
+}
 
 function luminance(hex: string): number {
   const r = parseInt(hex.slice(0, 2), 16) / 255;
@@ -234,17 +324,24 @@ function deriveStyle(prompt: string): Style {
   // no "background"/"text" qualifier word at all.
   if (!style.bg) {
     const claimed = new Set([style.text, style.accent].filter(Boolean));
-    const hexes = p.match(/#[0-9a-fA-F]{6}/g) ?? [];
-    const free = hexes.map((h) => h.slice(1).toUpperCase()).find((h) => !claimed.has(h));
+    const hexes = p.match(/#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b/g) ?? [];
+    const free = hexes.map((h) => expandHex(h.slice(1)).toUpperCase()).find((h) => !claimed.has(h));
     if (free) style.bg = free;
   }
 
-  const fontRe = new RegExp(`\\b(${FONT_NAMES.join('|')})\\b`, 'i');
-  const fontMatch = fontRe.exec(p);
-  if (fontMatch) {
-    const found = fontMatch[1].toLowerCase();
-    style.font = FONT_NAMES.find((f) => f.toLowerCase() === found);
+  const explicitFont = deriveExplicitFont(p);
+  if (explicitFont) {
+    style.font = explicitFont;
+  } else {
+    const fontRe = new RegExp(`\\b(${FONT_NAMES.join('|')})\\b`, 'i');
+    const fontMatch = fontRe.exec(p);
+    if (fontMatch) {
+      const found = fontMatch[1].toLowerCase();
+      style.font = FONT_NAMES.find((f) => f.toLowerCase() === found);
+    }
   }
+
+  style.shape = deriveShape(p);
 
   const explicitSize =
     /\b(\d{1,3})\s*(?:pt|px|point|points)\b/i.exec(p) ??
@@ -384,12 +481,25 @@ async function buildPptx(width: number, height: number, slides: SlideContent[], 
     const slide = pptx.addSlide();
     if (style.bg) slide.background = { color: style.bg };
 
-    if (style.accent) {
-      // Thin full-width accent bar near the top (~5% of slide height).
-      slide.addShape('rect' as any, {
-        x: 0, y: 0, w: wIn, h: hIn * 0.05,
-        fill: { color: style.accent }, line: { color: style.accent },
-      });
+    if (style.shape || style.accent) {
+      const shapeColor = style.accent ?? textColor;
+      if (!style.shape || style.shape === 'rect') {
+        // Default/plain-rect case: thin full-width accent bar near the top
+        // (~5% of slide height) - preserves the original accent-color behaviour.
+        slide.addShape('rect' as any, {
+          x: 0, y: 0, w: wIn, h: hIn * 0.05,
+          fill: { color: shapeColor }, line: { color: shapeColor },
+        });
+      } else {
+        // A named decorative element (circle, star, arrow, etc.): a modestly
+        // sized shape in the top-right corner, real and fully editable once
+        // Canva imports it.
+        const size = Math.min(wIn, hIn) * 0.16;
+        slide.addShape(style.shape as any, {
+          x: wIn - size - marginX, y: hIn * 0.05, w: size, h: size,
+          fill: { color: shapeColor }, line: { color: shapeColor },
+        });
+      }
     }
 
     if (heading) {
@@ -594,7 +704,7 @@ serve(async (req) => {
       // Style (colors/font/size) is read from the SAME "Describe the design"
       // prompt that already drives type/size detection above - no new field.
       const style = deriveStyle(cleanPrompt);
-      const hasStyle = !!(style.bg || style.text || style.accent || style.font || style.sizePt || style.sizeMult);
+      const hasStyle = !!(style.bg || style.text || style.accent || style.font || style.sizePt || style.sizeMult || style.shape);
 
       // Look up the user's Canva token
       const { data: tok } = await sb.from('navi_canva_tokens').select('access_token,refresh_token,expires_at').eq('user_email', email).single();
