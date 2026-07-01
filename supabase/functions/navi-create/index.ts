@@ -667,6 +667,17 @@ async function buildPptx(width: number, height: number, slides: SlideContent[], 
   return out instanceof Uint8Array ? out : new Uint8Array(out as ArrayBuffer);
 }
 
+// Purely additive: exposes the pure-logic functions above to _test.ts (a
+// standalone `deno test` regression suite, not part of the request handler
+// below). Does not change the runtime behavior of the serve() handler.
+export {
+  preset, custom, deriveDesignType, designTypeToDims, deriveExportFormat, deriveTitle,
+  clamp, deriveStyle, deriveShape, resolveColor, expandHex, deriveExplicitFont, luminance,
+  deriveAlign, deriveVAlign, deriveBorder, splitIntoSlides, extractHeadlineBody, isBulletList,
+  parseTableRows, estimateLines, fitFontSize, buildPptx, DEFAULT_DESIGN,
+};
+export type { DesignType, Style, SlideContent };
+
 async function refreshUserToken(email: string, refreshToken: string): Promise<string> {
   const basic = btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
   const r = await fetch(TOKEN_URL, {
