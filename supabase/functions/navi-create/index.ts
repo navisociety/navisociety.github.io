@@ -63,6 +63,15 @@ const custom = (width: number, height: number): DesignType => ({ type: 'custom',
 
 // Ordered rules: first match wins, so more specific patterns come first.
 const DESIGN_RULES: Array<[RegExp, DesignType]> = [
+  // Cover/header/banner variants - checked first since the generic banner/cover
+  // catch-all further down would otherwise swallow these more specific asks.
+  [/\bfacebook\s*(cover|banner)\b/, custom(820, 312)],
+  [/\blinked\s*in\s*(banner|cover)\b/, custom(1584, 396)],
+  [/\b(twitter|x)\s*(header|banner|cover)\b/, custom(1500, 500)],
+  [/\byou\s*tube\s*(banner|cover|channel\s*art)\b/, custom(2560, 1440)],
+  [/\bbook\s*cover\b/, custom(1600, 2400)],
+  [/\balbum\s*cover\b/, custom(3000, 3000)],
+  [/\bpodcast\s*(cover|art)?\b/, custom(3000, 3000)],
   // Social - stories/reels/vertical video (check before generic instagram/post)
   [/\b(instagram|insta|ig)\s*(story|stories)\b|\breels?\b|\btik\s*tok\b|\bstory\b/, custom(1080, 1920)],
   [/\b(instagram|insta|ig)\b/, custom(1080, 1080)],
@@ -72,11 +81,22 @@ const DESIGN_RULES: Array<[RegExp, DesignType]> = [
   [/\bpinterest\b|\bpin\b/, custom(1000, 1500)],
   [/\byou\s*tube\s*(thumb\w*)?\b|\bthumbnail\b/, custom(1280, 720)],
   [/\byou\s*tube\b|\bvideo\b/, custom(1920, 1080)],
+  [/\bzoom\s*background\b|\bvirtual\s*background\b/, custom(1920, 1080)],
   // Print / marketing
   [/\bposter\b/, custom(2480, 3508)],
   [/\bflyer\b|\bflier\b|\bleaflet\b|\bhandout\b|\bpamphlet\b/, custom(2480, 3508)],
+  [/\bpostcard\b/, custom(1500, 1050)],
   [/\bbusiness\s*card\b/, custom(1050, 600)],
-  [/\blogo\b/, custom(500, 500)],
+  [/\bname\s*tag\b|\bbadge\b/, custom(1050, 675)],
+  [/\blogo\b|\bapp\s*icon\b/, custom(500, 500)],
+  [/\bsticker\b/, custom(800, 800)],
+  [/\bwall\s*paper\b|\bdesktop\s*background\b/, custom(1920, 1080)],
+  [/\bcertificate\b|\bdiploma\b/, custom(3300, 2550)],
+  [/\binfographic\b/, custom(1080, 2700)],
+  [/\bbrochure\b|\btri-?fold\b/, custom(2550, 3300)],
+  [/\bletterhead\b/, custom(2550, 3300)],
+  [/\bmenu\b/, custom(1275, 1650)],
+  [/\bplanner\b|\bcalendar\b/, custom(2550, 3300)],
   [/\bbanner\b|\bheader\b|\bcover\s*(photo|image)?\b/, custom(1500, 500)],
   [/\b(greeting|birthday|thank\s*you)?\s*card\b|\binvitation\b|\binvite\b/, custom(1500, 1050)],
   // Real Canva Connect presets
@@ -242,6 +262,81 @@ function deriveStyle(prompt: string): Style {
   return style;
 }
 
+// ---------------------------------------------------------------------------
+// Multi-slide content splitting. Users often paste multiple points (sermon
+// outlines, event details, carousel copy) into the single "What should it
+// say?" box. A blank line, or an explicit "---"/"***" separator line, between
+// blocks now produces one slide per block (each block's first line becomes
+// that slide's heading, same rule the single-slide path already used) instead
+// of cramming everything into one overcrowded text box.
+// ---------------------------------------------------------------------------
+interface SlideContent {
+  heading: string;
+  body: string;
+}
+
+const MAX_SLIDES = 30;
+
+function extractHeadlineBody(block: string): SlideContent {
+  const lines = block.split(/\r?\n/);
+  const firstIdx = lines.findIndex((l) => l.trim() !== '');
+  if (firstIdx < 0) return { heading: '', body: '' };
+  const heading = lines[firstIdx].trim();
+  const body = lines.slice(firstIdx + 1).join('\n').trim();
+  return { heading, body };
+}
+
+function splitIntoSlides(content: string): SlideContent[] {
+  const normalized = content.replace(/\r\n/g, '\n');
+  const withMarkers = normalized.replace(/^[ \t]*(-{3,}|\*{3,})[ \t]*$/gm, '\n\n');
+  const blocks = withMarkers.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean).slice(0, MAX_SLIDES);
+  if (blocks.length === 0) return [{ heading: '', body: '' }];
+  return blocks.map(extractHeadlineBody);
+}
+
+// ---------------------------------------------------------------------------
+// Bullet-list detection + shrink-to-fit sizing. Previously body font size was
+// derived purely from the design's pixel dimensions and never checked against
+// how much text actually had to fit, so longer user text could silently
+// overflow its box. estimateLines/fitFontSize simulate greedy word-wrap at a
+// given font size and shrink (in 2pt steps, down to a floor) until the
+// content is estimated to fit the box height.
+// ---------------------------------------------------------------------------
+const BULLET_RE = /^\s*(?:[-*•]|\d+[.)])\s+/;
+
+function isBulletList(lines: string[]): boolean {
+  const nonEmpty = lines.filter((l) => l.trim() !== '');
+  if (nonEmpty.length < 2) return false;
+  const bulletCount = nonEmpty.filter((l) => BULLET_RE.test(l)).length;
+  return bulletCount / nonEmpty.length >= 0.5;
+}
+
+function estimateLines(text: string, fontPt: number, boxWidthIn: number): number {
+  if (!text) return 1;
+  const avgCharWidthIn = (fontPt * 0.52) / 72;
+  const charsPerLine = Math.max(1, Math.floor(boxWidthIn / avgCharWidthIn));
+  const words = text.split(/\s+/).filter(Boolean);
+  let lines = 1;
+  let lineLen = 0;
+  for (const w of words) {
+    const wLen = w.length + 1;
+    if (lineLen + wLen > charsPerLine && lineLen > 0) { lines++; lineLen = wLen; }
+    else lineLen += wLen;
+  }
+  return lines;
+}
+
+function fitFontSize(paragraphs: string[], boxWidthIn: number, boxHeightIn: number, startFont: number, minFont: number): number {
+  let font = startFont;
+  while (font > minFont) {
+    const lineHeightIn = (font * 1.25) / 72;
+    const totalLines = paragraphs.reduce((sum, p) => sum + estimateLines(p, font, boxWidthIn), 0);
+    if (totalLines * lineHeightIn <= boxHeightIn) return font;
+    font -= 2;
+  }
+  return minFont;
+}
+
 // Base64 of a UTF-8 string (btoa alone mangles non-Latin1 characters).
 function b64utf8(s: string): string {
   const bytes = new TextEncoder().encode(s);
@@ -251,64 +346,79 @@ function b64utf8(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Build a single-slide .pptx whose slide size equals the resolved pixel
-// dimensions. Standard OOXML conversion is 1px @96dpi = 9525 EMU, which
+// Build a .pptx (one or more slides) whose slide size equals the resolved
+// pixel dimensions. Standard OOXML conversion is 1px @96dpi = 9525 EMU, which
 // PptxGenJS expresses via a custom layout sized in inches (px / 96). When
 // Canva imports this file, the resulting design inherits this exact size AND
-// keeps the title/body as real, editable text. Two text boxes only; no
-// themes/animations. Body lines become separate paragraphs (real line breaks).
+// keeps each heading/body as real, editable text (rendered as a bulleted
+// list when the body looks like one). No themes/animations.
 // ---------------------------------------------------------------------------
-async function buildPptx(width: number, height: number, title: string, body: string, style: Style = {}): Promise<Uint8Array> {
+async function buildPptx(width: number, height: number, slides: SlideContent[], style: Style = {}): Promise<Uint8Array> {
   const wIn = width / 96;
   const hIn = height / 96;
   const pptx = new pptxgen();
   pptx.defineLayout({ name: 'NAVI', width: wIn, height: hIn });
   pptx.layout = 'NAVI';
-  const slide = pptx.addSlide();
-
-  if (style.bg) slide.background = { color: style.bg };
 
   const isDarkBg = !!style.bg && luminance(style.bg) < 0.5;
   const textColor = style.text ?? (isDarkBg ? 'FFFFFF' : '000000');
   const fontFace = style.font ?? 'Arial';
 
   const base = Math.min(width, height);
-  let titleFont = clamp(Math.round(base / 22), 20, 80);
-  let bodyFont = clamp(Math.round(base / 40), 12, 44);
+  let baseTitleFont = clamp(Math.round(base / 22), 20, 80);
+  let baseBodyFont = clamp(Math.round(base / 40), 12, 44);
   if (style.sizePt) {
-    titleFont = clamp(style.sizePt, 12, 120);
-    bodyFont = clamp(Math.round(style.sizePt * 0.55), 12, 120);
+    baseTitleFont = clamp(style.sizePt, 12, 120);
+    baseBodyFont = clamp(Math.round(style.sizePt * 0.55), 12, 120);
   } else if (style.sizeMult) {
-    titleFont = clamp(Math.round(titleFont * style.sizeMult), 12, 120);
-    bodyFont = clamp(Math.round(bodyFont * style.sizeMult), 12, 120);
+    baseTitleFont = clamp(Math.round(baseTitleFont * style.sizeMult), 12, 120);
+    baseBodyFont = clamp(Math.round(baseBodyFont * style.sizeMult), 12, 120);
   }
 
   const marginX = wIn * 0.06;
   const contentW = wIn - marginX * 2;
+  const titleBoxH = hIn * 0.24;
+  const bodyBoxH = hIn * 0.54;
 
-  if (style.accent) {
-    // Thin full-width accent bar near the top (~5% of slide height).
-    slide.addShape('rect' as any, {
-      x: 0, y: 0, w: wIn, h: hIn * 0.05,
-      fill: { color: style.accent }, line: { color: style.accent },
-    });
-  }
+  for (const { heading, body } of slides) {
+    const slide = pptx.addSlide();
+    if (style.bg) slide.background = { color: style.bg };
 
-  if (title) {
-    slide.addText(title, {
-      x: marginX, y: hIn * 0.08, w: contentW, h: hIn * 0.24,
-      fontSize: titleFont, bold: true, align: 'center', valign: 'top',
-      fontFace, color: textColor, wrap: true,
-    });
-  }
-  if (body) {
-    // Split into paragraph runs so newlines render as real line breaks.
-    const runs = body.split(/\r?\n/).map((line) => ({ text: line, options: { breakLine: true } }));
-    slide.addText(runs as unknown as string, {
-      x: marginX, y: hIn * 0.38, w: contentW, h: hIn * 0.54,
-      fontSize: bodyFont, align: title ? 'left' : 'center', valign: 'top',
-      fontFace, color: textColor, wrap: true,
-    });
+    if (style.accent) {
+      // Thin full-width accent bar near the top (~5% of slide height).
+      slide.addShape('rect' as any, {
+        x: 0, y: 0, w: wIn, h: hIn * 0.05,
+        fill: { color: style.accent }, line: { color: style.accent },
+      });
+    }
+
+    if (heading) {
+      // Only auto-shrink when the user didn't request an explicit size -
+      // an explicit request should be honored as-is, not overridden.
+      const titleFont = style.sizePt ? baseTitleFont : fitFontSize([heading], contentW, titleBoxH, baseTitleFont, 14);
+      slide.addText(heading, {
+        x: marginX, y: hIn * 0.08, w: contentW, h: titleBoxH,
+        fontSize: titleFont, bold: true, align: 'center', valign: 'top',
+        fontFace, color: textColor, wrap: true,
+      });
+    }
+    if (body) {
+      const bodyLines = body.split(/\r?\n/);
+      const bulleted = isBulletList(bodyLines);
+      const cleanLines = bulleted ? bodyLines.map((line) => line.replace(BULLET_RE, '')) : bodyLines;
+      const bodyFont = style.sizePt ? baseBodyFont : fitFontSize(cleanLines, contentW - (bulleted ? 0.3 : 0), bodyBoxH, baseBodyFont, 10);
+      // Split into paragraph runs so newlines render as real line breaks
+      // (and, when the text looks like a list, as real Canva bullet points).
+      const runs = cleanLines.map((line) => ({
+        text: line,
+        options: bulleted ? { breakLine: true, bullet: true } : { breakLine: true },
+      }));
+      slide.addText(runs as unknown as string, {
+        x: marginX, y: hIn * 0.38, w: contentW, h: bodyBoxH,
+        fontSize: bodyFont, align: bulleted ? 'left' : (heading ? 'left' : 'center'), valign: 'top',
+        fontFace, color: textColor, wrap: true,
+      });
+    }
   }
 
   const out = await pptx.write({ outputType: 'uint8array' });
@@ -468,20 +578,14 @@ serve(async (req) => {
       const cleanPrompt = (prompt ?? '').trim();
       if (!cleanPrompt) return Response.json({ error: 'prompt required' }, { status: 400, headers: c });
 
-      // Optional content: first non-blank line is the title/headline, the rest
-      // is body text. Pure string splitting, no AI. Drives the import path.
+      // Optional content: first non-blank line of each block is that block's
+      // headline, the rest is body text. Pure string splitting, no AI. Blank
+      // lines or "---"/"***" separators split the content into multiple
+      // slides (e.g. a list of event details or sermon points becomes one
+      // slide per point instead of one crowded text box). Drives the import path.
       const contentClean = (content ?? '').trim();
       const hasContent = contentClean.length > 0;
-      let headlineLine = '';
-      let bodyText = '';
-      if (hasContent) {
-        const lines = contentClean.split(/\r?\n/);
-        const firstIdx = lines.findIndex((l: string) => l.trim() !== '');
-        if (firstIdx >= 0) {
-          headlineLine = lines[firstIdx].trim();
-          bodyText = lines.slice(firstIdx + 1).join('\n').trim();
-        }
-      }
+      const slides: SlideContent[] = hasContent ? splitIntoSlides(contentClean) : [{ heading: '', body: '' }];
 
       const title = deriveTitle(cleanPrompt);
       const designType = deriveDesignType(cleanPrompt);
@@ -558,7 +662,7 @@ serve(async (req) => {
 
         let bytes: Uint8Array;
         try {
-          bytes = await buildPptx(width, height, headlineLine, bodyText, style);
+          bytes = await buildPptx(width, height, slides, style);
         } catch (_e) {
           return await markFailed();
         }
