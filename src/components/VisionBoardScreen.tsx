@@ -82,29 +82,6 @@ const CloudPanel: FC<{ children: React.ReactNode; style?: React.CSSProperties }>
   </div>
 );
 
-// Same silhouette technique as CloudPanel, scaled down to wrap a single board tile
-// so every goal/image on the board reads as its own little cloud.
-const CloudTile: FC<{ children: React.ReactNode }> = ({ children }) => (
-  <>
-    <div style={{ position: 'absolute', top: -12, left: 8, width: 34, height: 34, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'absolute', top: -20, left: 36, width: 46, height: 46, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'absolute', top: -10, right: 30, width: 38, height: 38, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'absolute', top: -4, right: 6, width: 26, height: 26, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#fff', borderRadius: 22, overflow: 'hidden' }}>
-      {children}
-    </div>
-  </>
-);
-
-// Faint decorative clouds drifting behind the whole board.
-const BackgroundCloud: FC<{ top: number; left?: number; right?: number; scale: number }> = ({ top, left, right, scale }) => (
-  <div style={{ position: 'absolute', top, left, right, width: 140 * scale, height: 70 * scale, pointerEvents: 'none', opacity: 0.55 }}>
-    <div style={{ position: 'absolute', bottom: 0, width: '100%', height: '70%', background: '#EEF4FF', borderRadius: 999 }} />
-    <div style={{ position: 'absolute', bottom: '30%', left: '8%', width: '46%', height: '80%', background: '#EEF4FF', borderRadius: '50%' }} />
-    <div style={{ position: 'absolute', bottom: '38%', left: '46%', width: '52%', height: '92%', background: '#EEF4FF', borderRadius: '50%' }} />
-  </div>
-);
-
 const btnCyan: React.CSSProperties = {
   background: CYAN, color: '#000', border: 'none', borderRadius: 10,
   fontFamily: 'Fredoka, sans-serif', fontWeight: 700, fontSize: '1rem',
@@ -179,6 +156,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
   const pinchPointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchState = useRef<{ startDist: number; startZoom: number } | null>(null);
+  const prevZoomRef = useRef(1);
 
   const loadItems = useCallback(async () => {
     if (!email) return;
@@ -197,6 +175,21 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
+
+  // Keep whatever point is currently at the center of the viewport anchored there
+  // as zoom changes, instead of always zooming toward the top-left corner.
+  useEffect(() => {
+    const el = canvasRef.current;
+    const oldZoom = prevZoomRef.current;
+    prevZoomRef.current = zoom;
+    if (!el || oldZoom === zoom) return;
+    const centerX = el.scrollLeft + el.clientWidth / 2;
+    const centerY = el.scrollTop + el.clientHeight / 2;
+    const unscaledX = centerX / oldZoom;
+    const unscaledY = centerY / oldZoom;
+    el.scrollLeft = unscaledX * zoom - el.clientWidth / 2;
+    el.scrollTop = unscaledY * zoom - el.clientHeight / 2;
+  }, [zoom]);
 
   const cols = Math.max(1, Math.floor((canvasWidth + GAP) / (TILE + GAP)));
 
@@ -256,8 +249,6 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   if (!email) {
     return (
       <div style={container}>
-        <BackgroundCloud top={80} left={-20} scale={1.1} />
-        <BackgroundCloud top={220} right={-30} scale={0.9} />
         <div style={topBar}><BackBtn onClick={onClose} /></div>
         <div style={{ ...scrollArea, justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
           <span style={{ color: INK, fontSize: '1.2rem', fontWeight: 700 }}>Sign in to use Vision Board</span>
@@ -345,9 +336,6 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
 
   return (
     <div style={container}>
-      <BackgroundCloud top={70} left={-30} scale={1.2} />
-      <BackgroundCloud top={210} right={-40} scale={1} />
-      <BackgroundCloud top={420} left={-10} scale={0.8} />
       <div style={topBar}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -400,23 +388,21 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                     onPointerCancel={e => onTilePointerUp(e, item)}
                     style={{
                       position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
-                      cursor: 'grab', touchAction: 'none', userSelect: 'none',
-                      filter: 'drop-shadow(0 4px 12px rgba(26,26,46,0.3))',
+                      borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
+                      userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
                     }}
                   >
-                    <CloudTile>
-                      {item.kind === 'image' ? (
-                        <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
-                      ) : (
-                        <div style={{
-                          width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
-                          padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
-                        }}>
-                          <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
-                        </div>
-                      )}
-                    </CloudTile>
+                    {item.kind === 'image' ? (
+                      <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                    ) : (
+                      <div style={{
+                        width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
+                        padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
+                      }}>
+                        <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
+                      </div>
+                    )}
                     <button
                       onPointerDown={e => e.stopPropagation()}
                       onClick={() => deleteItem(item)}
