@@ -132,6 +132,101 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
+// ---------------------------------------------------------------------------
+// Style detection: extract background/text/accent colors, font family, and
+// font size directly from the "Describe the design" prompt (the SAME prompt
+// deriveDesignType() already reads for type/size). Pure regex/keyword
+// matching, zero AI (see feedback_anthropic_key_tier_restriction) - anything
+// not explicitly stated is left undefined so buildPptx() falls back to its
+// existing plain defaults (white background, black text, Arial).
+// ---------------------------------------------------------------------------
+interface Style {
+  bg?: string;
+  text?: string;
+  accent?: string;
+  font?: string;
+  sizePt?: number;
+  sizeMult?: number;
+}
+
+const COLOR_MAP: Record<string, string> = {
+  black: '000000', white: 'FFFFFF', red: 'FF0000', blue: '0000FF', green: '008000',
+  yellow: 'FFFF00', orange: 'FFA500', purple: '800080', pink: 'FFC0CB', cyan: '00FFFF',
+  magenta: 'FF00FF', lime: '00FF00', gray: '808080', grey: '808080', navy: '000080',
+  maroon: '800000', teal: '008080', gold: 'FFD700', silver: 'C0C0C0', brown: 'A52A2A',
+  beige: 'F5F5DC', ivory: 'FFFFF0', coral: 'FF7F50', turquoise: '40E0D0', indigo: '4B0082',
+  violet: 'EE82EE', crimson: 'DC143C', olive: '808000', mint: '98FF98', peach: 'FFDAB9',
+  lavender: 'E6E6FA',
+};
+const COLOR_NAMES = Object.keys(COLOR_MAP).sort((a, b) => b.length - a.length).join('|');
+const COLOR_TOKEN = `(#[0-9a-fA-F]{6}|${COLOR_NAMES})`;
+
+function resolveColor(tok: string): string {
+  return tok.startsWith('#') ? tok.slice(1).toUpperCase() : (COLOR_MAP[tok.toLowerCase()] ?? '000000');
+}
+
+function matchColor(patterns: string[], text: string): string | undefined {
+  for (const p of patterns) {
+    const m = new RegExp(p, 'i').exec(text);
+    if (m?.[1]) return resolveColor(m[1]);
+  }
+  return undefined;
+}
+
+const FONT_NAMES = [
+  'Comic Sans MS', 'Times New Roman', 'Trebuchet MS', 'Courier New', 'Open Sans',
+  'Arial', 'Helvetica', 'Georgia', 'Verdana', 'Calibri', 'Impact', 'Montserrat',
+  'Roboto', 'Poppins', 'Lato', 'Futura', 'Garamond', 'Tahoma',
+].sort((a, b) => b.length - a.length);
+
+function luminance(hex: string): number {
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function deriveStyle(prompt: string): Style {
+  const p = prompt ?? '';
+  const style: Style = {};
+
+  style.bg = matchColor([
+    `\\bbackground\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
+    `\\b${COLOR_TOKEN}\\s*background\\b`,
+    `\\bbackground\\s*${COLOR_TOKEN}\\b`,
+  ], p);
+
+  style.text = matchColor([
+    `\\btext\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
+    `\\bfont\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
+    `\\b${COLOR_TOKEN}\\s*text\\b`,
+    `\\btext\\s*${COLOR_TOKEN}\\b`,
+  ], p);
+
+  style.accent = matchColor([
+    `\\b(?:accent|element)s?\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
+    `\\b${COLOR_TOKEN}\\s*(?:accent|element)s?\\b`,
+  ], p);
+
+  const fontRe = new RegExp(`\\b(${FONT_NAMES.join('|')})\\b`, 'i');
+  const fontMatch = fontRe.exec(p);
+  if (fontMatch) {
+    const found = fontMatch[1].toLowerCase();
+    style.font = FONT_NAMES.find((f) => f.toLowerCase() === found);
+  }
+
+  const explicitSize = /\b(\d{1,3})\s*(?:pt|px)\b/i.exec(p) ?? /\bsize\s*(\d{1,3})\b/i.exec(p);
+  if (explicitSize) {
+    style.sizePt = clamp(parseInt(explicitSize[1], 10), 12, 120);
+  } else if (/\b(large|big|huge|bigger)\b/i.test(p)) {
+    style.sizeMult = 1.4;
+  } else if (/\b(small|tiny|smaller)\b/i.test(p)) {
+    style.sizeMult = 0.7;
+  }
+
+  return style;
+}
+
 // Base64 of a UTF-8 string (btoa alone mangles non-Latin1 characters).
 function b64utf8(s: string): string {
   const bytes = new TextEncoder().encode(s);
@@ -148,7 +243,7 @@ function b64utf8(s: string): string {
 // keeps the title/body as real, editable text. Two text boxes only; no
 // themes/animations. Body lines become separate paragraphs (real line breaks).
 // ---------------------------------------------------------------------------
-async function buildPptx(width: number, height: number, title: string, body: string): Promise<Uint8Array> {
+async function buildPptx(width: number, height: number, title: string, body: string, style: Style = {}): Promise<Uint8Array> {
   const wIn = width / 96;
   const hIn = height / 96;
   const pptx = new pptxgen();
@@ -156,17 +251,39 @@ async function buildPptx(width: number, height: number, title: string, body: str
   pptx.layout = 'NAVI';
   const slide = pptx.addSlide();
 
+  if (style.bg) slide.background = { color: style.bg };
+
+  const isDarkBg = !!style.bg && luminance(style.bg) < 0.5;
+  const textColor = style.text ?? (isDarkBg ? 'FFFFFF' : '000000');
+  const fontFace = style.font ?? 'Arial';
+
   const base = Math.min(width, height);
-  const titleFont = clamp(Math.round(base / 22), 20, 80);
-  const bodyFont = clamp(Math.round(base / 40), 12, 44);
+  let titleFont = clamp(Math.round(base / 22), 20, 80);
+  let bodyFont = clamp(Math.round(base / 40), 12, 44);
+  if (style.sizePt) {
+    titleFont = clamp(style.sizePt, 12, 120);
+    bodyFont = clamp(Math.round(style.sizePt * 0.55), 12, 120);
+  } else if (style.sizeMult) {
+    titleFont = clamp(Math.round(titleFont * style.sizeMult), 12, 120);
+    bodyFont = clamp(Math.round(bodyFont * style.sizeMult), 12, 120);
+  }
+
   const marginX = wIn * 0.06;
   const contentW = wIn - marginX * 2;
+
+  if (style.accent) {
+    // Thin full-width accent bar near the top (~5% of slide height).
+    slide.addShape('rect' as any, {
+      x: 0, y: 0, w: wIn, h: hIn * 0.05,
+      fill: { color: style.accent }, line: { color: style.accent },
+    });
+  }
 
   if (title) {
     slide.addText(title, {
       x: marginX, y: hIn * 0.08, w: contentW, h: hIn * 0.24,
       fontSize: titleFont, bold: true, align: 'center', valign: 'top',
-      fontFace: 'Arial', color: '000000', wrap: true,
+      fontFace, color: textColor, wrap: true,
     });
   }
   if (body) {
@@ -175,7 +292,7 @@ async function buildPptx(width: number, height: number, title: string, body: str
     slide.addText(runs as unknown as string, {
       x: marginX, y: hIn * 0.38, w: contentW, h: hIn * 0.54,
       fontSize: bodyFont, align: title ? 'left' : 'center', valign: 'top',
-      fontFace: 'Arial', color: '000000', wrap: true,
+      fontFace, color: textColor, wrap: true,
     });
   }
 
@@ -355,6 +472,11 @@ serve(async (req) => {
       const designType = deriveDesignType(cleanPrompt);
       const contentToStore = hasContent ? contentClean : null;
 
+      // Style (colors/font/size) is read from the SAME "Describe the design"
+      // prompt that already drives type/size detection above - no new field.
+      const style = deriveStyle(cleanPrompt);
+      const hasStyle = !!(style.bg || style.text || style.accent || style.font || style.sizePt || style.sizeMult);
+
       // Look up the user's Canva token
       const { data: tok } = await sb.from('navi_canva_tokens').select('access_token,refresh_token,expires_at').eq('user_email', email).single();
 
@@ -409,15 +531,19 @@ serve(async (req) => {
       };
 
       // -------------------------------------------------------------------
-      // CONTENT PATH: generate a sized .pptx with real text, import it into
-      // Canva as a fully-editable design of the exact detected dimensions.
+      // CONTENT/STYLE PATH: generate a sized .pptx with real text and/or the
+      // detected colors/font/size, import it into Canva as a fully-editable
+      // design of the exact detected dimensions. Runs whenever there is user
+      // text OR any style was detected in the prompt (a "black background"
+      // request with no body text still needs the import path - a blank
+      // POST /v1/designs call has no way to set colors).
       // -------------------------------------------------------------------
-      if (hasContent) {
+      if (hasContent || hasStyle) {
         const { width, height } = designTypeToDims(designType);
 
         let bytes: Uint8Array;
         try {
-          bytes = await buildPptx(width, height, headlineLine, bodyText);
+          bytes = await buildPptx(width, height, headlineLine, bodyText, style);
         } catch (_e) {
           return await markFailed();
         }
@@ -447,7 +573,8 @@ serve(async (req) => {
       }
 
       // -------------------------------------------------------------------
-      // NO-CONTENT PATH (unchanged): create a blank design via POST /v1/designs.
+      // NO-CONTENT-AND-NO-STYLE PATH (unchanged): create a blank design via
+      // POST /v1/designs when the prompt only specified type/size.
       // -------------------------------------------------------------------
       try {
         let r = await callCanvaCreate(accessToken, designType, title);
