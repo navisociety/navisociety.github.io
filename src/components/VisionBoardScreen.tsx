@@ -136,6 +136,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [imageUrl, setImageUrl] = useState('');
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(440);
@@ -283,45 +284,43 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
         </div>
       </div>
       <div style={scrollArea}>
-        <CloudPanel>
-          <div style={fieldLabel}>Add a goal</div>
-          <textarea
-            value={goalText}
-            onChange={e => setGoalText(e.target.value)}
-            rows={2}
-            placeholder="e.g. Launch my business by December"
-            style={{ ...inputStyle, marginBottom: '0.75rem' }}
-          />
-          <button style={{ ...btnCyan, width: '100%', marginBottom: '1.1rem' }} onClick={addGoal} disabled={adding || !goalText.trim()}>
-            + Add Goal
-          </button>
+        {showAdd && (
+          <CloudPanel>
+            <div style={fieldLabel}>Add a goal</div>
+            <textarea
+              value={goalText}
+              onChange={e => setGoalText(e.target.value)}
+              rows={2}
+              placeholder="e.g. Launch my business by December"
+              style={{ ...inputStyle, marginBottom: '0.75rem' }}
+            />
+            <button style={{ ...btnCyan, width: '100%', marginBottom: '1.1rem' }} onClick={addGoal} disabled={adding || !goalText.trim()}>
+              + Add Goal
+            </button>
 
-          <div style={fieldLabel}>Add an image</div>
-          <input
-            value={imageUrl}
-            onChange={e => setImageUrl(e.target.value)}
-            placeholder="Paste an image URL..."
-            style={{ ...inputStyle, marginBottom: '0.75rem' }}
-          />
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button style={{ ...btnGhost, flex: 1 }} onClick={addImageUrl} disabled={adding || !imageUrl.trim()}>
-              Add URL
-            </button>
-            <button style={{ ...btnCyan, flex: 1 }} onClick={() => fileInputRef.current?.click()} disabled={adding}>
-              {adding ? 'Adding...' : 'Upload Image'}
-            </button>
-          </div>
-          <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
-        </CloudPanel>
+            <div style={fieldLabel}>Add an image</div>
+            <input
+              value={imageUrl}
+              onChange={e => setImageUrl(e.target.value)}
+              placeholder="Paste an image URL..."
+              style={{ ...inputStyle, marginBottom: '0.75rem' }}
+            />
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button style={{ ...btnGhost, flex: 1 }} onClick={addImageUrl} disabled={adding || !imageUrl.trim()}>
+                Add URL
+              </button>
+              <button style={{ ...btnCyan, flex: 1 }} onClick={() => fileInputRef.current?.click()} disabled={adding}>
+                {adding ? 'Adding...' : 'Upload Image'}
+              </button>
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
+          </CloudPanel>
+        )}
 
         {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
         {loading && <div style={{ color: '#8892A6', textAlign: 'center', padding: '2rem 0' }}>Loading...</div>}
 
-        {!loading && items.length === 0 && (
-          <div style={{ color: '#8892A6', textAlign: 'center', padding: '2rem 0' }}>Your board is empty. Add a goal or image above.</div>
-        )}
-
-        {!loading && items.length > 0 && (
+        {!loading && (
           <div
             ref={canvasRef}
             style={{
@@ -330,6 +329,14 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
               backgroundSize: '18px 18px', borderRadius: 14, touchAction: 'none',
             }}
           >
+            {items.length === 0 && (
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none',
+              }}>
+                Your board is empty. Tap + to add a goal or image.
+              </div>
+            )}
             {items.map((item, i) => {
               const pos = positions.get(item.id) ?? { x: 0, y: 0 };
               return (
@@ -375,6 +382,20 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
           </div>
         )}
       </div>
+
+      <button
+        onClick={() => setShowAdd(v => !v)}
+        title={showAdd ? 'Close' : 'Add to board'}
+        style={{
+          position: 'fixed', bottom: 28, right: 'max(24px, calc(50% - 216px))', zIndex: 5,
+          width: 60, height: 60, borderRadius: '50%', background: CYAN, border: 'none',
+          boxShadow: '0 8px 20px rgba(26,26,46,0.35)', color: '#000', fontSize: '1.8rem',
+          fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          lineHeight: 1, transform: showAdd ? 'rotate(45deg)' : 'none', transition: 'transform 0.15s ease',
+        }}
+      >
+        +
+      </button>
     </div>
   );
 };
