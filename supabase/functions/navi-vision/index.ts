@@ -58,6 +58,23 @@ serve(async (req) => {
 
     if (!email) return Response.json({ error: 'email required' }, { status: 400, headers: c });
 
+    if (action === 'get-profile') {
+      const { data, error } = await sb.from('navi_vision_profile').select('name,bio').eq('user_email', email).maybeSingle();
+      if (error) throw new Error(error.message);
+      return Response.json({ profile: data ?? null }, { headers: c });
+    }
+
+    if (action === 'save-profile') {
+      const name = String(body.name ?? '').trim().slice(0, 60);
+      const bio = String(body.bio ?? '').trim().slice(0, 280);
+
+      const { data, error } = await sb.from('navi_vision_profile')
+        .upsert({ user_email: email, name, bio }, { onConflict: 'user_email' })
+        .select('name,bio').single();
+      if (error) throw new Error(error.message);
+      return Response.json({ profile: data }, { headers: c });
+    }
+
     if (action === 'list-items') {
       const { data, error } = await sb.from('navi_vision_items').select(COLS).eq('user_email', email).order('position', { ascending: true }).order('created_at', { ascending: true });
       if (error) throw new Error(error.message);
