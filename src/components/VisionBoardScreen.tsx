@@ -27,6 +27,13 @@ const CARD_COLORS = [CYAN, MAG, LIME];
 
 const TILE = 160;
 const GAP = 14;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2.5;
+const ZOOM_STEP = 0.15;
+
+function clampZoom(z: number) {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+}
 
 async function callApi(url: string, body: Record<string, unknown>) {
   const res = await fetch(url, {
@@ -75,6 +82,20 @@ const CloudPanel: FC<{ children: React.ReactNode; style?: React.CSSProperties }>
   </div>
 );
 
+// Same silhouette technique as CloudPanel, scaled down to wrap a single board tile
+// so every goal/image on the board reads as its own little cloud.
+const CloudTile: FC<{ children: React.ReactNode }> = ({ children }) => (
+  <>
+    <div style={{ position: 'absolute', top: -12, left: 8, width: 34, height: 34, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'absolute', top: -20, left: 36, width: 46, height: 46, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'absolute', top: -10, right: 30, width: 38, height: 38, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'absolute', top: -4, right: 6, width: 26, height: 26, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#fff', borderRadius: 22, overflow: 'hidden' }}>
+      {children}
+    </div>
+  </>
+);
+
 // Faint decorative clouds drifting behind the whole board.
 const BackgroundCloud: FC<{ top: number; left?: number; right?: number; scale: number }> = ({ top, left, right, scale }) => (
   <div style={{ position: 'absolute', top, left, right, width: 140 * scale, height: 70 * scale, pointerEvents: 'none', opacity: 0.55 }}>
@@ -117,8 +138,22 @@ const topBar: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box',
 };
 const scrollArea: React.CSSProperties = {
-  position: 'relative', zIndex: 1, flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto',
+  position: 'relative', zIndex: 1, flex: 1, overflow: 'hidden', maxWidth: 480, margin: '0 auto',
   width: '100%', padding: '1rem 1.25rem', boxSizing: 'border-box',
+  display: 'flex', flexDirection: 'column',
+};
+
+const addTopBtn: React.CSSProperties = {
+  width: 42, height: 42, borderRadius: 10, background: CYAN, border: 'none',
+  color: '#000', fontSize: '1.5rem', fontWeight: 700, cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, flexShrink: 0,
+};
+
+const zoomBtn: React.CSSProperties = {
+  width: 36, height: 36, borderRadius: '50%', background: '#fff', border: `1px solid #DCE6F5`,
+  color: INK, fontSize: '1.2rem', fontWeight: 700, cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+  boxShadow: '0 2px 8px rgba(26,26,46,0.18)',
 };
 
 // Fallback grid slot for items that haven't been dragged yet (x/y still null).
@@ -137,10 +172,13 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(440);
   const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
+  const pinchPointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchState = useRef<{ startDist: number; startZoom: number } | null>(null);
 
   const loadItems = useCallback(async () => {
     if (!email) return;
@@ -182,13 +220,46 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     return Math.max(maxY + GAP, 320);
   }, [positions]);
 
+  const zoomBy = (delta: number) => setZoom(z => clampZoom(z + delta));
+  const resetZoom = () => setZoom(1);
+
+  // Two-finger pinch: single-finger touches still pan the board natively (touchAction
+  // allows that); once a 2nd pointer joins we take over and scale, then hand back
+  // control once fewer than 2 pointers remain.
+  const onViewportPointerDown = (e: React.PointerEvent) => {
+    if (dragState.current) return;
+    pinchPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinchPointers.current.size === 2) {
+      const pts = Array.from(pinchPointers.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      pinchState.current = { startDist: dist || 1, startZoom: zoom };
+    }
+  };
+
+  const onViewportPointerMove = (e: React.PointerEvent) => {
+    if (!pinchPointers.current.has(e.pointerId)) return;
+    pinchPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinchPointers.current.size >= 2 && pinchState.current) {
+      e.preventDefault();
+      const pts = Array.from(pinchPointers.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const ratio = dist / pinchState.current.startDist;
+      setZoom(clampZoom(pinchState.current.startZoom * ratio));
+    }
+  };
+
+  const onViewportPointerUp = (e: React.PointerEvent) => {
+    pinchPointers.current.delete(e.pointerId);
+    if (pinchPointers.current.size < 2) pinchState.current = null;
+  };
+
   if (!email) {
     return (
       <div style={container}>
         <BackgroundCloud top={80} left={-20} scale={1.1} />
         <BackgroundCloud top={220} right={-30} scale={0.9} />
         <div style={topBar}><BackBtn onClick={onClose} /></div>
-        <div style={{ ...scrollArea, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+        <div style={{ ...scrollArea, justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
           <span style={{ color: INK, fontSize: '1.2rem', fontWeight: 700 }}>Sign in to use Vision Board</span>
           <span style={{ color: '#8892A6', fontSize: '0.9rem', marginTop: '0.5rem' }}>Open the menu and sign in first.</span>
         </div>
@@ -251,8 +322,8 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const onTilePointerMove = (e: React.PointerEvent, item: VisionItem) => {
     const drag = dragState.current;
     if (!drag || drag.id !== item.id) return;
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
+    const dx = (e.clientX - drag.startX) / zoom;
+    const dy = (e.clientY - drag.startY) / zoom;
     if (!drag.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     drag.moved = true;
     const nx = clampX(drag.origX + dx);
@@ -278,124 +349,150 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
       <BackgroundCloud top={210} right={-40} scale={1} />
       <BackgroundCloud top={420} left={-10} scale={0.8} />
       <div style={topBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <BackBtn onClick={onClose} />
-          <span style={{ color: INK, fontSize: '1.6rem', fontWeight: 700 }}>Vision Board</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <BackBtn onClick={onClose} />
+            <span style={{ color: INK, fontSize: '1.6rem', fontWeight: 700 }}>Vision Board</span>
+          </div>
+          <button onClick={() => setShowAdd(true)} title="Add a goal" style={addTopBtn}>+</button>
         </div>
       </div>
       <div style={scrollArea}>
-        {showAdd && (
-          <CloudPanel>
-            <div style={fieldLabel}>Add a goal</div>
-            <textarea
-              value={goalText}
-              onChange={e => setGoalText(e.target.value)}
-              rows={2}
-              placeholder="e.g. Launch my business by December"
-              style={{ ...inputStyle, marginBottom: '0.75rem' }}
-            />
-            <button style={{ ...btnCyan, width: '100%', marginBottom: '1.1rem' }} onClick={addGoal} disabled={adding || !goalText.trim()}>
-              + Add Goal
-            </button>
-
-            <div style={fieldLabel}>Add an image</div>
-            <input
-              value={imageUrl}
-              onChange={e => setImageUrl(e.target.value)}
-              placeholder="Paste an image URL..."
-              style={{ ...inputStyle, marginBottom: '0.75rem' }}
-            />
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <button style={{ ...btnGhost, flex: 1 }} onClick={addImageUrl} disabled={adding || !imageUrl.trim()}>
-                Add URL
-              </button>
-              <button style={{ ...btnCyan, flex: 1 }} onClick={() => fileInputRef.current?.click()} disabled={adding}>
-                {adding ? 'Adding...' : 'Upload Image'}
-              </button>
-            </div>
-            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
-          </CloudPanel>
-        )}
-
         {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
         {loading && <div style={{ color: '#8892A6', textAlign: 'center', padding: '2rem 0' }}>Loading...</div>}
 
         {!loading && (
           <div
             ref={canvasRef}
+            onPointerDown={onViewportPointerDown}
+            onPointerMove={onViewportPointerMove}
+            onPointerUp={onViewportPointerUp}
+            onPointerCancel={onViewportPointerUp}
             style={{
-              position: 'relative', width: '100%', height: canvasHeight,
-              background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
-              backgroundSize: '18px 18px', borderRadius: 14, touchAction: 'none',
+              position: 'relative', width: '100%', flex: 1, overflow: 'auto',
+              borderRadius: 14, touchAction: 'pan-x pan-y',
             }}
           >
-            {items.length === 0 && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none',
-              }}>
-                Your board is empty. Tap + to add a goal or image.
-              </div>
-            )}
-            {items.map((item, i) => {
-              const pos = positions.get(item.id) ?? { x: 0, y: 0 };
-              return (
-                <div
-                  key={item.id}
-                  onPointerDown={e => onTilePointerDown(e, item)}
-                  onPointerMove={e => onTilePointerMove(e, item)}
-                  onPointerUp={e => onTilePointerUp(e, item)}
-                  onPointerCancel={e => onTilePointerUp(e, item)}
-                  style={{
-                    position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
-                    borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
-                    userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
-                  }}
-                >
-                  {item.kind === 'image' ? (
-                    <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
-                  ) : (
-                    <div style={{
-                      width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
-                      padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
-                    }}>
-                      <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
-                    </div>
-                  )}
-                  <button
-                    onPointerDown={e => e.stopPropagation()}
-                    onClick={() => deleteItem(item)}
-                    title="Remove"
+            <div
+              style={{
+                position: 'relative', width: canvasWidth, height: canvasHeight,
+                transform: `scale(${zoom})`, transformOrigin: '0 0',
+                background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
+                backgroundSize: '18px 18px',
+              }}
+            >
+              {items.length === 0 && (
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none',
+                }}>
+                  Your board is empty. Tap + to add a goal or image.
+                </div>
+              )}
+              {items.map((item, i) => {
+                const pos = positions.get(item.id) ?? { x: 0, y: 0 };
+                return (
+                  <div
+                    key={item.id}
+                    onPointerDown={e => onTilePointerDown(e, item)}
+                    onPointerMove={e => onTilePointerMove(e, item)}
+                    onPointerUp={e => onTilePointerUp(e, item)}
+                    onPointerCancel={e => onTilePointerUp(e, item)}
                     style={{
-                      position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
-                      background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
-                      fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+                      position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
+                      cursor: 'grab', touchAction: 'none', userSelect: 'none',
+                      filter: 'drop-shadow(0 4px 12px rgba(26,26,46,0.3))',
                     }}
                   >
-                    &times;
-                  </button>
-                </div>
-              );
-            })}
+                    <CloudTile>
+                      {item.kind === 'image' ? (
+                        <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                      ) : (
+                        <div style={{
+                          width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
+                          padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
+                        }}>
+                          <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
+                        </div>
+                      )}
+                    </CloudTile>
+                    <button
+                      onPointerDown={e => e.stopPropagation()}
+                      onClick={() => deleteItem(item)}
+                      title="Remove"
+                      style={{
+                        position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
+                        background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
+                        fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
+
+        <div style={{
+          position: 'absolute', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
+          display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(255,255,255,0.9)',
+          padding: '0.4rem 0.6rem', borderRadius: 999, boxShadow: '0 4px 14px rgba(26,26,46,0.18)', zIndex: 3,
+        }}>
+          <button onClick={() => zoomBy(-ZOOM_STEP)} title="Zoom out" style={zoomBtn}>&minus;</button>
+          <button onClick={resetZoom} title="Reset zoom" style={{ color: INK, fontSize: '0.8rem', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', minWidth: 38 }}>
+            {Math.round(zoom * 100)}%
+          </button>
+          <button onClick={() => zoomBy(ZOOM_STEP)} title="Zoom in" style={zoomBtn}>+</button>
+        </div>
       </div>
 
-      <button
-        onClick={() => setShowAdd(v => !v)}
-        title={showAdd ? 'Close' : 'Add to board'}
-        style={{
-          position: 'fixed', bottom: 28, right: 'max(24px, calc(50% - 216px))', zIndex: 5,
-          width: 60, height: 60, borderRadius: '50%', background: CYAN, border: 'none',
-          boxShadow: '0 8px 20px rgba(26,26,46,0.35)', color: '#000', fontSize: '1.8rem',
-          fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          lineHeight: 1, transform: showAdd ? 'rotate(45deg)' : 'none', transition: 'transform 0.15s ease',
-        }}
-      >
-        +
-      </button>
+      {showAdd && (
+        <div style={{
+          position: 'fixed', inset: 0, background: MAG, zIndex: 1200,
+          display: 'flex', flexDirection: 'column', fontFamily: 'Fredoka, sans-serif',
+        }}>
+          <div style={{ padding: '1.25rem 1.25rem 0', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+            <BackBtn onClick={() => setShowAdd(false)} />
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 2rem', boxSizing: 'border-box' }}>
+            <CloudPanel>
+              <div style={fieldLabel}>Add a goal</div>
+              <textarea
+                value={goalText}
+                onChange={e => setGoalText(e.target.value)}
+                rows={2}
+                placeholder="e.g. Launch my business by December"
+                style={{ ...inputStyle, marginBottom: '0.75rem' }}
+              />
+              <button style={{ ...btnCyan, width: '100%', marginBottom: '1.1rem' }} onClick={addGoal} disabled={adding || !goalText.trim()}>
+                + Add Goal
+              </button>
+
+              <div style={fieldLabel}>Add an image</div>
+              <input
+                value={imageUrl}
+                onChange={e => setImageUrl(e.target.value)}
+                placeholder="Paste an image URL..."
+                style={{ ...inputStyle, marginBottom: '0.75rem' }}
+              />
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button style={{ ...btnGhost, flex: 1 }} onClick={addImageUrl} disabled={adding || !imageUrl.trim()}>
+                  Add URL
+                </button>
+                <button style={{ ...btnCyan, flex: 1 }} onClick={() => fileInputRef.current?.click()} disabled={adding}>
+                  {adding ? 'Adding...' : 'Upload Image'}
+                </button>
+              </div>
+              <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
+            </CloudPanel>
+            {error && <div style={{ color: '#000', fontWeight: 700, fontSize: '0.9rem' }}>{error}</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
