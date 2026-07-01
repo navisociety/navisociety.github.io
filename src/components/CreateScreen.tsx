@@ -10,7 +10,6 @@ interface Creation {
   user_email: string;
   title: string;
   prompt: string;
-  content: string | null;
   status: 'pending' | 'processing' | 'ready' | 'failed';
   canva_design_id: string | null;
   canva_edit_url: string | null;
@@ -129,7 +128,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const [creations, setCreations] = useState<Creation[]>([]);
   const [activeCreation, setActiveCreation] = useState<Creation | null>(null);
   const [prompt, setPrompt] = useState('');
-  const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [naviMessage, setNaviMessage] = useState('');
@@ -204,7 +202,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const openCreation = (cr: Creation) => {
     setActiveCreation(cr);
     setPrompt(cr.prompt);
-    setContent(cr.content ?? '');
     setNaviMessage(messageForStatus(cr.status));
     setShowConnect(false);
     setView('creation');
@@ -213,7 +210,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const newCreation = () => {
     setActiveCreation(null);
     setPrompt('');
-    setContent('');
     setNaviMessage('');
     setError('');
     setShowConnect(false);
@@ -222,10 +218,10 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
 
   const submitCreation = async () => {
     const clean = prompt.trim();
-    if (!clean) { setError('Please describe what you want me to create.'); return; }
+    if (!clean) { setError('Please type what the design should say.'); return; }
     setLoading(true); setError(''); setNaviMessage('');
     try {
-      const d = await callApi(CREATE_API, { action: 'create-creation', email, prompt: clean, content: content.trim() });
+      const d = await callApi(CREATE_API, { action: 'create-creation', email, prompt: clean });
       setActiveCreation(d as Creation);
       setNaviMessage(d.naviMessage ?? messageForStatus(d.status));
       if (d.needsCanvaAuth) { setShowConnect(true); loadCanvaStatus(); }
@@ -276,20 +272,11 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
 
           {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
 
-          <div style={fieldLabel}>Describe the design</div>
+          <div style={fieldLabel}>What should the design say?</div>
           <textarea
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
-            rows={4}
-            placeholder="e.g. A bold Instagram post announcing our Sunday service..."
-            style={{ ...inputStyle, marginBottom: '1rem' }}
-          />
-
-          <div style={fieldLabel}>What should it say? <span style={{ color: '#555', fontWeight: 400 }}>(optional)</span></div>
-          <textarea
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={4}
+            rows={6}
             placeholder={'First line is the headline.\nThe rest becomes the body text.'}
             style={{ ...inputStyle, marginBottom: '1rem' }}
           />
