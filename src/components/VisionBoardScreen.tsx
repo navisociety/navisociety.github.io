@@ -22,6 +22,7 @@ const CYAN = '#00F7FF';
 const MAG = '#FA00FF';
 const LIME = '#CCFF00';
 const RED = '#FA0000';
+const INK = '#1A1A2E';
 const CARD_COLORS = [CYAN, MAG, LIME];
 
 const TILE = 160;
@@ -60,6 +61,29 @@ const BackBtn: FC<{ onClick: () => void }> = ({ onClick }) => (
   </button>
 );
 
+// A fluffy cloud silhouette: a rounded body plus overlapping bumps along the top,
+// unified into one shape via a shared drop-shadow on the wrapper.
+const CloudPanel: FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
+  <div style={{ position: 'relative', filter: 'drop-shadow(0 10px 18px rgba(26,26,46,0.12))', marginBottom: '1.5rem', ...style }}>
+    <div style={{ position: 'absolute', top: -20, left: 22, width: 64, height: 64, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'absolute', top: -32, left: 78, width: 86, height: 86, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'absolute', top: -18, right: 60, width: 70, height: 70, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'absolute', top: -10, right: 16, width: 50, height: 50, borderRadius: '50%', background: '#fff' }} />
+    <div style={{ position: 'relative', background: '#fff', borderRadius: 36, padding: '2.25rem 1.5rem 1.5rem' }}>
+      {children}
+    </div>
+  </div>
+);
+
+// Faint decorative clouds drifting behind the whole board.
+const BackgroundCloud: FC<{ top: number; left?: number; right?: number; scale: number }> = ({ top, left, right, scale }) => (
+  <div style={{ position: 'absolute', top, left, right, width: 140 * scale, height: 70 * scale, pointerEvents: 'none', opacity: 0.55 }}>
+    <div style={{ position: 'absolute', bottom: 0, width: '100%', height: '70%', background: '#EEF4FF', borderRadius: 999 }} />
+    <div style={{ position: 'absolute', bottom: '30%', left: '8%', width: '46%', height: '80%', background: '#EEF4FF', borderRadius: '50%' }} />
+    <div style={{ position: 'absolute', bottom: '38%', left: '46%', width: '52%', height: '92%', background: '#EEF4FF', borderRadius: '50%' }} />
+  </div>
+);
+
 const btnCyan: React.CSSProperties = {
   background: CYAN, color: '#000', border: 'none', borderRadius: 10,
   fontFamily: 'Fredoka, sans-serif', fontWeight: 700, fontSize: '1rem',
@@ -67,32 +91,33 @@ const btnCyan: React.CSSProperties = {
 };
 
 const btnGhost: React.CSSProperties = {
-  background: 'none', color: CYAN, border: `1px solid ${CYAN}`, borderRadius: 10,
+  background: 'none', color: INK, border: `1px solid ${INK}`, borderRadius: 10,
   fontFamily: 'Fredoka, sans-serif', fontWeight: 700, fontSize: '0.95rem',
   padding: '0.75rem 1.2rem', cursor: 'pointer',
 };
 
 const inputStyle: React.CSSProperties = {
-  background: '#111', border: '1px solid #222', color: '#fff',
+  background: '#F5F8FF', border: '1px solid #DCE6F5', color: INK,
   borderRadius: 10, padding: '0.85rem', fontFamily: 'Fredoka, sans-serif',
   fontSize: '1rem', width: '100%', boxSizing: 'border-box', resize: 'vertical',
 };
 
 const fieldLabel: React.CSSProperties = {
-  color: '#888', fontSize: '0.8rem', fontWeight: 700,
+  color: '#8892A6', fontSize: '0.8rem', fontWeight: 700,
   marginBottom: '0.5rem', fontFamily: 'Fredoka, sans-serif',
 };
 
 const container: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: '#000', zIndex: 1000,
+  position: 'fixed', inset: 0, background: '#FFFFFF', zIndex: 1000,
   display: 'flex', flexDirection: 'column', fontFamily: 'Fredoka, sans-serif',
+  overflow: 'hidden',
 };
 const topBar: React.CSSProperties = {
-  padding: '1.25rem 1.25rem 0', maxWidth: 480, margin: '0 auto',
+  position: 'relative', zIndex: 1, padding: '1.25rem 1.25rem 0', maxWidth: 480, margin: '0 auto',
   width: '100%', boxSizing: 'border-box',
 };
 const scrollArea: React.CSSProperties = {
-  flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto',
+  position: 'relative', zIndex: 1, flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto',
   width: '100%', padding: '1rem 1.25rem', boxSizing: 'border-box',
 };
 
@@ -159,10 +184,12 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   if (!email) {
     return (
       <div style={container}>
+        <BackgroundCloud top={80} left={-20} scale={1.1} />
+        <BackgroundCloud top={220} right={-30} scale={0.9} />
         <div style={topBar}><BackBtn onClick={onClose} /></div>
         <div style={{ ...scrollArea, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-          <span style={{ color: '#fff', fontSize: '1.2rem', fontWeight: 700 }}>Sign in to use Vision Board</span>
-          <span style={{ color: '#555', fontSize: '0.9rem', marginTop: '0.5rem' }}>Open the menu and sign in first.</span>
+          <span style={{ color: INK, fontSize: '1.2rem', fontWeight: 700 }}>Sign in to use Vision Board</span>
+          <span style={{ color: '#8892A6', fontSize: '0.9rem', marginTop: '0.5rem' }}>Open the menu and sign in first.</span>
         </div>
       </div>
     );
@@ -246,14 +273,17 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
 
   return (
     <div style={container}>
+      <BackgroundCloud top={70} left={-30} scale={1.2} />
+      <BackgroundCloud top={210} right={-40} scale={1} />
+      <BackgroundCloud top={420} left={-10} scale={0.8} />
       <div style={topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <BackBtn onClick={onClose} />
-          <span style={{ color: '#fff', fontSize: '1.6rem', fontWeight: 700 }}>Vision Board</span>
+          <span style={{ color: INK, fontSize: '1.6rem', fontWeight: 700 }}>Vision Board</span>
         </div>
       </div>
       <div style={scrollArea}>
-        <div style={{ background: '#0a0a0a', border: `1px solid ${MAG}`, borderRadius: 14, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <CloudPanel>
           <div style={fieldLabel}>Add a goal</div>
           <textarea
             value={goalText}
@@ -282,13 +312,13 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             </button>
           </div>
           <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
-        </div>
+        </CloudPanel>
 
         {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
-        {loading && <div style={{ color: '#555', textAlign: 'center', padding: '2rem 0' }}>Loading...</div>}
+        {loading && <div style={{ color: '#8892A6', textAlign: 'center', padding: '2rem 0' }}>Loading...</div>}
 
         {!loading && items.length === 0 && (
-          <div style={{ color: '#333', textAlign: 'center', padding: '2rem 0' }}>Your board is empty. Add a goal or image above.</div>
+          <div style={{ color: '#8892A6', textAlign: 'center', padding: '2rem 0' }}>Your board is empty. Add a goal or image above.</div>
         )}
 
         {!loading && items.length > 0 && (
@@ -296,7 +326,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             ref={canvasRef}
             style={{
               position: 'relative', width: '100%', height: canvasHeight,
-              background: 'radial-gradient(#151515 1px, transparent 1px)',
+              background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
               backgroundSize: '18px 18px', borderRadius: 14, touchAction: 'none',
             }}
           >
@@ -312,7 +342,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                   style={{
                     position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
                     borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
-                    userSelect: 'none', boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+                    userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
                   }}
                 >
                   {item.kind === 'image' ? (
