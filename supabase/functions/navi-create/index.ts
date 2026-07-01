@@ -72,15 +72,22 @@ const DESIGN_RULES: Array<[RegExp, DesignType]> = [
   [/\bbook\s*cover\b/, custom(1600, 2400)],
   [/\balbum\s*cover\b/, custom(3000, 3000)],
   [/\bpodcast\s*(cover|art)?\b/, custom(3000, 3000)],
-  // Social - stories/reels/vertical video (check before generic instagram/post)
-  [/\b(instagram|insta|ig)\s*(story|stories)\b|\breels?\b|\btik\s*tok\b|\bstory\b/, custom(1080, 1920)],
+  // Social - stories/reels/vertical video (check before generic instagram/post).
+  // Bare "story"/"video"/"pin" are deliberately NOT matched here - they're
+  // ordinary English words (Bible story, testimony, sermon video, "pin this
+  // up on the board") that would misfire on faith-platform content when
+  // combined with a more specific type elsewhere in the same prompt (e.g. "a
+  // poster telling the story of..." should stay a poster). They're demoted to
+  // low-priority fallback rules at the very end of DESIGN_RULES instead, so
+  // anything more specific mentioned anywhere in the prompt wins first.
+  [/\b(instagram|insta|ig)\s*(story|stories)\b|\breels?\b|\btik\s*tok\b|\bvertical\s*(video|story)\b/, custom(1080, 1920)],
   [/\b(instagram|insta|ig)\b/, custom(1080, 1080)],
   [/\bfacebook\b|\bfb\s*post\b/, custom(1200, 630)],
   [/\blinked\s*in\b/, custom(1200, 627)],
   [/\btwitter\b|\btweet\b|\bx\s*post\b/, custom(1600, 900)],
-  [/\bpinterest\b|\bpin\b/, custom(1000, 1500)],
+  [/\bpinterest\b/, custom(1000, 1500)],
   [/\byou\s*tube\s*(thumb\w*)?\b|\bthumbnail\b/, custom(1280, 720)],
-  [/\byou\s*tube\b|\bvideo\b/, custom(1920, 1080)],
+  [/\byou\s*tube\b/, custom(1920, 1080)],
   [/\bzoom\s*background\b|\bvirtual\s*background\b/, custom(1920, 1080)],
   // Print / marketing
   [/\bposter\b/, custom(2480, 3508)],
@@ -105,6 +112,11 @@ const DESIGN_RULES: Array<[RegExp, DesignType]> = [
   [/\bwhite\s*board\b|\bbrainstorm\b|\bmind\s*map\b/, preset('whiteboard')],
   [/\bdocument\b|\bdoc\b|\bletter\b|\breport\b|\bessay\b|\barticle\b|\bproposal\b/, preset('doc')],
   [/\bpresentation\b|\bslides?\b|\bslide\s*show\b|\bpitch\s*deck\b|\bdeck\b/, preset('presentation')],
+  // Weak/ambiguous bare-word fallbacks - only reached if nothing more specific
+  // matched anywhere above (see note near the top of this list).
+  [/\bstory\b/, custom(1080, 1920)],
+  [/\bvideo\b/, custom(1920, 1080)],
+  [/\bpin\b/, custom(1000, 1500)],
 ];
 
 // Fallback preset when nothing matches (preserves prior default behaviour).
@@ -230,6 +242,13 @@ function resolveColor(tok: string): string {
   return tok.startsWith('#') ? expandHex(tok.slice(1)).toUpperCase() : (COLOR_MAP[tok.toLowerCase()] ?? '000000');
 }
 
+// A hex token starts with "#", a non-word character, so a plain leading `\b`
+// can never match when it's preceded by whitespace or start-of-string (both
+// non-word, so there's no word/non-word transition for `\b` to find) - it
+// would only match `TOKEN` patterns for named colors, silently never for hex.
+// This lookbehind (not preceded by a word char or another `#`) works for both.
+const NOT_MID_TOKEN = '(?<![\\w#])';
+
 function matchColor(patterns: string[], text: string): string | undefined {
   for (const p of patterns) {
     const m = new RegExp(p, 'i').exec(text);
@@ -339,20 +358,20 @@ function deriveStyle(prompt: string): Style {
 
   style.bg = matchColor([
     `\\bbackground\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
-    `\\b${COLOR_TOKEN}\\s*background\\b`,
+    `${NOT_MID_TOKEN}${COLOR_TOKEN}\\s*background\\b`,
     `\\bbackground\\s*${COLOR_TOKEN}\\b`,
   ], p);
 
   style.text = matchColor([
     `\\btext\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
     `\\bfont\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
-    `\\b${COLOR_TOKEN}\\s*text\\b`,
+    `${NOT_MID_TOKEN}${COLOR_TOKEN}\\s*text\\b`,
     `\\btext\\s*${COLOR_TOKEN}\\b`,
   ], p);
 
   style.accent = matchColor([
     `\\b(?:accent|element)s?\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
-    `\\b${COLOR_TOKEN}\\s*(?:accent|element)s?\\b`,
+    `${NOT_MID_TOKEN}${COLOR_TOKEN}\\s*(?:accent|element)s?\\b`,
   ], p);
 
   // Any hex code (e.g. #00F7FF) not already claimed by a qualified
@@ -399,7 +418,7 @@ function deriveStyle(prompt: string): Style {
 
   const borderColor = matchColor([
     `\\bborder\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
-    `\\b${COLOR_TOKEN}\\s*border\\b`,
+    `${NOT_MID_TOKEN}${COLOR_TOKEN}\\s*border\\b`,
     `\\bborder\\s*${COLOR_TOKEN}\\b`,
   ], p);
   style.border = deriveBorder(p, borderColor);
