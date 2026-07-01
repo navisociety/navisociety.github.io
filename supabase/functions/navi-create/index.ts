@@ -153,12 +153,12 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
 // ---------------------------------------------------------------------------
-// Style detection: extract background/text/accent colors, font family, and
-// font size directly from the "Describe the design" prompt (the SAME prompt
-// deriveDesignType() already reads for type/size). Pure regex/keyword
-// matching, zero AI (see feedback_anthropic_key_tier_restriction) - anything
-// not explicitly stated is left undefined so buildPptx() falls back to its
-// existing plain defaults (white background, black text, Arial).
+// Style detection: extract background/text/accent colors, font family, font
+// size, alignment, vertical position, uppercase, and border directly from
+// the "Describe the design" prompt (the SAME prompt deriveDesignType() reads
+// for type/size). Pure regex/keyword matching, zero AI (see
+// feedback_anthropic_key_tier_restriction) - anything not explicitly stated
+// is left undefined so buildPptx() falls back to its existing defaults.
 // ---------------------------------------------------------------------------
 interface Style {
   bg?: string;
@@ -168,6 +168,10 @@ interface Style {
   sizePt?: number;
   sizeMult?: number;
   shape?: string;
+  align?: 'left' | 'center' | 'right' | 'justify';
+  vAlign?: 'top' | 'middle' | 'bottom';
+  uppercase?: boolean;
+  border?: { color?: string; thick: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +300,39 @@ function luminance(hex: string): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
+// Horizontal text alignment, read from an explicit natural-language phrase
+// ("left aligned", "align right", "justify the text", "centered text").
+function deriveAlign(p: string): Style['align'] {
+  const m =
+    /\b(left|right|center|centre|justify|justified)[\s-]*align(?:ed|ment)?\b/i.exec(p) ??
+    /\balign(?:ed|ment)?\s*(?:to\s*the\s*)?(left|right|center|centre|justify|justified)\b/i.exec(p);
+  if (!m) return undefined;
+  const a = m[1].toLowerCase();
+  if (a === 'centre') return 'center';
+  if (a === 'justified') return 'justify';
+  return a as Style['align'];
+}
+
+// Vertical placement of the title/body text within the slide. Requires the
+// word "text"/"title"/"content"/"heading" right next to "top"/"bottom" (or an
+// explicit "-aligned" form) so ordinary phrases like "a poster for the event
+// at the bottom of the hill" don't misfire.
+function deriveVAlign(p: string): Style['vAlign'] {
+  if (/\b(?:text|title|content|heading)\s+(?:at|to)\s+the\s+bottom\b/i.test(p) || /\bbottom[\s-]align(?:ed)?\b/i.test(p)) return 'bottom';
+  if (/\b(?:text|title|content|heading)\s+(?:at|to)\s+the\s+top\b/i.test(p) || /\btop[\s-]align(?:ed)?\b/i.test(p)) return 'top';
+  if (/\bvertical(?:ly)?\s*(?:center|centre)(?:ed)?\b|\b(?:center|centre)(?:ed)?\s*vertical(?:ly)?\b|\bmiddle[\s-]align(?:ed)?\b/i.test(p)) return 'middle';
+  return undefined;
+}
+
+// Optional full-slide outline/frame - "with a border", "framed", "add a
+// frame" - color falls back to the text/accent color at build time if the
+// user didn't also specify one. "thick"/"heavy"/"bold border" widens it.
+function deriveBorder(p: string, resolvedColor?: string): Style['border'] {
+  if (!/\bborder\b|\bframed?\b/i.test(p)) return undefined;
+  const thick = /\bthick\b|\bheavy\b|\bbold\s+border\b|\bborder\s+.*\bthick\b/i.test(p);
+  return { color: resolvedColor, thick };
+}
+
 function deriveStyle(prompt: string): Style {
   const p = prompt ?? '';
   const style: Style = {};
@@ -356,6 +393,17 @@ function deriveStyle(prompt: string): Style {
     style.sizeMult = 0.7;
   }
 
+  style.align = deriveAlign(p);
+  style.vAlign = deriveVAlign(p);
+  style.uppercase = /\ball\s*caps\b|\ball[\s-]*capital(?:s|ized)?\b|\buppercase\b|\bcaps\s*lock\b/i.test(p);
+
+  const borderColor = matchColor([
+    `\\bborder\\s*colou?r:?\\s*${COLOR_TOKEN}\\b`,
+    `\\b${COLOR_TOKEN}\\s*border\\b`,
+    `\\bborder\\s*${COLOR_TOKEN}\\b`,
+  ], p);
+  style.border = deriveBorder(p, borderColor);
+
   return style;
 }
 
@@ -408,6 +456,41 @@ function isBulletList(lines: string[]): boolean {
   return bulletCount / nonEmpty.length >= 0.5;
 }
 
+// ---------------------------------------------------------------------------
+// Table detection. Users often type schedules/price lists/rosters directly
+// into the "What should it say?" box using a pipe delimiter ("9:00 AM |
+// Sunday School"), the most natural plain-text way to express tabular data
+// without any taught syntax. When at least 2 rows are pipe-delimited with a
+// consistent column count, render a real, editable Canva table instead of
+// wrapping it as one crowded paragraph. Falls through to normal paragraph/
+// bullet rendering for anything that isn't clearly tabular - no false
+// positives on ordinary prose that merely contains a stray "|".
+// ---------------------------------------------------------------------------
+function parseTableRows(bodyLines: string[]): string[][] | null {
+  const rows = bodyLines.map((l) => l.trim()).filter((l) => l !== '' && !/^[\s|:-]+$/.test(l));
+  if (rows.length < 2) return null;
+
+  const withPipe = rows.filter((r) => r.includes('|'));
+  if (withPipe.length / rows.length < 0.8) return null;
+
+  const cleaned = rows.map((r) => {
+    let cells = r.split('|').map((c) => c.trim());
+    if (cells[0] === '') cells = cells.slice(1);
+    if (cells.length && cells[cells.length - 1] === '') cells = cells.slice(0, -1);
+    return cells;
+  });
+
+  const colCount = cleaned[0].length;
+  if (colCount < 2) return null;
+  if (!cleaned.every((r) => Math.abs(r.length - colCount) <= 1)) return null;
+
+  return cleaned.map((r) => {
+    const row = r.slice(0, colCount);
+    while (row.length < colCount) row.push('');
+    return row;
+  });
+}
+
 function estimateLines(text: string, fontPt: number, boxWidthIn: number): number {
   if (!text) return 1;
   const avgCharWidthIn = (fontPt * 0.52) / 72;
@@ -448,7 +531,7 @@ function b64utf8(s: string): string {
 // PptxGenJS expresses via a custom layout sized in inches (px / 96). When
 // Canva imports this file, the resulting design inherits this exact size AND
 // keeps each heading/body as real, editable text (rendered as a bulleted
-// list when the body looks like one). No themes/animations.
+// list, or a real table for pipe-delimited content). No themes/animations.
 // ---------------------------------------------------------------------------
 async function buildPptx(width: number, height: number, slides: SlideContent[], style: Style = {}): Promise<Uint8Array> {
   const wIn = width / 96;
@@ -460,6 +543,9 @@ async function buildPptx(width: number, height: number, slides: SlideContent[], 
   const isDarkBg = !!style.bg && luminance(style.bg) < 0.5;
   const textColor = style.text ?? (isDarkBg ? 'FFFFFF' : '000000');
   const fontFace = style.font ?? 'Arial';
+  const titleAlign = style.align ?? 'center';
+  const titleVAlign = style.vAlign ?? 'top';
+  const bodyVAlign = style.vAlign ?? 'top';
 
   const base = Math.min(width, height);
   let baseTitleFont = clamp(Math.round(base / 22), 20, 80);
@@ -480,6 +566,16 @@ async function buildPptx(width: number, height: number, slides: SlideContent[], 
   for (const { heading, body } of slides) {
     const slide = pptx.addSlide();
     if (style.bg) slide.background = { color: style.bg };
+
+    if (style.border) {
+      const borderColor = style.border.color ?? textColor;
+      const bw = style.border.thick ? 0.12 : 0.05;
+      slide.addShape('rect' as any, {
+        x: bw / 2, y: bw / 2, w: wIn - bw, h: hIn - bw,
+        fill: { type: 'none' } as any,
+        line: { color: borderColor, width: style.border.thick ? 6 : 2 },
+      });
+    }
 
     if (style.shape || style.accent) {
       const shapeColor = style.accent ?? textColor;
@@ -503,31 +599,48 @@ async function buildPptx(width: number, height: number, slides: SlideContent[], 
     }
 
     if (heading) {
+      const headingText = style.uppercase ? heading.toUpperCase() : heading;
       // Only auto-shrink when the user didn't request an explicit size -
       // an explicit request should be honored as-is, not overridden.
-      const titleFont = style.sizePt ? baseTitleFont : fitFontSize([heading], contentW, titleBoxH, baseTitleFont, 14);
-      slide.addText(heading, {
+      const titleFont = style.sizePt ? baseTitleFont : fitFontSize([headingText], contentW, titleBoxH, baseTitleFont, 14);
+      slide.addText(headingText, {
         x: marginX, y: hIn * 0.08, w: contentW, h: titleBoxH,
-        fontSize: titleFont, bold: true, align: 'center', valign: 'top',
+        fontSize: titleFont, bold: true, align: titleAlign, valign: titleVAlign,
         fontFace, color: textColor, wrap: true,
       });
     }
     if (body) {
       const bodyLines = body.split(/\r?\n/);
-      const bulleted = isBulletList(bodyLines);
-      const cleanLines = bulleted ? bodyLines.map((line) => line.replace(BULLET_RE, '')) : bodyLines;
-      const bodyFont = style.sizePt ? baseBodyFont : fitFontSize(cleanLines, contentW - (bulleted ? 0.3 : 0), bodyBoxH, baseBodyFont, 10);
-      // Split into paragraph runs so newlines render as real line breaks
-      // (and, when the text looks like a list, as real Canva bullet points).
-      const runs = cleanLines.map((line) => ({
-        text: line,
-        options: bulleted ? { breakLine: true, bullet: true } : { breakLine: true },
-      }));
-      slide.addText(runs as unknown as string, {
-        x: marginX, y: hIn * 0.38, w: contentW, h: bodyBoxH,
-        fontSize: bodyFont, align: bulleted ? 'left' : (heading ? 'left' : 'center'), valign: 'top',
-        fontFace, color: textColor, wrap: true,
-      });
+      const tableRows = parseTableRows(bodyLines);
+
+      if (tableRows) {
+        const tableFont = clamp(baseBodyFont, 10, 32);
+        const tRows = tableRows.map((r, i) => r.map((cell) => ({
+          text: style.uppercase ? cell.toUpperCase() : cell,
+          options: { bold: i === 0, fontFace, color: textColor, fontSize: tableFont, valign: 'middle', align: 'left' },
+        })));
+        slide.addTable(tRows as any, {
+          x: marginX, y: hIn * 0.38, w: contentW, h: bodyBoxH,
+          border: { type: 'solid', color: textColor, pt: 1 } as any,
+          autoPage: false,
+        });
+      } else {
+        const bulleted = isBulletList(bodyLines);
+        const cleanLines = (bulleted ? bodyLines.map((line) => line.replace(BULLET_RE, '')) : bodyLines)
+          .map((line) => (style.uppercase ? line.toUpperCase() : line));
+        const bodyFont = style.sizePt ? baseBodyFont : fitFontSize(cleanLines, contentW - (bulleted ? 0.3 : 0), bodyBoxH, baseBodyFont, 10);
+        // Split into paragraph runs so newlines render as real line breaks
+        // (and, when the text looks like a list, as real Canva bullet points).
+        const runs = cleanLines.map((line) => ({
+          text: line,
+          options: bulleted ? { breakLine: true, bullet: true } : { breakLine: true },
+        }));
+        slide.addText(runs as unknown as string, {
+          x: marginX, y: hIn * 0.38, w: contentW, h: bodyBoxH,
+          fontSize: bodyFont, align: style.align ?? (bulleted ? 'left' : (heading ? 'left' : 'center')), valign: bodyVAlign,
+          fontFace, color: textColor, wrap: true,
+        });
+      }
     }
   }
 
@@ -701,10 +814,14 @@ serve(async (req) => {
       const designType = deriveDesignType(cleanPrompt);
       const contentToStore = hasContent ? contentClean : null;
 
-      // Style (colors/font/size) is read from the SAME "Describe the design"
-      // prompt that already drives type/size detection above - no new field.
+      // Style (colors/font/size/alignment/border/etc) is read from the SAME
+      // "Describe the design" prompt that already drives type/size detection
+      // above - no new field.
       const style = deriveStyle(cleanPrompt);
-      const hasStyle = !!(style.bg || style.text || style.accent || style.font || style.sizePt || style.sizeMult || style.shape);
+      const hasStyle = !!(
+        style.bg || style.text || style.accent || style.font || style.sizePt || style.sizeMult ||
+        style.shape || style.align || style.vAlign || style.uppercase || style.border
+      );
 
       // Look up the user's Canva token
       const { data: tok } = await sb.from('navi_canva_tokens').select('access_token,refresh_token,expires_at').eq('user_email', email).single();
@@ -761,11 +878,11 @@ serve(async (req) => {
 
       // -------------------------------------------------------------------
       // CONTENT/STYLE PATH: generate a sized .pptx with real text and/or the
-      // detected colors/font/size, import it into Canva as a fully-editable
-      // design of the exact detected dimensions. Runs whenever there is user
-      // text OR any style was detected in the prompt (a "black background"
-      // request with no body text still needs the import path - a blank
-      // POST /v1/designs call has no way to set colors).
+      // detected colors/font/size/alignment/border, import it into Canva as
+      // a fully-editable design of the exact detected dimensions. Runs
+      // whenever there is user text OR any style was detected in the prompt
+      // (a "black background" request with no body text still needs the
+      // import path - a blank POST /v1/designs call has no way to set colors).
       // -------------------------------------------------------------------
       if (hasContent || hasStyle) {
         const { width, height } = designTypeToDims(designType);
