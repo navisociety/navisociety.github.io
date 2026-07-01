@@ -11,24 +11,14 @@ interface Creation {
   title: string;
   prompt: string;
   status: 'pending' | 'processing' | 'ready' | 'failed';
-  canva_design_id: string | null;
-  canva_edit_url: string | null;
-  canva_export_url: string | null;
   created_at: string;
   updated_at: string;
 }
 
-interface CanvaStatus {
-  connected: boolean;
-  setupPending: boolean;
-}
-
 const CREATE_API = 'https://irssegzkvxyewuxgqpwi.supabase.co/functions/v1/navi-create';
-const CANVA_API = 'https://irssegzkvxyewuxgqpwi.supabase.co/functions/v1/navi-canva-auth';
 
 const CYAN = '#00F7FF';
 const MAG = '#FA00FF';
-const LIME = '#CCFF00';
 const RED = '#FA0000';
 
 async function callApi(url: string, body: Record<string, unknown>) {
@@ -42,17 +32,8 @@ async function callApi(url: string, body: Record<string, unknown>) {
   return data;
 }
 
-function messageForStatus(status: string): string {
-  if (status === 'ready') return 'Your design is ready in Canva! Tap the button below to open and export it.';
-  if (status === 'failed') return 'I ran into an issue generating your design. Please try again.';
-  if (status === 'processing') return 'Working on your design...';
-  return 'Your prompt is saved. Connect Canva to generate the design.';
-}
-
 function statusColor(status: string): string {
-  if (status === 'ready') return LIME;
   if (status === 'failed') return RED;
-  if (status === 'processing') return CYAN;
   return '#888';
 }
 
@@ -102,26 +83,6 @@ const NaviAvatar: FC = () => (
   </div>
 );
 
-const ConnectCanvaPanel: FC<{ canvaStatus: CanvaStatus | null; connecting: boolean; onConnect: () => void }> = ({ canvaStatus, connecting, onConnect }) => {
-  if (canvaStatus?.setupPending) {
-    return (
-      <div style={{ background: '#0a0a0a', border: `1px solid ${MAG}`, borderRadius: 14, padding: '1.25rem', marginBottom: '1.25rem', textAlign: 'center' }}>
-        <span style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 700 }}>Canva coming soon</span>
-        <div style={{ color: '#888', fontSize: '0.85rem', marginTop: 6 }}>Your prompts are saved and will generate once Canva is connected.</div>
-      </div>
-    );
-  }
-  return (
-    <div style={{ background: '#0a0a0a', border: `1px solid ${CYAN}`, borderRadius: 14, padding: '1.25rem', marginBottom: '1.25rem', textAlign: 'center' }}>
-      <span style={{ color: '#fff', fontSize: '1.05rem', fontWeight: 700 }}>Connect your Canva account</span>
-      <div style={{ color: '#888', fontSize: '0.85rem', marginTop: 6, marginBottom: '1rem' }}>to generate designs automatically</div>
-      <button style={{ ...btnCyan, width: '100%' }} onClick={onConnect} disabled={connecting}>
-        {connecting ? 'Connecting...' : 'Connect Canva'}
-      </button>
-    </div>
-  );
-};
-
 const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const email = session?.email ?? null;
   const [view, setView] = useState<'list' | 'creation'>('list');
@@ -132,9 +93,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const [listLoading, setListLoading] = useState(false);
   const [naviMessage, setNaviMessage] = useState('');
   const [error, setError] = useState('');
-  const [canvaStatus, setCanvaStatus] = useState<CanvaStatus | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [showConnect, setShowConnect] = useState(false);
 
   const loadCreations = useCallback(async () => {
     if (!email) return;
@@ -145,33 +103,10 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     } catch (e) { setError(String(e)); } finally { setListLoading(false); }
   }, [email]);
 
-  const loadCanvaStatus = useCallback(async () => {
-    if (!email) return;
-    try {
-      const d = await callApi(CANVA_API, { action: 'get-status', email });
-      setCanvaStatus({ connected: !!d.connected, setupPending: !!d.setupPending });
-      if (d.connected) setShowConnect(false);
-    } catch { setCanvaStatus({ connected: false, setupPending: false }); }
-  }, [email]);
-
   useEffect(() => {
     if (!email) return;
     loadCreations();
-    loadCanvaStatus();
-  }, [email, loadCreations, loadCanvaStatus]);
-
-  // Handle OAuth return (?canva_connected=true)
-  useEffect(() => {
-    if (!email) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('canva_connected') === 'true') {
-      params.delete('canva_connected');
-      const qs = params.toString();
-      window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
-      setShowConnect(false);
-      loadCanvaStatus();
-    }
-  }, [email, loadCanvaStatus]);
+  }, [email, loadCreations]);
 
   // --- Not signed in ---
   if (!email) {
@@ -186,24 +121,10 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     );
   }
 
-  const connectCanva = async () => {
-    setConnecting(true); setError('');
-    try {
-      const d = await callApi(CANVA_API, { action: 'start-oauth', email });
-      if (d.setupPending) {
-        setCanvaStatus({ connected: false, setupPending: true });
-      } else if (d.url) {
-        window.open(d.url, '_blank');
-      }
-    } catch (e) { setError(String(e)); } finally { setConnecting(false); }
-  };
-
-
   const openCreation = (cr: Creation) => {
     setActiveCreation(cr);
     setPrompt(cr.prompt);
-    setNaviMessage(messageForStatus(cr.status));
-    setShowConnect(false);
+    setNaviMessage('Saved.');
     setView('creation');
   };
 
@@ -212,7 +133,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     setPrompt('');
     setNaviMessage('');
     setError('');
-    setShowConnect(false);
     setView('creation');
   };
 
@@ -223,8 +143,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     try {
       const d = await callApi(CREATE_API, { action: 'create-creation', email, prompt: clean });
       setActiveCreation(d as Creation);
-      setNaviMessage(d.naviMessage ?? messageForStatus(d.status));
-      if (d.needsCanvaAuth) { setShowConnect(true); loadCanvaStatus(); }
+      setNaviMessage(d.naviMessage ?? 'Saved.');
       loadCreations();
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
   };
@@ -243,14 +162,8 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     try { return new Date(d).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }); } catch { return d; }
   };
 
-  const editUrl = activeCreation?.canva_edit_url;
-  const isConnected = canvaStatus?.connected ?? false;
-
-
-
   // --- Creation view ---
   if (view === 'creation') {
-    const needPanel = showConnect || (!isConnected);
     return (
       <div style={container}>
           <div style={topBar}>
@@ -262,10 +175,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
           </div>
         </div>
         <div style={scrollArea}>
-          {needPanel && (
-            <ConnectCanvaPanel canvaStatus={canvaStatus} connecting={connecting} onConnect={connectCanva} />
-          )}
-
           <div style={{ background: '#0a0a0a', border: `1px solid ${MAG}`, borderRadius: 14, padding: '1.5rem', marginBottom: '1.25rem', textAlign: 'center' }}>
             <span style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 700, lineHeight: 1.3 }}>What would you like me to create?</span>
           </div>
@@ -282,7 +191,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
           />
 
           <button style={{ ...btnCyan, width: '100%' }} onClick={submitCreation} disabled={loading}>
-            {loading ? 'Creating...' : 'Create in Canva'}
+            {loading ? 'Saving...' : 'Save'}
           </button>
 
           {naviMessage && (
@@ -291,11 +200,6 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
                 <NaviAvatar />
                 <span style={{ color: '#fff', fontSize: '0.95rem', lineHeight: 1.6 }}>{naviMessage}</span>
               </div>
-              {editUrl ? (
-                <a href={editUrl} target="_blank" rel="noopener noreferrer" style={{ ...btnCyan, display: 'block', textAlign: 'center', textDecoration: 'none', marginTop: '0.75rem' }}>
-                  Open in Canva &rarr;
-                </a>
-              ) : null}
             </div>
           )}
         </div>
