@@ -68,17 +68,12 @@ const BackBtn: FC<{ onClick: () => void }> = ({ onClick }) => (
   </button>
 );
 
-// A fluffy cloud silhouette: a rounded body plus overlapping bumps along the top,
-// unified into one shape via a shared drop-shadow on the wrapper.
-const CloudPanel: FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
-  <div style={{ position: 'relative', filter: 'drop-shadow(0 10px 18px rgba(26,26,46,0.12))', marginBottom: '1.5rem', ...style }}>
-    <div style={{ position: 'absolute', top: -20, left: 22, width: 64, height: 64, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'absolute', top: -32, left: 78, width: 86, height: 86, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'absolute', top: -18, right: 60, width: 70, height: 70, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'absolute', top: -10, right: 16, width: 50, height: 50, borderRadius: '50%', background: '#fff' }} />
-    <div style={{ position: 'relative', background: '#fff', borderRadius: 36, padding: '2.25rem 1.5rem 1.5rem' }}>
-      {children}
-    </div>
+const AddGoalPanel: FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
+  <div style={{
+    background: '#fff', borderRadius: 20, padding: '1.5rem',
+    boxShadow: '0 10px 18px rgba(26,26,46,0.12)', marginBottom: '1.5rem', ...style,
+  }}>
+    {children}
   </div>
 );
 
@@ -115,8 +110,7 @@ const topBar: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box',
 };
 const scrollArea: React.CSSProperties = {
-  position: 'relative', zIndex: 1, flex: 1, overflow: 'hidden', maxWidth: 480, margin: '0 auto',
-  width: '100%', padding: '1rem 1.25rem', boxSizing: 'border-box',
+  position: 'relative', zIndex: 1, flex: 1, overflow: 'hidden', width: '100%',
   display: 'flex', flexDirection: 'column',
 };
 
@@ -346,7 +340,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
         </div>
       </div>
       <div style={scrollArea}>
-        {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
+        {error && <div style={{ color: RED, fontSize: '0.9rem', padding: '0 1.25rem', marginBottom: '0.75rem' }}>{error}</div>}
         {loading && <div style={{ color: '#8892A6', textAlign: 'center', padding: '2rem 0' }}>Loading...</div>}
 
         {!loading && (
@@ -358,7 +352,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             onPointerCancel={onViewportPointerUp}
             style={{
               position: 'relative', width: '100%', flex: 1, overflow: 'auto',
-              borderRadius: 14, touchAction: 'pan-x pan-y',
+              touchAction: 'pan-x pan-y',
             }}
           >
             <div style={{ position: 'relative', width: canvasWidth * zoom, height: canvasHeight * zoom }}>
@@ -447,7 +441,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             <BackBtn onClick={() => setShowAdd(false)} />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 2rem', boxSizing: 'border-box' }}>
-            <CloudPanel>
+            <AddGoalPanel>
               <div style={fieldLabel}>Add a goal</div>
               <textarea
                 value={goalText}
@@ -476,7 +470,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                 </button>
               </div>
               <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
-            </CloudPanel>
+            </AddGoalPanel>
             {error && <div style={{ color: '#000', fontWeight: 700, fontSize: '0.9rem' }}>{error}</div>}
           </div>
         </div>
