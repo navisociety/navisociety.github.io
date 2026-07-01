@@ -1,6 +1,7 @@
 import { FC, useState } from 'react';
 import EmailScreen from './EmailScreen';
 import CreateScreen from './CreateScreen';
+import VisionBoardScreen from './VisionBoardScreen';
 
 interface Props {
   onClose: () => void;
@@ -8,7 +9,11 @@ interface Props {
 }
 
 const ToolsScreen: FC<Props> = ({ onClose, session }) => {
-  const [sub, setSub] = useState<null | 'email' | 'create'>(null);
+  const [sub, setSub] = useState<null | 'email' | 'create' | 'visionboard'>(null);
+
+  if (sub === 'visionboard') {
+    return <VisionBoardScreen onClose={() => setSub(null)} session={session} />;
+  }
 
   if (sub === 'create') {
     return <CreateScreen onClose={() => setSub(null)} session={session} />;
@@ -53,6 +58,9 @@ const ToolsScreen: FC<Props> = ({ onClose, session }) => {
         </button>
         <button onClick={() => setSub('create')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
           <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Create</span>
+        </button>
+        <button onClick={() => setSub('visionboard')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
+          <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Vision Board</span>
         </button>
       </div>
     </div>
