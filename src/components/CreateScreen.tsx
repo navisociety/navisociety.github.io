@@ -10,6 +10,7 @@ interface Creation {
   user_email: string;
   title: string;
   prompt: string;
+  content: string | null;
   status: 'pending' | 'processing' | 'ready' | 'failed';
   canva_design_id: string | null;
   canva_edit_url: string | null;
@@ -78,6 +79,11 @@ const inputStyle: React.CSSProperties = {
   fontSize: '1rem', width: '100%', boxSizing: 'border-box', resize: 'vertical',
 };
 
+const fieldLabel: React.CSSProperties = {
+  color: '#888', fontSize: '0.8rem', fontWeight: 700,
+  marginBottom: '0.5rem', fontFamily: 'Fredoka, sans-serif',
+};
+
 const container: React.CSSProperties = {
   position: 'fixed', inset: 0, background: '#000', zIndex: 1000,
   display: 'flex', flexDirection: 'column', fontFamily: 'Fredoka, sans-serif',
@@ -123,6 +129,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const [creations, setCreations] = useState<Creation[]>([]);
   const [activeCreation, setActiveCreation] = useState<Creation | null>(null);
   const [prompt, setPrompt] = useState('');
+  const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [naviMessage, setNaviMessage] = useState('');
@@ -197,6 +204,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const openCreation = (cr: Creation) => {
     setActiveCreation(cr);
     setPrompt(cr.prompt);
+    setContent(cr.content ?? '');
     setNaviMessage(messageForStatus(cr.status));
     setShowConnect(false);
     setView('creation');
@@ -205,6 +213,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
   const newCreation = () => {
     setActiveCreation(null);
     setPrompt('');
+    setContent('');
     setNaviMessage('');
     setError('');
     setShowConnect(false);
@@ -216,7 +225,7 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
     if (!clean) { setError('Please describe what you want me to create.'); return; }
     setLoading(true); setError(''); setNaviMessage('');
     try {
-      const d = await callApi(CREATE_API, { action: 'create-creation', email, prompt: clean });
+      const d = await callApi(CREATE_API, { action: 'create-creation', email, prompt: clean, content: content.trim() });
       setActiveCreation(d as Creation);
       setNaviMessage(d.naviMessage ?? messageForStatus(d.status));
       if (d.needsCanvaAuth) { setShowConnect(true); loadCanvaStatus(); }
@@ -267,13 +276,24 @@ const CreateScreen: FC<CreateScreenProps> = ({ onClose, session }) => {
 
           {error && <div style={{ color: RED, fontSize: '0.9rem', marginBottom: '0.75rem' }}>{error}</div>}
 
+          <div style={fieldLabel}>Describe the design</div>
           <textarea
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
-            rows={5}
+            rows={4}
             placeholder="e.g. A bold Instagram post announcing our Sunday service..."
             style={{ ...inputStyle, marginBottom: '1rem' }}
           />
+
+          <div style={fieldLabel}>What should it say? <span style={{ color: '#555', fontWeight: 400 }}>(optional)</span></div>
+          <textarea
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={4}
+            placeholder={'First line is the headline.\nThe rest becomes the body text.'}
+            style={{ ...inputStyle, marginBottom: '1rem' }}
+          />
+
           <button style={{ ...btnCyan, width: '100%' }} onClick={submitCreation} disabled={loading}>
             {loading ? 'Creating...' : 'Create in Canva'}
           </button>
