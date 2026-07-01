@@ -82,3 +82,11 @@ jobs:
             --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy navi-vision function
+        run: |
+          supabase functions deploy navi-vision \
+            --project-ref irssegzkvxyewuxgqpwi \
+            --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
