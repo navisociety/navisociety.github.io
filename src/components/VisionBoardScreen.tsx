@@ -361,14 +361,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
               borderRadius: 14, touchAction: 'pan-x pan-y',
             }}
           >
-            <div
-              style={{
-                position: 'relative', width: canvasWidth, height: canvasHeight,
-                transform: `scale(${zoom})`, transformOrigin: '0 0',
-                background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
-                backgroundSize: '18px 18px',
-              }}
-            >
+            <div style={{ position: 'relative', width: canvasWidth * zoom, height: canvasHeight * zoom }}>
               {items.length === 0 && (
                 <div style={{
                   position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -377,48 +370,57 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                   Your board is empty. Tap + to add a goal or image.
                 </div>
               )}
-              {items.map((item, i) => {
-                const pos = positions.get(item.id) ?? { x: 0, y: 0 };
-                return (
-                  <div
-                    key={item.id}
-                    onPointerDown={e => onTilePointerDown(e, item)}
-                    onPointerMove={e => onTilePointerMove(e, item)}
-                    onPointerUp={e => onTilePointerUp(e, item)}
-                    onPointerCancel={e => onTilePointerUp(e, item)}
-                    style={{
-                      position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
-                      borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
-                      userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
-                    }}
-                  >
-                    {item.kind === 'image' ? (
-                      <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
-                    ) : (
-                      <div style={{
-                        width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
-                        padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
-                      }}>
-                        <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
-                      </div>
-                    )}
-                    <button
-                      onPointerDown={e => e.stopPropagation()}
-                      onClick={() => deleteItem(item)}
-                      title="Remove"
+              <div
+                style={{
+                  position: 'relative', width: canvasWidth, height: canvasHeight,
+                  transform: `scale(${zoom})`, transformOrigin: '0 0',
+                  background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
+                  backgroundSize: '18px 18px',
+                }}
+              >
+                {items.map((item, i) => {
+                  const pos = positions.get(item.id) ?? { x: 0, y: 0 };
+                  return (
+                    <div
+                      key={item.id}
+                      onPointerDown={e => onTilePointerDown(e, item)}
+                      onPointerMove={e => onTilePointerMove(e, item)}
+                      onPointerUp={e => onTilePointerUp(e, item)}
+                      onPointerCancel={e => onTilePointerUp(e, item)}
                       style={{
-                        position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
-                        background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
-                        fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+                        position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
+                        borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
+                        userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
                       }}
                     >
-                      &times;
-                    </button>
-                  </div>
-                );
-              })}
+                      {item.kind === 'image' ? (
+                        <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                      ) : (
+                        <div style={{
+                          width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
+                          padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
+                        }}>
+                          <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
+                        </div>
+                      )}
+                      <button
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={() => deleteItem(item)}
+                        title="Remove"
+                        style={{
+                          position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
+                          background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
+                          fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+                        }}
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
