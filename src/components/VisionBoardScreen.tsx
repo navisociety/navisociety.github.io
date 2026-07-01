@@ -1,4 +1,4 @@
-import { FC, useState, useEffect, useCallback, useRef } from 'react';
+import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 
 interface VisionBoardScreenProps {
   onClose: () => void;
@@ -11,6 +11,8 @@ interface VisionItem {
   kind: 'image' | 'text';
   content: string;
   position: number;
+  x: number | null;
+  y: number | null;
   created_at: string;
 }
 
@@ -21,6 +23,9 @@ const MAG = '#FA00FF';
 const LIME = '#CCFF00';
 const RED = '#FA0000';
 const CARD_COLORS = [CYAN, MAG, LIME];
+
+const TILE = 160;
+const GAP = 14;
 
 async function callApi(url: string, body: Record<string, unknown>) {
   const res = await fetch(url, {
@@ -91,6 +96,13 @@ const scrollArea: React.CSSProperties = {
   width: '100%', padding: '1rem 1.25rem', boxSizing: 'border-box',
 };
 
+// Fallback grid slot for items that haven't been dragged yet (x/y still null).
+function defaultSlot(index: number, cols: number) {
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  return { x: col * (TILE + GAP), y: row * (TILE + GAP) };
+}
+
 const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => {
   const email = session?.email ?? null;
   const [items, setItems] = useState<VisionItem[]>([]);
@@ -100,6 +112,9 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasWidth, setCanvasWidth] = useState(440);
+  const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
 
   const loadItems = useCallback(async () => {
     if (!email) return;
@@ -111,6 +126,35 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   }, [email]);
 
   useEffect(() => { loadItems(); }, [loadItems]);
+
+  useEffect(() => {
+    const measure = () => { if (canvasRef.current) setCanvasWidth(canvasRef.current.clientWidth); };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  const cols = Math.max(1, Math.floor((canvasWidth + GAP) / (TILE + GAP)));
+
+  const positions = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    let fallbackIndex = 0;
+    for (const item of items) {
+      if (item.x != null && item.y != null) {
+        map.set(item.id, { x: item.x, y: item.y });
+      } else {
+        map.set(item.id, defaultSlot(fallbackIndex, cols));
+        fallbackIndex++;
+      }
+    }
+    return map;
+  }, [items, cols]);
+
+  const canvasHeight = useMemo(() => {
+    let maxY = 0;
+    for (const p of positions.values()) maxY = Math.max(maxY, p.y + TILE);
+    return Math.max(maxY + GAP, 320);
+  }, [positions]);
 
   if (!email) {
     return (
@@ -166,6 +210,40 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     } catch (e) { setError(String(e)); }
   };
 
+  const clampX = (x: number) => Math.max(0, Math.min(x, Math.max(canvasWidth - TILE, 0)));
+  const clampY = (y: number) => Math.max(0, y);
+
+  const onTilePointerDown = (e: React.PointerEvent, item: VisionItem) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const pos = positions.get(item.id)!;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragState.current = { id: item.id, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y, moved: false };
+  };
+
+  const onTilePointerMove = (e: React.PointerEvent, item: VisionItem) => {
+    const drag = dragState.current;
+    if (!drag || drag.id !== item.id) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    drag.moved = true;
+    const nx = clampX(drag.origX + dx);
+    const ny = clampY(drag.origY + dy);
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, x: nx, y: ny } : i));
+  };
+
+  const onTilePointerUp = async (e: React.PointerEvent, item: VisionItem) => {
+    const drag = dragState.current;
+    dragState.current = null;
+    if (!drag || drag.id !== item.id || !drag.moved) return;
+    const final = positions.get(item.id);
+    const nx = final?.x ?? drag.origX;
+    const ny = final?.y ?? drag.origY;
+    try {
+      await callApi(VISION_API, { action: 'move-item', email, id: item.id, x: nx, y: ny });
+    } catch (err) { setError(String(err)); }
+  };
+
   return (
     <div style={container}>
       <div style={topBar}>
@@ -214,34 +292,56 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
         )}
 
         {!loading && items.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-            {items.map((item, i) => (
-              <div key={item.id} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '1 / 1' }}>
-                {item.kind === 'image' ? (
-                  <img src={item.content} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                ) : (
-                  <div style={{
-                    width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
-                    padding: '1rem', boxSizing: 'border-box', textAlign: 'center',
-                  }}>
-                    <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', lineHeight: 1.35 }}>{item.content}</span>
-                  </div>
-                )}
-                <button
-                  onClick={() => deleteItem(item)}
-                  title="Remove"
+          <div
+            ref={canvasRef}
+            style={{
+              position: 'relative', width: '100%', height: canvasHeight,
+              background: 'radial-gradient(#151515 1px, transparent 1px)',
+              backgroundSize: '18px 18px', borderRadius: 14, touchAction: 'none',
+            }}
+          >
+            {items.map((item, i) => {
+              const pos = positions.get(item.id) ?? { x: 0, y: 0 };
+              return (
+                <div
+                  key={item.id}
+                  onPointerDown={e => onTilePointerDown(e, item)}
+                  onPointerMove={e => onTilePointerMove(e, item)}
+                  onPointerUp={e => onTilePointerUp(e, item)}
+                  onPointerCancel={e => onTilePointerUp(e, item)}
                   style={{
-                    position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
-                    background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
-                    fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+                    position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
+                    borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
+                    userSelect: 'none', boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
                   }}
                 >
-                  &times;
-                </button>
-              </div>
-            ))}
+                  {item.kind === 'image' ? (
+                    <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                  ) : (
+                    <div style={{
+                      width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
+                      padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
+                    }}>
+                      <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
+                    </div>
+                  )}
+                  <button
+                    onPointerDown={e => e.stopPropagation()}
+                    onClick={() => deleteItem(item)}
+                    title="Remove"
+                    style={{
+                      position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
+                      background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
+                      fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
+                    }}
+                  >
+                    &times;
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
