@@ -1,4 +1,4 @@
-// navi-vision: Vision Board tool edge function (image + text goal grid)
+// navi-vision: Vision Board tool edge function (freely-positioned image + text goal canvas)
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -24,7 +24,7 @@ const sb = createClient(
 );
 
 const BUCKET = 'vision-boards';
-const COLS = 'id,user_email,kind,content,position,created_at';
+const COLS = 'id,user_email,kind,content,position,x,y,created_at';
 const MAX_ITEMS = 60;
 
 const ALLOWED_IMAGE_TYPES: Record<string, string> = {
@@ -118,6 +118,17 @@ serve(async (req) => {
       }
 
       const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'image', content: finalUrl, position: nextPos }).select(COLS).single();
+      if (error) throw new Error(error.message);
+      return Response.json({ item: data }, { headers: c });
+    }
+
+    if (action === 'move-item') {
+      if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: c });
+      const x = Number(body.x);
+      const y = Number(body.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return Response.json({ error: 'x and y must be numbers' }, { status: 400, headers: c });
+
+      const { data, error } = await sb.from('navi_vision_items').update({ x, y }).eq('id', id).eq('user_email', email).select(COLS).single();
       if (error) throw new Error(error.message);
       return Response.json({ item: data }, { headers: c });
     }
