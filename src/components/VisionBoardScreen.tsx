@@ -144,13 +144,16 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [error, setError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(440);
+  const [viewportHeight, setViewportHeight] = useState(600);
   const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
+  const panState = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null);
   const pinchPointers = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchState = useRef<{ startDist: number; startZoom: number } | null>(null);
-  const prevZoomRef = useRef(1);
+  const pinchState = useRef<{ startDist: number; startZoom: number; midX: number; midY: number; startPan: { x: number; y: number } } | null>(null);
+  const initializedPan = useRef(false);
 
   const loadItems = useCallback(async () => {
     if (!email) return;
@@ -164,26 +167,15 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   useEffect(() => { loadItems(); }, [loadItems]);
 
   useEffect(() => {
-    const measure = () => { if (canvasRef.current) setCanvasWidth(canvasRef.current.clientWidth); };
+    const measure = () => {
+      if (!canvasRef.current) return;
+      setCanvasWidth(canvasRef.current.clientWidth);
+      setViewportHeight(canvasRef.current.clientHeight);
+    };
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
-
-  // Keep whatever point is currently at the center of the viewport anchored there
-  // as zoom changes, instead of always zooming toward the top-left corner.
-  useEffect(() => {
-    const el = canvasRef.current;
-    const oldZoom = prevZoomRef.current;
-    prevZoomRef.current = zoom;
-    if (!el || oldZoom === zoom) return;
-    const centerX = el.scrollLeft + el.clientWidth / 2;
-    const centerY = el.scrollTop + el.clientHeight / 2;
-    const unscaledX = centerX / oldZoom;
-    const unscaledY = centerY / oldZoom;
-    el.scrollLeft = unscaledX * zoom - el.clientWidth / 2;
-    el.scrollTop = unscaledY * zoom - el.clientHeight / 2;
-  }, [zoom]);
 
   const cols = Math.max(1, Math.floor((canvasWidth + GAP) / (TILE + GAP)));
 
@@ -207,19 +199,54 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     return Math.max(maxY + GAP, 320);
   }, [positions]);
 
-  const zoomBy = (delta: number) => setZoom(z => clampZoom(z + delta));
-  const resetZoom = () => setZoom(1);
+  // Center the board in the viewport once, the first time we know its real size
+  // (works whether the content is smaller or larger than the screen).
+  useEffect(() => {
+    if (initializedPan.current || loading) return;
+    const el = canvasRef.current;
+    if (!el || el.clientWidth === 0) return;
+    initializedPan.current = true;
+    setPan({
+      x: (el.clientWidth - canvasWidth * zoom) / 2,
+      y: (el.clientHeight - canvasHeight * zoom) / 2,
+    });
+  }, [loading, canvasWidth, canvasHeight, zoom]);
 
-  // Two-finger pinch: single-finger touches still pan the board natively (touchAction
-  // allows that); once a 2nd pointer joins we take over and scale, then hand back
-  // control once fewer than 2 pointers remain.
+  // Zoom towards the viewport's own center, keeping whatever content is
+  // currently there fixed on screen as zoom changes.
+  const zoomTo = (newZoom: number) => {
+    const el = canvasRef.current;
+    const cz = clampZoom(newZoom);
+    const localX = el ? el.clientWidth / 2 : canvasWidth / 2;
+    const localY = el ? el.clientHeight / 2 : viewportHeight / 2;
+    setPan(p => {
+      const cx = (localX - p.x) / zoom;
+      const cy = (localY - p.y) / zoom;
+      return { x: localX - cx * cz, y: localY - cy * cz };
+    });
+    setZoom(cz);
+  };
+  const zoomBy = (delta: number) => zoomTo(zoom + delta);
+  const resetZoom = () => zoomTo(1);
+
+  // Fully manual pan + pinch-zoom (not native scrolling), so centering and
+  // zoom-to-center behave identically whether content is bigger or smaller
+  // than the screen. Single-finger drag pans; a 2nd finger switches to pinch,
+  // anchored to the pinch midpoint; releasing back to <2 pointers hands control back.
   const onViewportPointerDown = (e: React.PointerEvent) => {
     if (dragState.current) return;
     pinchPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinchPointers.current.size === 2) {
+      panState.current = null;
       const pts = Array.from(pinchPointers.current.values());
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      pinchState.current = { startDist: dist || 1, startZoom: zoom };
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const midX = (pts[0].x + pts[1].x) / 2 - (rect?.left ?? 0);
+      const midY = (pts[0].y + pts[1].y) / 2 - (rect?.top ?? 0);
+      pinchState.current = { startDist: dist || 1, startZoom: zoom, midX, midY, startPan: { ...pan } };
+    } else if (pinchPointers.current.size === 1) {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      panState.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
     }
   };
 
@@ -228,16 +255,26 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     pinchPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinchPointers.current.size >= 2 && pinchState.current) {
       e.preventDefault();
+      const { startDist, startZoom, midX, midY, startPan } = pinchState.current;
       const pts = Array.from(pinchPointers.current.values());
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const ratio = dist / pinchState.current.startDist;
-      setZoom(clampZoom(pinchState.current.startZoom * ratio));
+      const newZoom = clampZoom(startZoom * (dist / startDist));
+      const cx = (midX - startPan.x) / startZoom;
+      const cy = (midY - startPan.y) / startZoom;
+      setZoom(newZoom);
+      setPan({ x: midX - cx * newZoom, y: midY - cy * newZoom });
+      return;
+    }
+    const drag = panState.current;
+    if (drag && drag.pointerId === e.pointerId) {
+      setPan({ x: drag.startPanX + (e.clientX - drag.startX), y: drag.startPanY + (e.clientY - drag.startY) });
     }
   };
 
   const onViewportPointerUp = (e: React.PointerEvent) => {
     pinchPointers.current.delete(e.pointerId);
     if (pinchPointers.current.size < 2) pinchState.current = null;
+    if (panState.current?.pointerId === e.pointerId) panState.current = null;
   };
 
   if (!email) {
@@ -351,70 +388,68 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             onPointerUp={onViewportPointerUp}
             onPointerCancel={onViewportPointerUp}
             style={{
-              position: 'relative', width: '100%', flex: 1, overflow: 'auto',
-              touchAction: 'pan-x pan-y',
+              position: 'relative', width: '100%', flex: 1, overflow: 'hidden',
+              touchAction: 'none',
             }}
           >
-            <div style={{ position: 'relative', width: canvasWidth * zoom, height: canvasHeight * zoom }}>
-              {items.length === 0 && (
-                <div style={{
-                  position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none',
-                }}>
-                  Your board is empty. Tap + to add a goal or image.
-                </div>
-              )}
-              <div
-                style={{
-                  position: 'relative', width: canvasWidth, height: canvasHeight,
-                  transform: `scale(${zoom})`, transformOrigin: '0 0',
-                  background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
-                  backgroundSize: '18px 18px',
-                }}
-              >
-                {items.map((item, i) => {
-                  const pos = positions.get(item.id) ?? { x: 0, y: 0 };
-                  return (
-                    <div
-                      key={item.id}
-                      onPointerDown={e => onTilePointerDown(e, item)}
-                      onPointerMove={e => onTilePointerMove(e, item)}
-                      onPointerUp={e => onTilePointerUp(e, item)}
-                      onPointerCancel={e => onTilePointerUp(e, item)}
+            {items.length === 0 && (
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none',
+              }}>
+                Your board is empty. Tap + to add a goal or image.
+              </div>
+            )}
+            <div
+              style={{
+                position: 'absolute', left: 0, top: 0, width: canvasWidth, height: canvasHeight,
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0',
+                background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
+                backgroundSize: '18px 18px',
+              }}
+            >
+              {items.map((item, i) => {
+                const pos = positions.get(item.id) ?? { x: 0, y: 0 };
+                return (
+                  <div
+                    key={item.id}
+                    onPointerDown={e => onTilePointerDown(e, item)}
+                    onPointerMove={e => onTilePointerMove(e, item)}
+                    onPointerUp={e => onTilePointerUp(e, item)}
+                    onPointerCancel={e => onTilePointerUp(e, item)}
+                    style={{
+                      position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
+                      borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
+                      userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
+                    }}
+                  >
+                    {item.kind === 'image' ? (
+                      <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                    ) : (
+                      <div style={{
+                        width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
+                        padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
+                      }}>
+                        <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
+                      </div>
+                    )}
+                    <button
+                      onPointerDown={e => e.stopPropagation()}
+                      onClick={() => deleteItem(item)}
+                      title="Remove"
                       style={{
-                        position: 'absolute', left: pos.x, top: pos.y, width: TILE, height: TILE,
-                        borderRadius: 14, overflow: 'hidden', cursor: 'grab', touchAction: 'none',
-                        userSelect: 'none', boxShadow: '0 4px 14px rgba(26,26,46,0.18)',
+                        position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
+                        background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
+                        fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
                       }}
                     >
-                      {item.kind === 'image' ? (
-                        <img src={item.content} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
-                      ) : (
-                        <div style={{
-                          width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          background: '#0a0a0a', border: `2px solid ${CARD_COLORS[i % CARD_COLORS.length]}`,
-                          padding: '1rem', boxSizing: 'border-box', textAlign: 'center', pointerEvents: 'none',
-                        }}>
-                          <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.3 }}>{item.content}</span>
-                        </div>
-                      )}
-                      <button
-                        onPointerDown={e => e.stopPropagation()}
-                        onClick={() => deleteItem(item)}
-                        title="Remove"
-                        style={{
-                          position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%',
-                          background: 'rgba(0,0,0,0.7)', border: `1px solid ${RED}`, color: RED,
-                          fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
-                        }}
-                      >
-                        &times;
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                      &times;
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
