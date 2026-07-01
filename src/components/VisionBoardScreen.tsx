@@ -16,6 +16,11 @@ interface VisionItem {
   created_at: string;
 }
 
+interface VisionProfile {
+  name: string;
+  bio: string;
+}
+
 const VISION_API = 'https://irssegzkvxyewuxgqpwi.supabase.co/functions/v1/navi-vision';
 
 const CYAN = '#00F7FF';
@@ -27,13 +32,13 @@ const CARD_COLORS = [CYAN, MAG, LIME];
 
 const TILE = 160;
 const GAP = 14;
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 2.5;
-const ZOOM_STEP = 0.15;
-
-function clampZoom(z: number) {
-  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
-}
+// Fixed virtual canvas the goal bubbles live on. Big enough that the spiral
+// below has room to grow outward from the center in every direction.
+const CANVAS_SIZE = 3000;
+const CENTER = CANVAS_SIZE / 2;
+const HOME_DIAM = 150;
+const HOME_RADIUS = HOME_DIAM / 2;
+const GOLDEN_ANGLE = 137.50776 * (Math.PI / 180);
 
 async function callApi(url: string, body: Record<string, unknown>) {
   const res = await fetch(url, {
@@ -120,18 +125,18 @@ const addTopBtn: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, flexShrink: 0,
 };
 
-const zoomBtn: React.CSSProperties = {
-  width: 36, height: 36, borderRadius: '50%', background: '#fff', border: `1px solid #DCE6F5`,
-  color: INK, fontSize: '1.2rem', fontWeight: 700, cursor: 'pointer',
-  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
-  boxShadow: '0 2px 8px rgba(26,26,46,0.18)',
-};
-
-// Fallback grid slot for items that haven't been dragged yet (x/y still null).
-function defaultSlot(index: number, cols: number) {
-  const col = index % cols;
-  const row = Math.floor(index / cols);
-  return { x: col * (TILE + GAP), y: row * (TILE + GAP) };
+// Default placement for a goal that hasn't been dragged yet (x/y still null):
+// a sunflower-style spiral radiating outward from the Home circle, so new
+// goals always appear "around" Home instead of stacking in a corner grid.
+function defaultSlot(index: number) {
+  const angle = index * GOLDEN_ANGLE;
+  const radius = HOME_RADIUS + GAP * 2 + 105 * Math.sqrt(index + 1);
+  const x = CENTER + radius * Math.cos(angle) - TILE / 2;
+  const y = CENTER + radius * Math.sin(angle) - TILE / 2;
+  return {
+    x: Math.max(0, Math.min(x, CANVAS_SIZE - TILE)),
+    y: Math.max(0, Math.min(y, CANVAS_SIZE - TILE)),
+  };
 }
 
 const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => {
@@ -143,16 +148,16 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [profile, setProfile] = useState<VisionProfile | null>(null);
+  const [showHome, setShowHome] = useState(false);
+  const [homeName, setHomeName] = useState('');
+  const [homeBio, setHomeBio] = useState('');
+  const [savingHome, setSavingHome] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [canvasWidth, setCanvasWidth] = useState(440);
-  const [viewportHeight, setViewportHeight] = useState(600);
   const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
   const panState = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null);
-  const pinchPointers = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchState = useRef<{ startDist: number; startZoom: number; midX: number; midY: number; startPan: { x: number; y: number } } | null>(null);
   const initializedPan = useRef(false);
 
   const loadItems = useCallback(async () => {
@@ -164,20 +169,16 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
   }, [email]);
 
+  const loadProfile = useCallback(async () => {
+    if (!email) return;
+    try {
+      const d = await callApi(VISION_API, { action: 'get-profile', email });
+      setProfile(d.profile ?? null);
+    } catch { /* non-fatal, Home just shows the placeholder */ }
+  }, [email]);
+
   useEffect(() => { loadItems(); }, [loadItems]);
-
-  useEffect(() => {
-    const measure = () => {
-      if (!canvasRef.current) return;
-      setCanvasWidth(canvasRef.current.clientWidth);
-      setViewportHeight(canvasRef.current.clientHeight);
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
-
-  const cols = Math.max(1, Math.floor((canvasWidth + GAP) / (TILE + GAP)));
+  useEffect(() => { loadProfile(); }, [loadProfile]);
 
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
@@ -186,85 +187,32 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
       if (item.x != null && item.y != null) {
         map.set(item.id, { x: item.x, y: item.y });
       } else {
-        map.set(item.id, defaultSlot(fallbackIndex, cols));
+        map.set(item.id, defaultSlot(fallbackIndex));
         fallbackIndex++;
       }
     }
     return map;
-  }, [items, cols]);
+  }, [items]);
 
-  const canvasHeight = useMemo(() => {
-    let maxY = 0;
-    for (const p of positions.values()) maxY = Math.max(maxY, p.y + TILE);
-    return Math.max(maxY + GAP, 320);
-  }, [positions]);
-
-  // Center the board in the viewport once, the first time we know its real size
-  // (works whether the content is smaller or larger than the screen).
+  // Center the Home circle (canvas center) on the viewport's own center,
+  // once, the first time we know the viewport's real size.
   useEffect(() => {
     if (initializedPan.current || loading) return;
     const el = canvasRef.current;
     if (!el || el.clientWidth === 0) return;
     initializedPan.current = true;
-    setPan({
-      x: (el.clientWidth - canvasWidth * zoom) / 2,
-      y: (el.clientHeight - canvasHeight * zoom) / 2,
-    });
-  }, [loading, canvasWidth, canvasHeight, zoom]);
+    setPan({ x: el.clientWidth / 2 - CENTER, y: el.clientHeight / 2 - CENTER });
+  }, [loading]);
 
-  // Zoom towards the viewport's own center, keeping whatever content is
-  // currently there fixed on screen as zoom changes.
-  const zoomTo = (newZoom: number) => {
-    const el = canvasRef.current;
-    const cz = clampZoom(newZoom);
-    const localX = el ? el.clientWidth / 2 : canvasWidth / 2;
-    const localY = el ? el.clientHeight / 2 : viewportHeight / 2;
-    setPan(p => {
-      const cx = (localX - p.x) / zoom;
-      const cy = (localY - p.y) / zoom;
-      return { x: localX - cx * cz, y: localY - cy * cz };
-    });
-    setZoom(cz);
-  };
-  const zoomBy = (delta: number) => zoomTo(zoom + delta);
-  const resetZoom = () => zoomTo(1);
-
-  // Fully manual pan + pinch-zoom (not native scrolling), so centering and
-  // zoom-to-center behave identically whether content is bigger or smaller
-  // than the screen. Single-finger drag pans; a 2nd finger switches to pinch,
-  // anchored to the pinch midpoint; releasing back to <2 pointers hands control back.
+  // Single-finger drag pans the board. Home stays fixed on screen since it's
+  // rendered as an independent overlay, not part of this pannable layer.
   const onViewportPointerDown = (e: React.PointerEvent) => {
-    if (dragState.current) return;
-    pinchPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinchPointers.current.size === 2) {
-      panState.current = null;
-      const pts = Array.from(pinchPointers.current.values());
-      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const rect = canvasRef.current?.getBoundingClientRect();
-      const midX = (pts[0].x + pts[1].x) / 2 - (rect?.left ?? 0);
-      const midY = (pts[0].y + pts[1].y) / 2 - (rect?.top ?? 0);
-      pinchState.current = { startDist: dist || 1, startZoom: zoom, midX, midY, startPan: { ...pan } };
-    } else if (pinchPointers.current.size === 1) {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      panState.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
-    }
+    if (dragState.current || panState.current) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    panState.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
   };
 
   const onViewportPointerMove = (e: React.PointerEvent) => {
-    if (!pinchPointers.current.has(e.pointerId)) return;
-    pinchPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinchPointers.current.size >= 2 && pinchState.current) {
-      e.preventDefault();
-      const { startDist, startZoom, midX, midY, startPan } = pinchState.current;
-      const pts = Array.from(pinchPointers.current.values());
-      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const newZoom = clampZoom(startZoom * (dist / startDist));
-      const cx = (midX - startPan.x) / startZoom;
-      const cy = (midY - startPan.y) / startZoom;
-      setZoom(newZoom);
-      setPan({ x: midX - cx * newZoom, y: midY - cy * newZoom });
-      return;
-    }
     const drag = panState.current;
     if (drag && drag.pointerId === e.pointerId) {
       setPan({ x: drag.startPanX + (e.clientX - drag.startX), y: drag.startPanY + (e.clientY - drag.startY) });
@@ -272,8 +220,6 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   };
 
   const onViewportPointerUp = (e: React.PointerEvent) => {
-    pinchPointers.current.delete(e.pointerId);
-    if (pinchPointers.current.size < 2) pinchState.current = null;
     if (panState.current?.pointerId === e.pointerId) panState.current = null;
   };
 
@@ -331,11 +277,27 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     } catch (e) { setError(String(e)); }
   };
 
-  const clampX = (x: number) => Math.max(0, Math.min(x, Math.max(canvasWidth - TILE, 0)));
-  const clampY = (y: number) => Math.max(0, y);
+  const openHomeEdit = () => {
+    setHomeName(profile?.name ?? '');
+    setHomeBio(profile?.bio ?? '');
+    setShowHome(true);
+  };
+
+  const saveHome = async () => {
+    setSavingHome(true); setError('');
+    try {
+      const d = await callApi(VISION_API, { action: 'save-profile', email, name: homeName.trim(), bio: homeBio.trim() });
+      setProfile(d.profile ?? { name: homeName.trim(), bio: homeBio.trim() });
+      setShowHome(false);
+    } catch (e) { setError(String(e)); } finally { setSavingHome(false); }
+  };
+
+  const clampX = (x: number) => Math.max(0, Math.min(x, CANVAS_SIZE - TILE));
+  const clampY = (y: number) => Math.max(0, Math.min(y, CANVAS_SIZE - TILE));
 
   const onTilePointerDown = (e: React.PointerEvent, item: VisionItem) => {
     if (e.button !== undefined && e.button !== 0) return;
+    e.stopPropagation();
     const pos = positions.get(item.id)!;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragState.current = { id: item.id, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y, moved: false };
@@ -344,8 +306,8 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const onTilePointerMove = (e: React.PointerEvent, item: VisionItem) => {
     const drag = dragState.current;
     if (!drag || drag.id !== item.id) return;
-    const dx = (e.clientX - drag.startX) / zoom;
-    const dy = (e.clientY - drag.startY) / zoom;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
     if (!drag.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     drag.moved = true;
     const nx = clampX(drag.origX + dx);
@@ -389,23 +351,13 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             onPointerCancel={onViewportPointerUp}
             style={{
               position: 'relative', width: '100%', flex: 1, overflow: 'hidden',
-              touchAction: 'none',
+              touchAction: 'none', background: '#FFFFFF',
             }}
           >
-            {items.length === 0 && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none',
-              }}>
-                Your board is empty. Tap + to add a goal or image.
-              </div>
-            )}
             <div
               style={{
-                position: 'absolute', left: 0, top: 0, width: canvasWidth, height: canvasHeight,
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0',
-                background: 'radial-gradient(#E3ECFB 1.5px, transparent 1.5px)',
-                backgroundSize: '18px 18px',
+                position: 'absolute', left: 0, top: 0, width: CANVAS_SIZE, height: CANVAS_SIZE,
+                transform: `translate(${pan.x}px, ${pan.y}px)`, transformOrigin: '0 0',
               }}
             >
               {items.map((item, i) => {
@@ -451,20 +403,39 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                 );
               })}
             </div>
+
+            {items.length === 0 && (
+              <div style={{
+                position: 'absolute', left: '50%', top: '50%', transform: `translate(-50%, ${HOME_RADIUS + 24}px)`,
+                color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none', width: '100%',
+              }}>
+                Tap + to add a goal or image.
+              </div>
+            )}
+
+            <button
+              onPointerDown={e => e.stopPropagation()}
+              onClick={openHomeEdit}
+              title="Edit your name & bio"
+              style={{
+                position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+                width: HOME_DIAM, height: HOME_DIAM, borderRadius: '50%', background: MAG, border: 'none',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', boxShadow: '0 8px 22px rgba(250,0,255,0.4)', padding: '0.75rem', boxSizing: 'border-box',
+                zIndex: 2,
+              }}
+            >
+              <span style={{ color: '#fff', fontWeight: 700, fontSize: profile?.name ? '1.05rem' : '1.2rem', lineHeight: 1.15 }}>
+                {profile?.name || 'HOME'}
+              </span>
+              {profile?.bio && (
+                <span style={{ color: '#fff', opacity: 0.9, fontSize: '0.72rem', marginTop: '0.3rem', lineHeight: 1.2 }}>
+                  {profile.bio.length > 46 ? `${profile.bio.slice(0, 46)}…` : profile.bio}
+                </span>
+              )}
+            </button>
           </div>
         )}
-
-        <div style={{
-          position: 'absolute', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
-          display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(255,255,255,0.9)',
-          padding: '0.4rem 0.6rem', borderRadius: 999, boxShadow: '0 4px 14px rgba(26,26,46,0.18)', zIndex: 3,
-        }}>
-          <button onClick={() => zoomBy(-ZOOM_STEP)} title="Zoom out" style={zoomBtn}>&minus;</button>
-          <button onClick={resetZoom} title="Reset zoom" style={{ color: INK, fontSize: '0.8rem', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', minWidth: 38 }}>
-            {Math.round(zoom * 100)}%
-          </button>
-          <button onClick={() => zoomBy(ZOOM_STEP)} title="Zoom in" style={zoomBtn}>+</button>
-        </div>
       </div>
 
       {showAdd && (
@@ -505,6 +476,40 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                 </button>
               </div>
               <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onFilePicked} style={{ display: 'none' }} />
+            </AddGoalPanel>
+            {error && <div style={{ color: '#000', fontWeight: 700, fontSize: '0.9rem' }}>{error}</div>}
+          </div>
+        </div>
+      )}
+
+      {showHome && (
+        <div style={{
+          position: 'fixed', inset: 0, background: MAG, zIndex: 1200,
+          display: 'flex', flexDirection: 'column', fontFamily: 'Fredoka, sans-serif',
+        }}>
+          <div style={{ padding: '1.25rem 1.25rem 0', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+            <BackBtn onClick={() => setShowHome(false)} />
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 2rem', boxSizing: 'border-box' }}>
+            <AddGoalPanel>
+              <div style={fieldLabel}>Your name</div>
+              <input
+                value={homeName}
+                onChange={e => setHomeName(e.target.value)}
+                placeholder="e.g. Dian"
+                style={{ ...inputStyle, marginBottom: '0.75rem' }}
+              />
+              <div style={fieldLabel}>Little bio</div>
+              <textarea
+                value={homeBio}
+                onChange={e => setHomeBio(e.target.value)}
+                rows={3}
+                placeholder="A few words about you..."
+                style={{ ...inputStyle, marginBottom: '1.1rem' }}
+              />
+              <button style={{ ...btnCyan, width: '100%' }} onClick={saveHome} disabled={savingHome}>
+                {savingHome ? 'Saving...' : 'Save'}
+              </button>
             </AddGoalPanel>
             {error && <div style={{ color: '#000', fontWeight: 700, fontSize: '0.9rem' }}>{error}</div>}
           </div>
