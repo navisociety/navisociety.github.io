@@ -237,8 +237,8 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   }, [loading]);
 
   // Single-finger drag pans the board; a second finger turns the gesture into
-  // a pinch zoom anchored at the midpoint. Home stays fixed on screen since
-  // it's rendered as an independent overlay, not part of this pannable layer.
+  // a pinch zoom anchored at the midpoint. Home lives on the pannable layer,
+  // so it pans and zooms together with the project bubbles.
   const onViewportPointerDown = (e: React.PointerEvent) => {
     activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -400,7 +400,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             <BackBtn onClick={onClose} />
             <span style={{ color: INK, fontSize: '1.6rem', fontWeight: 700 }}>Vision Board</span>
           </div>
-          <button onClick={() => setShowAdd(true)} title="Add a goal" style={addTopBtn}>+</button>
+          <button onClick={() => setShowAdd(true)} title="Add a project" style={addTopBtn}>+</button>
         </div>
       </div>
       <div style={scrollArea}>
@@ -467,38 +467,38 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                   </div>
                 );
               })}
-            </div>
 
-            {items.length === 0 && (
-              <div style={{
-                position: 'absolute', left: '50%', top: '50%', transform: `translate(-50%, ${HOME_RADIUS + 24}px)`,
-                color: '#8892A6', textAlign: 'center', padding: '0 2rem', pointerEvents: 'none', width: '100%',
-              }}>
-                Tap + to add a goal or image.
-              </div>
-            )}
-
-            <button
-              onPointerDown={e => e.stopPropagation()}
-              onClick={openHomeEdit}
-              title="Edit your name & bio"
-              style={{
-                position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
-                width: HOME_DIAM, height: HOME_DIAM, borderRadius: '50%', background: MAG, border: 'none',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', boxShadow: '0 8px 22px rgba(250,0,255,0.4)', padding: '0.75rem', boxSizing: 'border-box',
-                zIndex: 2,
-              }}
-            >
-              <span style={{ color: '#fff', fontWeight: 700, fontSize: profile?.name ? '1.05rem' : '1.2rem', lineHeight: 1.15 }}>
-                {profile?.name || 'HOME'}
-              </span>
-              {profile?.bio && (
-                <span style={{ color: '#fff', opacity: 0.9, fontSize: '0.72rem', marginTop: '0.3rem', lineHeight: 1.2 }}>
-                  {profile.bio.length > 46 ? `${profile.bio.slice(0, 46)}…` : profile.bio}
-                </span>
+              {items.length === 0 && (
+                <div style={{
+                  position: 'absolute', left: CENTER, top: CENTER + HOME_RADIUS + 24, transform: 'translateX(-50%)',
+                  color: '#8892A6', textAlign: 'center', pointerEvents: 'none', whiteSpace: 'nowrap',
+                }}>
+                  Tap + to add a project or image.
+                </div>
               )}
-            </button>
+
+              <button
+                onPointerDown={e => e.stopPropagation()}
+                onClick={openHomeEdit}
+                title="Edit your name & bio"
+                style={{
+                  position: 'absolute', left: CENTER - HOME_RADIUS, top: CENTER - HOME_RADIUS,
+                  width: HOME_DIAM, height: HOME_DIAM, borderRadius: '50%', background: MAG, border: 'none',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', boxShadow: '0 8px 22px rgba(250,0,255,0.4)', padding: '0.75rem', boxSizing: 'border-box',
+                  zIndex: 2,
+                }}
+              >
+                <span style={{ color: '#fff', fontWeight: 700, fontSize: profile?.name ? '1.05rem' : '1.2rem', lineHeight: 1.15 }}>
+                  {profile?.name || 'HOME'}
+                </span>
+                {profile?.bio && (
+                  <span style={{ color: '#fff', opacity: 0.9, fontSize: '0.72rem', marginTop: '0.3rem', lineHeight: 1.2 }}>
+                    {profile.bio.length > 46 ? `${profile.bio.slice(0, 46)}…` : profile.bio}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -513,7 +513,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
           </div>
           <div style={{ flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 2rem', boxSizing: 'border-box' }}>
             <AddGoalPanel>
-              <div style={fieldLabel}>Add a goal</div>
+              <div style={fieldLabel}>Add a project</div>
               <textarea
                 value={goalText}
                 onChange={e => setGoalText(e.target.value)}
@@ -522,7 +522,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                 style={{ ...inputStyle, marginBottom: '0.75rem' }}
               />
               <button style={{ ...btnCyan, width: '100%', marginBottom: '1.1rem' }} onClick={addGoal} disabled={adding || !goalText.trim()}>
-                + Add Goal
+                + Add Project
               </button>
 
               <div style={fieldLabel}>Add an image</div>
