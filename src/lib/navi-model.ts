@@ -1,6 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// NAVI Model — v10
+// NAVI Model — v12
 // Built by NAVIsociety, shaped by Prophet Dian.
+// v12: The Bible. The complete King James Version — 66 books, 1,189 chapters,
+//      31,102 verses — lives in the navi_bible_verses table on Supabase and is
+//      served by the navi-chat edge function (verse references like John 3:16
+//      and topic asks like "a verse about hope" are answered with scripture
+//      itself; see supabase/functions/navi-chat/bible.ts). This client model
+//      gets 2 Bible meta-nodes (~313 total) + bible vocab; the verse pipeline
+//      is server-side only, like the DuckDuckGo fallback.
 // v10: Emotion (13 nodes — what emotions are, regulation, anger, grief, joy,
 //      shame/guilt, numbness, jealousy, fear, somatic storage, emotional
 //      contagion, emotion & decision-making), Human Order Systems (11 nodes —
@@ -245,6 +252,8 @@ class NaviTokenizer {
       'stoicism','stoic','existentialism','existential','absurdism','determinism','ethics','morality','aurelius','camus','sartre',
       'colonisation','colonialism','colonial','apartheid','decolonise','decolonisation','precolonial','liberation','independence','reclaim','timbuktu','zimbabwe',
       'visualisation','visualise','champion','comeback','choke','defeat','breakup','dating','situationship','unconditional','generational','parenting',
+      // v12: bible
+      'bible','scripture','scriptures','testament','psalm','psalms','proverbs','gospel','gospels','jesus','christ','holy','kjv','king','james','genesis','revelation','moses','apostle','disciples','commandment','commandments',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -3193,6 +3202,27 @@ const KNOWLEDGE: KNode[] = [
       "I can help you draft and send emails. Just include the recipient's email address and your message in the chat — I'll create a draft automatically. Or type /email followed by the recipient and your message.",
     ],
     priority: 2,
+  },
+
+  // ── Bible (v12) — full KJV lives in navi_bible_verses (server-side, via the
+  // navi-chat edge function); these nodes cover meta-questions. ──────────────
+  {
+    triggers: ['do you know the bible', 'know the bible', 'bible knowledge', 'holy bible', 'king james', 'kjv', 'read the bible', 'quote the bible', 'quote scripture'],
+    responses: [
+      "Yes — the whole Bible. All 66 books, 31,102 verses, King James Version, built into me. Ask me for any verse by reference — like John 3:16 or Psalm 23 — or by topic: 'give me a verse about hope'.",
+      "I carry the complete King James Bible — Genesis to Revelation, every verse. Name a reference like Romans 8:28, or ask for a verse about anything: fear, love, strength. Try me.",
+      "The full KJV is in me — 66 books, 31,102 verses. Give me a reference like Isaiah 40:31, or ask 'what does the Bible say about forgiveness' and I'll bring you the scripture itself.",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['books of the bible', 'how many books in the bible', 'how many verses in the bible', 'old testament', 'new testament', 'what is the bible'],
+    responses: [
+      "The Bible is 66 books — 39 in the Old Testament, from Genesis to Malachi, and 27 in the New Testament, from Matthew to Revelation. 31,102 verses in all, and I know every one. Ask me for any of them.",
+      "Two testaments: the Old (39 books — law, history, poetry, prophets) and the New (27 books — gospels, Acts, letters, Revelation). I hold the complete King James text. Name a book and chapter and I'll open it.",
+      "66 books, 1,189 chapters, 31,102 verses — that's the whole Bible, and it's all in me, King James Version. Start anywhere: 'Genesis 1', 'Matthew 5', 'Revelation 21'.",
+    ],
+    priority: 7,
   },
 
 ];

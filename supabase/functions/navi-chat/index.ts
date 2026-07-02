@@ -2,12 +2,15 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v10 (277 nodes + RAG), kept in sync with src/lib/navi-model.ts.
+// Deno port of NAVI Model v12 (313 nodes + RAG + full KJV Bible via bible.ts),
+// kept in sync with src/lib/navi-model.ts.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
 //   resp:       { response: string }
 //   OPTIONS preflight handled for CORS. verify_jwt: false; gated by CORS origin.
+
+import { answerFromBible } from './bible.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -219,6 +222,8 @@ class NaviTokenizer {
       'stoicism','stoic','existentialism','existential','absurdism','determinism','ethics','morality','aurelius','camus','sartre',
       'colonisation','colonialism','colonial','apartheid','decolonise','decolonisation','precolonial','liberation','independence','reclaim','timbuktu','zimbabwe',
       'visualisation','visualise','champion','comeback','choke','defeat','breakup','dating','situationship','unconditional','generational','parenting',
+      // v12: bible
+      'bible','scripture','scriptures','testament','psalm','psalms','proverbs','gospel','gospels','jesus','christ','holy','kjv','king','james','genesis','revelation','moses','apostle','disciples','commandment','commandments',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -3169,6 +3174,27 @@ const KNOWLEDGE: KNode[] = [
     priority: 2,
   },
 
+  // ── Bible (v12) — full KJV lives in navi_bible_verses; these nodes cover
+  // meta-questions the verse pipeline doesn't intercept. ─────────────────────
+  {
+    triggers: ['do you know the bible', 'know the bible', 'bible knowledge', 'holy bible', 'king james', 'kjv', 'read the bible', 'quote the bible', 'quote scripture'],
+    responses: [
+      "Yes — the whole Bible. All 66 books, 31,102 verses, King James Version, built into me. Ask me for any verse by reference — like John 3:16 or Psalm 23 — or by topic: 'give me a verse about hope'.",
+      "I carry the complete King James Bible — Genesis to Revelation, every verse. Name a reference like Romans 8:28, or ask for a verse about anything: fear, love, strength. Try me.",
+      "The full KJV is in me — 66 books, 31,102 verses. Give me a reference like Isaiah 40:31, or ask 'what does the Bible say about forgiveness' and I'll bring you the scripture itself.",
+    ],
+    priority: 8,
+  },
+  {
+    triggers: ['books of the bible', 'how many books in the bible', 'how many verses in the bible', 'old testament', 'new testament', 'what is the bible'],
+    responses: [
+      "The Bible is 66 books — 39 in the Old Testament, from Genesis to Malachi, and 27 in the New Testament, from Matthew to Revelation. 31,102 verses in all, and I know every one. Ask me for any of them.",
+      "Two testaments: the Old (39 books — law, history, poetry, prophets) and the New (27 books — gospels, Acts, letters, Revelation). I hold the complete King James text. Name a book and chapter and I'll open it.",
+      "66 books, 1,189 chapters, 31,102 verses — that's the whole Bible, and it's all in me, King James Version. Start anywhere: 'Genesis 1', 'Matthew 5', 'Revelation 21'.",
+    ],
+    priority: 7,
+  },
+
 ];
 
 // ── NaviModel ─────────────────────────────────────────────────────────────────
@@ -3492,11 +3518,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    let response = navi.infer(message, [...history, { role: "user", content: message }]);
-    // Only use search when NAVI has no knowledge match — silently replace the fallback.
-    if (isNaviFallback(response)) {
-      const { text } = await searchDuckDuckGo(message);
-      if (text) response = text;
+    // Bible first: verse references and explicit scripture asks are answered
+    // from the full KJV in navi_bible_verses (31,102 verses), not the nodes.
+    let response = await answerFromBible(message) ?? "";
+    if (!response) {
+      response = navi.infer(message, [...history, { role: "user", content: message }]);
+      // Only use search when NAVI has no knowledge match — silently replace the fallback.
+      if (isNaviFallback(response)) {
+        const { text } = await searchDuckDuckGo(message);
+        if (text) response = text;
+      }
     }
 
     return new Response(JSON.stringify({ response }), {
