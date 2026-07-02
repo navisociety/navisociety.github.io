@@ -39,6 +39,8 @@ const CENTER = CANVAS_SIZE / 2;
 const HOME_DIAM = 150;
 const HOME_RADIUS = HOME_DIAM / 2;
 const GOLDEN_ANGLE = 137.50776 * (Math.PI / 180);
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 3;
 
 async function callApi(url: string, body: Record<string, unknown>) {
   const res = await fetch(url, {
@@ -154,11 +156,18 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [homeBio, setHomeBio] = useState('');
   const [savingHome, setSavingHome] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
   const panState = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null);
   const initializedPan = useRef(false);
+  const panRef = useRef(pan);
+  const zoomRef = useRef(zoom);
+  panRef.current = pan;
+  zoomRef.current = zoom;
+  const activePointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinchState = useRef<{ dist: number; zoom: number; canvasX: number; canvasY: number } | null>(null);
 
   const loadItems = useCallback(async () => {
     if (!email) return;
@@ -204,15 +213,68 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     setPan({ x: el.clientWidth / 2 - CENTER, y: el.clientHeight / 2 - CENTER });
   }, [loading]);
 
-  // Single-finger drag pans the board. Home stays fixed on screen since it's
-  // rendered as an independent overlay, not part of this pannable layer.
+  // Obsidian-style zoom: the mouse wheel (and ctrl+wheel / trackpad pinch)
+  // zooms the board toward the cursor instead of scrolling. Attached natively
+  // (non-passive) because React's onWheel can't reliably preventDefault.
+  useEffect(() => {
+    if (loading) return;
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const z = zoomRef.current;
+      const p = panRef.current;
+      const nz = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))));
+      // Keep the canvas point under the cursor fixed while the scale changes.
+      setPan({ x: cx - ((cx - p.x) / z) * nz, y: cy - ((cy - p.y) / z) * nz });
+      setZoom(nz);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [loading]);
+
+  // Single-finger drag pans the board; a second finger turns the gesture into
+  // a pinch zoom anchored at the midpoint. Home stays fixed on screen since
+  // it's rendered as an independent overlay, not part of this pannable layer.
   const onViewportPointerDown = (e: React.PointerEvent) => {
-    if (dragState.current || panState.current) return;
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (activePointers.current.size === 2) {
+      panState.current = null;
+      const [a, b] = [...activePointers.current.values()];
+      const rect = e.currentTarget.getBoundingClientRect();
+      const midX = (a.x + b.x) / 2 - rect.left;
+      const midY = (a.y + b.y) / 2 - rect.top;
+      pinchState.current = {
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+        zoom,
+        canvasX: (midX - pan.x) / zoom,
+        canvasY: (midY - pan.y) / zoom,
+      };
+      return;
+    }
+    if (dragState.current || panState.current) return;
     panState.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
   };
 
   const onViewportPointerMove = (e: React.PointerEvent) => {
+    if (activePointers.current.has(e.pointerId)) {
+      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    const pinch = pinchState.current;
+    if (pinch && activePointers.current.size >= 2) {
+      const [a, b] = [...activePointers.current.values()];
+      const rect = e.currentTarget.getBoundingClientRect();
+      const midX = (a.x + b.x) / 2 - rect.left;
+      const midY = (a.y + b.y) / 2 - rect.top;
+      const nz = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinch.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist)));
+      setZoom(nz);
+      setPan({ x: midX - pinch.canvasX * nz, y: midY - pinch.canvasY * nz });
+      return;
+    }
     const drag = panState.current;
     if (drag && drag.pointerId === e.pointerId) {
       setPan({ x: drag.startPanX + (e.clientX - drag.startX), y: drag.startPanY + (e.clientY - drag.startY) });
@@ -220,6 +282,8 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   };
 
   const onViewportPointerUp = (e: React.PointerEvent) => {
+    activePointers.current.delete(e.pointerId);
+    if (activePointers.current.size < 2) pinchState.current = null;
     if (panState.current?.pointerId === e.pointerId) panState.current = null;
   };
 
@@ -310,8 +374,9 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     const dy = e.clientY - drag.startY;
     if (!drag.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     drag.moved = true;
-    const nx = clampX(drag.origX + dx);
-    const ny = clampY(drag.origY + dy);
+    // Pointer deltas are in screen pixels; convert to canvas units when zoomed.
+    const nx = clampX(drag.origX + dx / zoom);
+    const ny = clampY(drag.origY + dy / zoom);
     setItems(prev => prev.map(i => i.id === item.id ? { ...i, x: nx, y: ny } : i));
   };
 
@@ -357,7 +422,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
             <div
               style={{
                 position: 'absolute', left: 0, top: 0, width: CANVAS_SIZE, height: CANVAS_SIZE,
-                transform: `translate(${pan.x}px, ${pan.y}px)`, transformOrigin: '0 0',
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0',
               }}
             >
               {items.map((item, i) => {
