@@ -3,6 +3,7 @@ import EmailScreen from './EmailScreen';
 import CreateScreen from './CreateScreen';
 import VisionBoardScreen from './VisionBoardScreen';
 import ChoiceScreen from './ChoiceScreen';
+import ShareScreen from './ShareScreen';
 
 interface Props {
   onClose: () => void;
@@ -10,7 +11,11 @@ interface Props {
 }
 
 const ToolsScreen: FC<Props> = ({ onClose, session }) => {
-  const [sub, setSub] = useState<null | 'email' | 'create' | 'visionboard' | 'choice'>(null);
+  const [sub, setSub] = useState<null | 'email' | 'create' | 'visionboard' | 'choice' | 'share'>(null);
+
+  if (sub === 'share') {
+    return <ShareScreen onClose={() => setSub(null)} session={session} />;
+  }
 
   if (sub === 'choice') {
     return <ChoiceScreen onClose={() => setSub(null)} session={session} />;
@@ -69,6 +74,9 @@ const ToolsScreen: FC<Props> = ({ onClose, session }) => {
         </button>
         <button onClick={() => setSub('choice')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
           <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Choice</span>
+        </button>
+        <button onClick={() => setSub('share')} style={{ background: 'none', border: 'none', padding: '1.5rem 0', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid #111', width: '100%' }}>
+          <span style={{ color: '#fff', fontSize: '2.4rem', fontWeight: 700 }}>Share</span>
         </button>
       </div>
     </div>
