@@ -3213,7 +3213,9 @@ const KNOWLEDGE: KNode[] = [
       "I carry the complete King James Bible — Genesis to Revelation, every verse. Name a reference like Romans 8:28, or ask for a verse about anything: fear, love, strength. Try me.",
       "The full KJV is in me — 66 books, 31,102 verses. Give me a reference like Isaiah 40:31, or ask 'what does the Bible say about forgiveness' and I'll bring you the scripture itself.",
     ],
-    priority: 8,
+    // 9 outranks the Spiritual & Faith node (priority 8, bare 'bible' trigger)
+    // so capability questions land here.
+    priority: 9,
   },
   {
     triggers: ['books of the bible', 'how many books in the bible', 'how many verses in the bible', 'old testament', 'new testament', 'what is the bible'],
