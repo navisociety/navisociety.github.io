@@ -7,6 +7,7 @@ import {
   extractBibleTopic,
   formatVerses,
   answerFromBible,
+  requestedVerseCount,
 } from './bible.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -22,6 +23,28 @@ Deno.test('parses numbered books, longest alias wins', () => {
   eq(parseBibleReference('what does 1 john 1:9 say'), { bookNum: 62, book: '1 John', chapter: 1, verseStart: 9, verseEnd: 9 }, '1 john 1:9');
   eq(parseBibleReference('First Corinthians 13:4-7')!.book, '1 Corinthians', 'first corinthians');
   eq(parseBibleReference('First Corinthians 13:4-7')!.verseEnd, 7, 'range end');
+});
+
+Deno.test('parses spoken "verse N" forms as a single verse, not the chapter', () => {
+  eq(parseBibleReference('psalm 22 verse 28'), { bookNum: 19, book: 'Psalms', chapter: 22, verseStart: 28, verseEnd: 28 }, 'psalm 22 verse 28');
+  eq(parseBibleReference('give me psalm 22, verse 28 please'), { bookNum: 19, book: 'Psalms', chapter: 22, verseStart: 28, verseEnd: 28 }, 'comma before verse');
+  eq(parseBibleReference('john chapter 3 verse 16'), { bookNum: 43, book: 'John', chapter: 3, verseStart: 16, verseEnd: 16 }, 'chapter word');
+  eq(parseBibleReference('psalm 23 v 1'), { bookNum: 19, book: 'Psalms', chapter: 23, verseStart: 1, verseEnd: 1 }, 'v abbreviation');
+});
+
+Deno.test('parses spoken verse ranges', () => {
+  eq(parseBibleReference('psalm 22 verses 1-3'), { bookNum: 19, book: 'Psalms', chapter: 22, verseStart: 1, verseEnd: 3 }, 'verses 1-3');
+  eq(parseBibleReference('psalm 22 verse 1 to 3'), { bookNum: 19, book: 'Psalms', chapter: 22, verseStart: 1, verseEnd: 3 }, 'verse 1 to 3');
+  eq(parseBibleReference('john 3 verse 16 and 17'), { bookNum: 43, book: 'John', chapter: 3, verseStart: 16, verseEnd: 17 }, 'verse 16 and 17');
+  eq(parseBibleReference('psalm 22 verse 28 and 3 others'), { bookNum: 19, book: 'Psalms', chapter: 22, verseStart: 28, verseEnd: 28 }, 'backwards range keeps single verse');
+});
+
+Deno.test('counts requested verses for topic asks', () => {
+  eq(requestedVerseCount('give me a bible verse about hope'), 1, 'singular ask');
+  eq(requestedVerseCount('give me 3 verses about hope'), 3, 'digit count');
+  eq(requestedVerseCount('give me three verses about fear'), 3, 'word count');
+  eq(requestedVerseCount('verses about forgiveness'), 3, 'bare plural defaults to 3');
+  eq(requestedVerseCount('give me 50 verses about love'), 10, 'capped at 10');
 });
 
 Deno.test('parses song of solomon over songs', () => {

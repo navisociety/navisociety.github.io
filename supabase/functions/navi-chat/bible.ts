@@ -95,9 +95,14 @@ const ALIAS_PATTERN = [...ALIAS_TO_BOOK.keys()]
   .map(a => a.replace(/ /g, '\\s+'))
   .join('|');
 
-// "<book> <chapter>[:<verse>[-<verse>]]"
+// "<book> [chapter] <chapter>[<sep><verse>[-<verse>]]" where <sep> is ":",
+// ".", or spoken forms — "verse 28", "verses 1-3", "v 28", "vs 28" — so
+// "psalm 22 verse 28" resolves to 22:28 instead of the whole chapter.
+// Ranges accept "-", "–", "to", "through", and "and".
 const REF_RE = new RegExp(
-  `\\b(${ALIAS_PATTERN})\\.?\\s+(\\d{1,3})(?:\\s*[:.]\\s*(\\d{1,3})(?:\\s*[-–]\\s*(\\d{1,3}))?)?\\b`,
+  `\\b(${ALIAS_PATTERN})\\.?\\s+(?:chapter\\s+)?(\\d{1,3})` +
+  `(?:\\s*(?:[:.]|,?\\s+(?:verses?|vs?s?)\\.?)\\s*(\\d{1,3})` +
+  `(?:(?:\\s*[-–]\\s*|\\s+(?:to|through|and)\\s+)(\\d{1,3}))?)?\\b`,
   'i',
 );
 
@@ -124,8 +129,11 @@ export function parseBibleReference(message: string): BibleRef | null {
     return { bookNum: book.n, book: book.name, chapter };
   }
   const verseStart = parseInt(m[3], 10);
-  const verseEnd = m[4] ? parseInt(m[4], 10) : verseStart;
-  if (!verseStart || verseEnd < verseStart) return null;
+  if (!verseStart) return null;
+  // A backwards "range" ("verse 28 and 3 others") is noise, not a range —
+  // keep the single verse rather than dropping the whole reference.
+  let verseEnd = m[4] ? parseInt(m[4], 10) : verseStart;
+  if (verseEnd < verseStart) verseEnd = verseStart;
   return { bookNum: book.n, book: book.name, chapter, verseStart, verseEnd };
 }
 
@@ -154,6 +162,24 @@ export function extractBibleTopic(message: string): string | null {
 
 const MAX_VERSES = 12;
 
+const WORD_NUMS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+
+/**
+ * How many verses a topic ask wants: "3 verses about hope" → 3,
+ * "a verse about hope" → 1, bare plural "verses about hope" → 3.
+ */
+export function requestedVerseCount(message: string): number {
+  const m = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:bible\s+|kjv\s+|more\s+)?(?:verses|scriptures)\b/i.exec(message);
+  if (m) {
+    const n = WORD_NUMS[m[1].toLowerCase()] ?? parseInt(m[1], 10);
+    return Math.min(Math.max(n, 1), 10);
+  }
+  return /\b(?:verses|scriptures)\b/i.test(message) ? 3 : 1;
+}
+
 export async function fetchBibleVerses(ref: BibleRef): Promise<BibleVerse[]> {
   const filters = [`book_num=eq.${ref.bookNum}`, `chapter=eq.${ref.chapter}`];
   if (ref.verseStart) {
@@ -174,7 +200,7 @@ export async function fetchBibleVerses(ref: BibleRef): Promise<BibleVerse[]> {
   }
 }
 
-export async function searchBibleVerses(topic: string): Promise<BibleVerse[]> {
+export async function searchBibleVerses(topic: string, maxResults = 3): Promise<BibleVerse[]> {
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/navi_bible_search`, {
       method: 'POST',
@@ -183,7 +209,7 @@ export async function searchBibleVerses(topic: string): Promise<BibleVerse[]> {
         Authorization: `Bearer ${SERVICE_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ q: topic, max_results: 3 }),
+      body: JSON.stringify({ q: topic, max_results: maxResults }),
       signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) return [];
@@ -226,7 +252,7 @@ export async function answerFromBible(message: string): Promise<string | null> {
   }
   const topic = extractBibleTopic(message);
   if (topic) {
-    const verses = await searchBibleVerses(topic);
+    const verses = await searchBibleVerses(topic, requestedVerseCount(message));
     if (verses.length > 0) return formatTopicVerses(topic, verses);
   }
   return null;
