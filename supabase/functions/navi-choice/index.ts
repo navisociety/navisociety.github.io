@@ -1,5 +1,6 @@
-// navi-choice: Pros/cons decision-helper tool. Deterministic scoring + template
-// answer generation only — no AI/Anthropic calls (this is a free-tier NAVI feature).
+// navi-choice: Pros/cons decision-helper tool. Content-aware deterministic
+// scoring (theme keyword weighing) plus insights from the NAVI LLM via the
+// navi-chat edge function. No Anthropic calls (this is a free-tier NAVI feature).
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -36,13 +37,158 @@ export function wordCount(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
-export function scoreVerdict(prosCount: number, consCount: number): string {
-  const diff = prosCount - consCount;
+// Content-aware weighing: each pro/con starts at weight 1 and gains weight when
+// it touches a life theme that genuinely matters more than a neutral bullet
+// point, when it is written with emotional intensity, or when it is a
+// thought-out sentence rather than a two-word note. All deterministic keyword
+// matching — no AI calls.
+interface Theme {
+  name: string;
+  boost: number;
+  pattern: RegExp;
+  why: string;
+}
+
+const THEMES: Theme[] = [
+  {
+    name: 'health & peace of mind',
+    boost: 2,
+    pattern: /\b(health\w*|sick\w*|illness|doctor|sleep\w*|stress\w*|burnout|tired|exhaust\w*|anxiety|anxious|depress\w*|unsafe|safety|danger\w*|injur\w*|pain\w*|peace|rest)\b/i,
+    why: 'that touches your health and peace of mind, and nothing on the other side of a list buys those back once they are spent',
+  },
+  {
+    name: 'people & relationships',
+    boost: 2,
+    pattern: /\b(family|wife|husband|kids?|child\w*|marriage|marry\w*|friends?|friendship\w*|relationship\w*|parents?|mother|father|mom|dad|lonely|lonel\w*|community|together)\b/i,
+    why: 'that is about the people in your life, and they will still be there long after the practical details of this decision have faded',
+  },
+  {
+    name: 'faith & purpose',
+    boost: 2,
+    pattern: /\b(god|faith\w*|pray\w*|calling|purpose|ministry|church\w*|spirit\w*|mission|vision|kingdom)\b/i,
+    why: 'that touches your calling and purpose, which carries more weight than any list of practical conveniences ever could',
+  },
+  {
+    name: 'risk & reversibility',
+    boost: 1.5,
+    pattern: /\b(risk\w*|permanent\w*|irreversible|lose|losing|lost|quit\w*|fail\w*|regret\w*|stuck|trapped|forever)\b/i,
+    why: 'anything that is hard to reverse deserves extra caution, because a mistake there cannot simply be undone next week',
+  },
+  {
+    name: 'money & security',
+    boost: 1.5,
+    pattern: /\b(money|pay\w*|salar\w*|income|cost\w*|expens\w*|cheap\w*|debt\w*|afford\w*|rent|bills?|price\w*|financ\w*|profit\w*|savings?|security|stable|stability)\b/i,
+    why: 'money is a real factor and right to count, though most money problems can be worked around over time in a way deeper costs cannot',
+  },
+  {
+    name: 'growth & opportunity',
+    boost: 1.5,
+    pattern: /\b(grow\w*|learn\w*|opportunit\w*|career\w*|skills?|experience\w*|future|dreams?|potential|promot\w*|improve\w*)\b/i,
+    why: 'room to grow compounds quietly — its true value shows up months and years from now, not on day one',
+  },
+  {
+    name: 'time & energy',
+    boost: 1,
+    pattern: /\b(time|commute\w*|hours?|schedule\w*|busy|travel\w*|distance|far)\b/i,
+    why: 'your time and energy are the one budget that never refills, so a point about them is never a small point',
+  },
+];
+
+const DEFAULT_WHY =
+  'the fact that you took the trouble to write it down means it already carries real weight in your own mind';
+
+const INTENSITY = /\b(love\w*|hate\w*|terrified|scared|afraid|huge|major|massive|always|never|really|desperately|amazing|awful|badly)\b/i;
+
+export interface WeighedItem {
+  text: string;
+  weight: number;
+  theme: Theme | null;
+}
+
+export function weighItem(text: string): WeighedItem {
+  let weight = 1;
+  let theme: Theme | null = null;
+  for (const t of THEMES) {
+    if (t.pattern.test(text)) {
+      weight += t.boost;
+      if (!theme || t.boost > theme.boost) theme = t;
+    }
+  }
+  if (INTENSITY.test(text)) weight += 0.5;
+  if (wordCount(text) >= 6) weight += 0.5;
+  return { text, weight, theme };
+}
+
+export function weighList(items: string[]): number {
+  return items.reduce((sum, item) => sum + weighItem(item).weight, 0);
+}
+
+export function scoreVerdict(prosWeight: number, consWeight: number): string {
+  const diff = prosWeight - consWeight;
   if (diff >= 3) return 'Go for it';
-  if (diff >= 1) return 'Lean toward yes';
-  if (diff === 0) return "It's a genuine toss-up";
-  if (diff >= -2) return 'Lean toward no';
+  if (diff >= 0.75) return 'Lean toward yes';
+  if (diff > -0.75) return "It's a genuine toss-up";
+  if (diff > -3) return 'Lean toward no';
   return "Don't do it";
+}
+
+// ── NAVI LLM insights ─────────────────────────────────────────────────────────
+// Ask NAVI's own model (the navi-chat engine: knowledge nodes + fuzzy
+// retrieval) for a thought on the question and on the heaviest pro/con.
+// navi-chat is NAVI's own LLM — no Anthropic involved, so this stays
+// free-tier-safe. Generic fallbacks and counter-questions are filtered out;
+// when NAVI has nothing sharp, the deterministic answer stands on its own.
+const NAVI_CHAT_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/navi-chat`;
+
+const NAVI_FALLBACK_MARKERS = [
+  "I don't have a sharp answer",
+  "That's outside what I know",
+  "I'm not sure I have that one",
+  'Give me the context',
+  'Tell me more',
+  'tell me more',
+  'Say more about that',
+  'What made you bring that up',
+  'Go deeper on that',
+  'Where does that lead',
+  'I want to answer that properly',
+  "I don't have that fully mapped",
+  'at the edge of what I know',
+  "I'm still building in that area",
+];
+
+export function isUsableInsight(reply: string): boolean {
+  if (!reply || reply.length < 40) return false;
+  if (NAVI_FALLBACK_MARKERS.some(s => reply.includes(s))) return false;
+  if (reply.trim().endsWith('?')) return false; // counter-question, not an answer
+  return true;
+}
+
+export function trimInsight(reply: string, maxSentences = 3): string {
+  return reply.trim().split(/(?<=[.!?])\s+/).slice(0, maxSentences).join(' ');
+}
+
+async function askNavi(message: string): Promise<string> {
+  try {
+    const res = await fetch(NAVI_CHAT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: [] }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    const reply = typeof data?.response === 'string' ? data.response.trim() : '';
+    return isUsableInsight(reply) ? trimInsight(reply) : '';
+  } catch {
+    return '';
+  }
+}
+
+export interface NaviInsights {
+  question?: string;
+  crux?: string;
+  cruxText?: string;
 }
 
 // Fixed decision-making guidance, appended one sentence at a time until the
@@ -56,27 +202,60 @@ const FILLER = [
   'Notice how you feel reading the verdict above: if there is instant relief, that is usually a sign your gut already agreed before your head finished doing the math.',
 ];
 
-export function buildAnswer(question: string, prosList: string[], consList: string[]): string {
-  const verdict = scoreVerdict(prosList.length, consList.length);
-  const prosPhrase = prosList.length
-    ? prosList.map(p => `"${p}"`).join(', ')
-    : 'nothing specific written down as an upside';
-  const consPhrase = consList.length
-    ? consList.map(c => `"${c}"`).join(', ')
-    : 'nothing specific written down as a downside';
-  const balance = prosList.length === consList.length
-    ? 'is evenly split'
-    : prosList.length > consList.length
-      ? 'tips toward the reasons to go ahead'
-      : 'tips toward the reasons to hold back';
+export function buildAnswer(
+  question: string,
+  prosList: string[],
+  consList: string[],
+  insights: NaviInsights = {},
+): string {
+  const pros = prosList.map(weighItem);
+  const cons = consList.map(weighItem);
+  const prosWeight = pros.reduce((s, p) => s + p.weight, 0);
+  const consWeight = cons.reduce((s, c) => s + c.weight, 0);
+  const verdict = scoreVerdict(prosWeight, consWeight);
+
+  const heaviest = (items: WeighedItem[]) =>
+    items.reduce<WeighedItem | null>((best, i) => (!best || i.weight > best.weight ? i : best), null);
+  const topPro = heaviest(pros);
+  const topCon = heaviest(cons);
 
   const opening = `Best choice: ${verdict}.\n\n`;
 
-  const body =
-    `You're weighing this: ${question}. On the pro side, you listed ${prosList.length} point${prosList.length === 1 ? '' : 's'} — ${prosPhrase}. ` +
-    `On the con side, you listed ${consList.length} point${consList.length === 1 ? '' : 's'} — ${consPhrase}. ` +
-    `Comparing the two lists side by side, the balance of what you wrote ${balance}, which is why the verdict above leans the way it does. ` +
-    `A pros-and-cons list is really just a way of making your own reasoning visible to yourself — the goal is not to get a "perfect" score, it is to notice which side you already believe more strongly once it is laid out plainly in front of you.`;
+  let body = `You're weighing this: ${question}. `;
+  if (topPro) {
+    body += `Looking at what you actually wrote — not just how much of it — the strongest thing in favour is "${topPro.text}": ${topPro.theme ? topPro.theme.why : DEFAULT_WHY}. `;
+    const rest = pros.filter(p => p !== topPro);
+    if (rest.length) body += `Alongside it you also noted ${rest.map(p => `"${p.text}"`).join(', ')}. `;
+  } else {
+    body += `You didn't write down a single specific upside, which is itself telling — if the good side were obvious, it would have been easy to name. `;
+  }
+  if (topCon) {
+    body += `On the other side, the concern that carries the most real weight is "${topCon.text}": ${topCon.theme ? topCon.theme.why : DEFAULT_WHY}. `;
+    const rest = cons.filter(c => c !== topCon);
+    if (rest.length) body += `You also raised ${rest.map(c => `"${c.text}"`).join(', ')}. `;
+  } else {
+    body += `You didn't raise a single concrete downside, and when nothing specific stands in the way, hesitation is usually about the newness of the thing rather than a real cost. `;
+  }
+
+  const diff = prosWeight - consWeight;
+  const balance = Math.abs(diff) < 0.75
+    ? 'comes out almost perfectly even'
+    : diff > 0 ? 'tips toward going ahead' : 'tips toward holding back';
+  body += `Weighing the substance of each point rather than just counting them, what you wrote ${balance}, and that is why the verdict reads the way it does.`;
+
+  const countDiff = prosList.length - consList.length;
+  if ((countDiff > 0 && diff <= -0.75) || (countDiff < 0 && diff >= 0.75)) {
+    body += ` Notice something important: by raw count your list leans the other way, but a pros-and-cons list isn't a vote — what you wrote on the ${diff > 0 ? 'pro' : 'con'} side simply matters more than the number of entries opposite it.`;
+  }
+
+  const insightParts: string[] = [];
+  if (insights.question) {
+    insightParts.push(`Here's my own thought on the heart of your question: ${insights.question}`);
+  }
+  if (insights.crux && insights.cruxText) {
+    insightParts.push(`And on "${insights.cruxText}" specifically: ${insights.crux}`);
+  }
+  const insightBlock = insightParts.length ? `\n\n${insightParts.join(' ')}` : '';
 
   const reasoningBase =
     `When a decision is close, the number of reasons on each side is a decent starting signal but not the whole story — one deeply important pro or con can outweigh three minor ones, so it is worth re-reading your own list and asking which single item matters most, rather than just counting entries.`;
@@ -84,11 +263,11 @@ export function buildAnswer(question: string, prosList: string[], consList: stri
   const closing = `\n\nSo, to answer clearly: the best choice is ${verdict}.`;
 
   let fillerUsed = 0;
-  let answer = `${opening}${body}\n\n${reasoningBase}${closing}`;
+  let answer = `${opening}${body}${insightBlock}\n\n${reasoningBase}${closing}`;
   while (wordCount(answer) < MIN_ANSWER_WORDS) {
     fillerUsed++;
     const reasoning = `${reasoningBase} ${FILLER.slice(0, fillerUsed).join(' ')}`;
-    answer = `${opening}${body}\n\n${reasoning}${closing}`;
+    answer = `${opening}${body}${insightBlock}\n\n${reasoning}${closing}`;
   }
 
   return answer;
@@ -122,8 +301,24 @@ serve(async (req) => {
       const consRaw = String(body.cons ?? '');
       const prosList = parseList(prosRaw);
       const consList = parseList(consRaw);
-      const verdict = scoreVerdict(prosList.length, consList.length);
-      const answer = buildAnswer(question, prosList, consList);
+      const verdict = scoreVerdict(weighList(prosList), weighList(consList));
+
+      // Ask the NAVI LLM (navi-chat) about the question itself and about the
+      // single heaviest pro/con — the crux of the decision. Both calls are
+      // best-effort: if navi-chat is slow or has nothing sharp, the
+      // deterministic answer stands on its own.
+      const crux = [...prosList, ...consList]
+        .map(weighItem)
+        .reduce<WeighedItem | null>((best, i) => (!best || i.weight > best.weight ? i : best), null);
+      const [qInsight, cruxInsight] = await Promise.all([
+        askNavi(question),
+        crux ? askNavi(crux.text) : Promise.resolve(''),
+      ]);
+      const answer = buildAnswer(question, prosList, consList, {
+        question: qInsight || undefined,
+        crux: cruxInsight || undefined,
+        cruxText: crux?.text,
+      });
 
       const { data, error } = await sb.from('navi_choices').insert({
         user_email: email, question, pros: prosRaw, cons: consRaw, verdict, answer,
