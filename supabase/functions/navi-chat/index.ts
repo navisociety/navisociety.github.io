@@ -2,9 +2,11 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v13 (329 nodes + RAG + full KJV Bible via bible.ts +
+// Deno port of NAVI Model v14 (329 nodes + RAG + full KJV Bible via bible.ts +
 // deterministic skills via skills.ts: math, unit conversion, date/time,
 // follow-up blending, anti-repetition), kept in sync with src/lib/navi-model.ts.
+// v14: full-length silent web augmentation (webLookup) + low-confidence factual
+// boost via navi.lastTopScore — web answers are delivered as NAVI's own words.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -347,7 +349,7 @@ interface KNode {
 const KNOWLEDGE: KNode[] = [
   // ── Crisis (highest priority) ────────────────────────────────────────────
   {
-    triggers: ['kill myself', 'want to die', 'wanna die', 'end it all', 'end my life', 'take my own life', 'suicide', 'suicidal', 'hurt myself', 'harm myself', 'self harm', 'no reason to live', 'no point in living', 'cant go on', 'cant do this anymore', 'better off dead', 'dont want to be here', 'dont want to live'],
+    triggers: ['kill myself', 'want to die', 'wanna die', 'end it all', 'end my life', 'take my own life', 'suicide', 'suicidal', 'hurt myself', 'harm myself', 'self harm', 'no reason to live', 'no point in living', 'cant go on', 'cant do this anymore', 'better off dead', 'dont want to be here', 'dont want to live', 'killing myself', 'ending my life', 'ending it all', 'end my own life', 'taking my own life', 'not worth living', 'rather be dead', 'unalive myself'],
     responses: [
       "I hear you — and I'm taking that seriously. You matter. Please reach out right now: South Africa SADAG 0800 456 789, International befrienders.org. I'm also here. Tell me what's happening.",
       "That level of pain is real and it deserves real support. Please call SADAG: 0800 456 789 (SA) or text a crisis line near you. I'm here too — talk to me.",
@@ -3359,6 +3361,10 @@ class NaviModel {
   private attention: NaviAttentionLayer;
   private turnCount = 0;
   private greetCount = 0;
+  /** Trigger confidence of the most recent infer() call: the primary node's
+   *  keyword score. 1 = a trigger fully matched (or deterministic answer);
+   *  below 1 = only partial word overlap; 0 = no node matched at all. */
+  lastTopScore = 1;
 
   // Topics worth remembering across a conversation, keyed by detectable theme.
   private static readonly MEMORY_TOPICS: { key: string; words: string[]; label: string }[] = [
@@ -3421,13 +3427,13 @@ class NaviModel {
     return timed + pick;
   }
 
-  private retrieveTopK(message: string, queryEmb: number[], k = 3): Array<{ node: KNode; score: number }> {
+  private retrieveTopK(message: string, queryEmb: number[], k = 3): Array<{ node: KNode; score: number; kw: number }> {
     const msgWords = new Set(
       message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
     );
     // Apostrophes are stripped so "can't go on" matches the trigger 'cant go on'.
     const msgLower = message.toLowerCase().replace(/['‘’]/g, '');
-    const scored: Array<{ node: KNode; score: number }> = [];
+    const scored: Array<{ node: KNode; score: number; kw: number }> = [];
     for (const node of KNOWLEDGE) {
       let kwScore = 0;
       for (const trigger of node.triggers) {
@@ -3447,7 +3453,7 @@ class NaviModel {
       if ((node.priority ?? 5) >= 50 && kwScore < 1) continue;
       const embSim = cosine(queryEmb, node.embedding!);
       const score = (kwScore * 0.75 + embSim * 0.25) * (node.priority ?? 5) / 5;
-      if (score > 0.04) scored.push({ node, score });
+      if (score > 0.04) scored.push({ node, score, kw: kwScore });
     }
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, k);
@@ -3500,6 +3506,7 @@ class NaviModel {
 
   infer(message: string, history: NaviMessage[]): string {
     this.turnCount++;
+    this.lastTopScore = 1; // deterministic paths (block/skill) are fully confident
 
     const block = this.constitutionCheck(message);
     if (block) return block;
@@ -3522,6 +3529,7 @@ class NaviModel {
 
     const queryEmb = this.encode(retrievalText);
     const results = this.retrieveTopK(retrievalText, queryEmb);
+    this.lastTopScore = results.length ? results[0].kw : 0;
 
     if (results.length > 0) {
       const [primary, secondary] = results;
@@ -3628,20 +3636,73 @@ function corsHeaders(origin: string | null): Record<string, string> {
   };
 }
 
-async function searchDuckDuckGo(query: string): Promise<{ text: string; url: string }> {
+// ── Web lookup (silent knowledge augmentation) ───────────────────────────────
+// The looked-up text is always delivered as NAVI's own words. No engine name,
+// source, or URL is ever surfaced to the user.
+
+const WEB_MAX_CHARS = 1100;
+
+function cleanWebText(raw: string): string {
+  let text = raw
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return ' '; } })
+    .replace(/&#(\d+);/g, (_, d) => { try { return String.fromCodePoint(Number(d)); } catch { return ' '; } })
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&\w+;/g, ' ')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\bduck\s?duck\s?go\b/gi, '')
+    .replace(/\(\s*\/[^)]*\)/g, '')                 // pronunciation guides: (/ ˈaɪfəl / EYE-fəl; …)
+    .replace(/\[[^\]]*[^\x00-\x7F][^\]]*\]/g, '')   // bracketed IPA like [tuʁ ɛfɛl]
+    .replace(/ⓘ/g, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Deliver the full answer, but always finish on a complete sentence.
+  if (text.length > WEB_MAX_CHARS) {
+    const cut = text.slice(0, WEB_MAX_CHARS);
+    const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+    text = end > 200 ? cut.slice(0, end + 1) : cut.trimEnd() + '…';
+  }
+  return text;
+}
+
+async function webLookup(query: string): Promise<string> {
+  // 1) Instant-answer API — direct answers, definitions, encyclopedic abstracts.
   try {
     const res = await fetch(
       `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-      { signal: AbortSignal.timeout(3000) }
+      { signal: AbortSignal.timeout(3500) }
     );
-    if (!res.ok) return { text: '', url: '' };
-    const data = await res.json();
-    if (data.Answer) return { text: String(data.Answer).slice(0, 300), url: data.AnswerType || '' };
-    if (data.AbstractText) return { text: String(data.AbstractText).slice(0, 300), url: data.AbstractURL || '' };
-    if (data.RelatedTopics?.[0]?.Text) return { text: String(data.RelatedTopics[0].Text).slice(0, 200), url: data.RelatedTopics[0].FirstURL || '' };
-    return { text: '', url: '' };
+    if (res.ok) {
+      const data = await res.json();
+      const direct = [data.Answer, data.AbstractText, data.Definition]
+        .map((v: unknown) => (typeof v === 'string' ? v.trim() : ''))
+        .find((v: string) => v.length > 0);
+      if (direct) return cleanWebText(direct);
+      const related = data.RelatedTopics?.find((t: { Text?: string }) => t?.Text)?.Text;
+      if (related) return cleanWebText(String(related));
+    }
+  } catch { /* fall through to results page */ }
+
+  // 2) Results-page snippets — covers the many queries the instant-answer API skips.
+  try {
+    const res = await fetch(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      { signal: AbortSignal.timeout(4500), headers: { 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!res.ok) return '';
+    const html = await res.text();
+    const snippets: string[] = [];
+    const re = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null && snippets.length < 2) {
+      const s = cleanWebText(m[1]);
+      if (s.length > 40 && !snippets.includes(s)) snippets.push(s);
+    }
+    return cleanWebText(snippets.join(' '));
   } catch {
-    return { text: '', url: '' };
+    return '';
   }
 }
 
@@ -3663,6 +3724,15 @@ function isNaviFallback(response: string): boolean {
     "Let me come at that straight: tell me more",
     "I want to answer that properly",
   ].some(s => response.includes(s));
+}
+
+// Factual lookup questions ("who is…", "how tall is…") that only weakly match
+// a knowledge node deserve a real web answer, not a mismatched node response.
+// Brand/identity and scripture questions are never overridden.
+function looksFactual(message: string): boolean {
+  const t = message.trim().toLowerCase();
+  if (/\b(navi|navisociety|prophet|dian|bible|scripture|verse)\b/.test(t)) return false;
+  return /^(who|what|when|where|which|how (many|much|far|tall|old|long|big|fast|heavy|deep|wide))\b/.test(t);
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -3706,10 +3776,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
     let response = await answerFromBible(message) ?? "";
     if (!response) {
       response = navi.infer(message, [...history, { role: "user", content: message }]);
-      // Only use search when NAVI has no knowledge match — silently replace the fallback.
-      if (isNaviFallback(response)) {
-        const { text } = await searchDuckDuckGo(message);
-        if (text) response = text;
+      // Silent web augmentation: fires when NAVI hit a generic fallback, or when
+      // a factual question only weakly matched a node. The web answer replaces
+      // the response invisibly; if the lookup finds nothing, NAVI's own reply stands.
+      if (isNaviFallback(response) || (looksFactual(message) && navi.lastTopScore < 1)) {
+        const web = await webLookup(message);
+        if (web) response = web;
       }
     }
 

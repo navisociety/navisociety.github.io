@@ -386,7 +386,7 @@ interface KNode {
 const KNOWLEDGE: KNode[] = [
   // ── Crisis (highest priority) ────────────────────────────────────────────
   {
-    triggers: ['kill myself', 'want to die', 'wanna die', 'end it all', 'end my life', 'take my own life', 'suicide', 'suicidal', 'hurt myself', 'harm myself', 'self harm', 'no reason to live', 'no point in living', 'cant go on', 'cant do this anymore', 'better off dead', 'dont want to be here', 'dont want to live'],
+    triggers: ['kill myself', 'want to die', 'wanna die', 'end it all', 'end my life', 'take my own life', 'suicide', 'suicidal', 'hurt myself', 'harm myself', 'self harm', 'no reason to live', 'no point in living', 'cant go on', 'cant do this anymore', 'better off dead', 'dont want to be here', 'dont want to live', 'killing myself', 'ending my life', 'ending it all', 'end my own life', 'taking my own life', 'not worth living', 'rather be dead', 'unalive myself'],
     responses: [
       "I hear you — and I'm taking that seriously. You matter. Please reach out right now: South Africa SADAG 0800 456 789, International befrienders.org. I'm also here. Tell me what's happening.",
       "That level of pain is real and it deserves real support. Please call SADAG: 0800 456 789 (SA) or text a crisis line near you. I'm here too — talk to me.",
@@ -3600,6 +3600,10 @@ class NaviModel {
   private attention: NaviAttentionLayer;
   private turnCount = 0;
   private greetCount = 0;
+  /** Trigger confidence of the most recent infer() call: the primary node's
+   *  keyword score. 1 = a trigger fully matched (or deterministic answer);
+   *  below 1 = only partial word overlap; 0 = no node matched at all. */
+  lastTopScore = 1;
 
   // Topics worth remembering across a conversation, keyed by detectable theme.
   private static readonly MEMORY_TOPICS: { key: string; words: string[]; label: string }[] = [
@@ -3663,13 +3667,13 @@ class NaviModel {
   }
 
   // RAG: retrieve top-k knowledge nodes scored by hybrid keyword + embedding similarity.
-  private retrieveTopK(message: string, queryEmb: number[], k = 3): Array<{ node: KNode; score: number }> {
+  private retrieveTopK(message: string, queryEmb: number[], k = 3): Array<{ node: KNode; score: number; kw: number }> {
     const msgWords = new Set(
       message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
     );
     // Apostrophes are stripped so "can't go on" matches the trigger 'cant go on'.
     const msgLower = message.toLowerCase().replace(/['‘’]/g, '');
-    const scored: Array<{ node: KNode; score: number }> = [];
+    const scored: Array<{ node: KNode; score: number; kw: number }> = [];
     for (const node of KNOWLEDGE) {
       let kwScore = 0;
       for (const trigger of node.triggers) {
@@ -3689,7 +3693,7 @@ class NaviModel {
       if ((node.priority ?? 5) >= 50 && kwScore < 1) continue;
       const embSim = cosine(queryEmb, node.embedding!);
       const score = (kwScore * 0.75 + embSim * 0.25) * (node.priority ?? 5) / 5;
-      if (score > 0.04) scored.push({ node, score });
+      if (score > 0.04) scored.push({ node, score, kw: kwScore });
     }
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, k);
@@ -3743,6 +3747,7 @@ class NaviModel {
 
   infer(message: string, history: NaviMessage[]): string {
     this.turnCount++;
+    this.lastTopScore = 1; // deterministic paths (block/skill) are fully confident
 
     const block = this.constitutionCheck(message);
     if (block) return block;
@@ -3765,6 +3770,7 @@ class NaviModel {
 
     const queryEmb = this.encode(retrievalText);
     const results = this.retrieveTopK(retrievalText, queryEmb);
+    this.lastTopScore = results.length ? results[0].kw : 0;
 
     if (results.length > 0) {
       const [primary, secondary] = results;
