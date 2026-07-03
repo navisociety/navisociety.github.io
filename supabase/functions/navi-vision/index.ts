@@ -24,8 +24,13 @@ const sb = createClient(
 );
 
 const BUCKET = 'vision-boards';
-const COLS = 'id,user_email,kind,content,position,x,y,created_at';
+const COLS = 'id,user_email,kind,content,name,notes,shape,size,position,x,y,created_at';
 const MAX_ITEMS = 60;
+const SHAPES = ['circle', 'square'];
+
+function cleanShape(v: unknown): string {
+  return SHAPES.includes(v as string) ? (v as string) : 'square';
+}
 
 const ALLOWED_IMAGE_TYPES: Record<string, string> = {
   'image/png': 'png',
@@ -84,6 +89,9 @@ serve(async (req) => {
     if (action === 'add-text') {
       const text = (body.text ?? '').trim();
       if (!text) return Response.json({ error: 'text required' }, { status: 400, headers: c });
+      const name = String(body.name ?? '').trim().slice(0, 60) || text.slice(0, 60);
+      const notes = String(body.notes ?? '').trim().slice(0, 280);
+      const shape = cleanShape(body.shape);
 
       const { count } = await sb.from('navi_vision_items').select('id', { count: 'exact', head: true }).eq('user_email', email);
       if ((count ?? 0) >= MAX_ITEMS) return Response.json({ error: 'Vision board is full (max 60 items). Delete something first.' }, { status: 400, headers: c });
@@ -91,7 +99,7 @@ serve(async (req) => {
       const { data: maxRow } = await sb.from('navi_vision_items').select('position').eq('user_email', email).order('position', { ascending: false }).limit(1).single();
       const nextPos = (maxRow?.position ?? -1) + 1;
 
-      const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'text', content: text.slice(0, 280), position: nextPos }).select(COLS).single();
+      const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'text', content: text.slice(0, 280), name, notes, shape, position: nextPos }).select(COLS).single();
       if (error) throw new Error(error.message);
       return Response.json({ item: data }, { headers: c });
     }
@@ -100,6 +108,9 @@ serve(async (req) => {
       const dataBase64 = body.dataBase64 as string | undefined;
       const contentType = body.contentType as string | undefined;
       const imageUrl = (body.imageUrl ?? '').trim();
+      const name = String(body.name ?? '').trim().slice(0, 60);
+      const notes = String(body.notes ?? '').trim().slice(0, 280);
+      const shape = cleanShape(body.shape);
 
       const { count } = await sb.from('navi_vision_items').select('id', { count: 'exact', head: true }).eq('user_email', email);
       if ((count ?? 0) >= MAX_ITEMS) return Response.json({ error: 'Vision board is full (max 60 items). Delete something first.' }, { status: 400, headers: c });
@@ -134,7 +145,37 @@ serve(async (req) => {
         return Response.json({ error: 'Provide an image file or an image URL.' }, { status: 400, headers: c });
       }
 
-      const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'image', content: finalUrl, position: nextPos }).select(COLS).single();
+      const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'image', content: finalUrl, name, notes, shape, position: nextPos }).select(COLS).single();
+      if (error) throw new Error(error.message);
+      return Response.json({ item: data }, { headers: c });
+    }
+
+    if (action === 'update-item') {
+      if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: c });
+      const name = String(body.name ?? '').trim().slice(0, 60);
+      if (!name) return Response.json({ error: 'name required' }, { status: 400, headers: c });
+      const notes = String(body.notes ?? '').trim().slice(0, 280);
+      const shape = cleanShape(body.shape);
+
+      const { data: row } = await sb.from('navi_vision_items').select('kind').eq('id', id).eq('user_email', email).single();
+      if (!row) return Response.json({ error: 'item not found' }, { status: 404, headers: c });
+
+      // Text tiles display their content, so keep it in sync with the name.
+      const patch: Record<string, unknown> = { name, notes, shape };
+      if (row.kind === 'text') patch.content = name;
+
+      const { data, error } = await sb.from('navi_vision_items').update(patch).eq('id', id).eq('user_email', email).select(COLS).single();
+      if (error) throw new Error(error.message);
+      return Response.json({ item: data }, { headers: c });
+    }
+
+    if (action === 'resize-item') {
+      if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: c });
+      const size = Number(body.size);
+      if (!Number.isFinite(size)) return Response.json({ error: 'size must be a number' }, { status: 400, headers: c });
+      const clamped = Math.max(0.5, Math.min(2.5, size));
+
+      const { data, error } = await sb.from('navi_vision_items').update({ size: clamped }).eq('id', id).eq('user_email', email).select(COLS).single();
       if (error) throw new Error(error.message);
       return Response.json({ item: data }, { headers: c });
     }
