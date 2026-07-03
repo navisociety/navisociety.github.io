@@ -194,16 +194,20 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [zoom, setZoom] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
-  const resizeState = useRef<{ id: string; startX: number; startY: number; startSize: number; moved: boolean } | null>(null);
+  const dragState = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; latestX: number; latestY: number; moved: boolean } | null>(null);
+  const resizeState = useRef<{ id: string; startX: number; startY: number; startSize: number; latestSize: number; moved: boolean } | null>(null);
+  // Tiles are moved/scaled by direct DOM writes during a gesture (one rAF per
+  // frame) and committed to React state once on release — going through
+  // setItems on every pointer move re-renders the whole board and lags.
+  const tileRefs = useRef(new Map<string, HTMLDivElement>());
+  const dragFrame = useRef(0);
+  const resizeFrame = useRef(0);
   const panState = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null);
   const initializedPan = useRef(false);
   const panRef = useRef(pan);
   const zoomRef = useRef(zoom);
-  const itemsRef = useRef(items);
   panRef.current = pan;
   zoomRef.current = zoom;
-  itemsRef.current = items;
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchState = useRef<{ dist: number; zoom: number; canvasX: number; canvasY: number } | null>(null);
 
@@ -430,7 +434,7 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     e.stopPropagation();
     const pos = positions.get(item.id)!;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragState.current = { id: item.id, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y, moved: false };
+    dragState.current = { id: item.id, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y, latestX: pos.x, latestY: pos.y, moved: false };
   };
 
   const onTilePointerMove = (e: React.PointerEvent, item: VisionItem) => {
@@ -442,20 +446,33 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     drag.moved = true;
     const tilePx = TILE * (item.size ?? 1);
     // Pointer deltas are in screen pixels; convert to canvas units when zoomed.
-    const nx = clampPos(drag.origX + dx / zoom, tilePx);
-    const ny = clampPos(drag.origY + dy / zoom, tilePx);
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, x: nx, y: ny } : i));
+    drag.latestX = clampPos(drag.origX + dx / zoom, tilePx);
+    drag.latestY = clampPos(drag.origY + dy / zoom, tilePx);
+    if (!dragFrame.current) {
+      dragFrame.current = requestAnimationFrame(() => {
+        dragFrame.current = 0;
+        const live = dragState.current;
+        if (!live || live.id !== drag.id) return;
+        const el = tileRefs.current.get(live.id);
+        if (!el) return;
+        el.style.left = `${live.latestX}px`;
+        el.style.top = `${live.latestY}px`;
+      });
+    }
   };
 
   const onTilePointerUp = async (e: React.PointerEvent, item: VisionItem) => {
     const drag = dragState.current;
     dragState.current = null;
+    if (dragFrame.current) { cancelAnimationFrame(dragFrame.current); dragFrame.current = 0; }
     if (!drag || drag.id !== item.id) return;
     // A press that never turned into a drag is a tap: open the project editor.
     if (!drag.moved) { openEdit(item); return; }
-    const final = positions.get(item.id);
-    const nx = final?.x ?? drag.origX;
-    const ny = final?.y ?? drag.origY;
+    const el = tileRefs.current.get(item.id);
+    if (el) { el.style.left = `${drag.latestX}px`; el.style.top = `${drag.latestY}px`; }
+    const nx = drag.latestX;
+    const ny = drag.latestY;
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, x: nx, y: ny } : i));
     try {
       await callApi(VISION_API, { action: 'move-item', email, id: item.id, x: nx, y: ny });
     } catch (err) { setError(String(err)); }
@@ -463,14 +480,21 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
 
   // A cancelled gesture (browser took over the pointer) must not count as a tap.
   const onTilePointerCancel = () => {
+    const drag = dragState.current;
     dragState.current = null;
+    if (dragFrame.current) { cancelAnimationFrame(dragFrame.current); dragFrame.current = 0; }
+    if (drag) {
+      // Put the tile back where the gesture started; nothing was saved.
+      const el = tileRefs.current.get(drag.id);
+      if (el) { el.style.left = `${drag.origX}px`; el.style.top = `${drag.origY}px`; }
+    }
   };
 
   const onResizePointerDown = (e: React.PointerEvent, item: VisionItem) => {
     if (e.button !== undefined && e.button !== 0) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    resizeState.current = { id: item.id, startX: e.clientX, startY: e.clientY, startSize: item.size ?? 1, moved: false };
+    resizeState.current = { id: item.id, startX: e.clientX, startY: e.clientY, startSize: item.size ?? 1, latestSize: item.size ?? 1, moved: false };
   };
 
   const onResizePointerMove = (e: React.PointerEvent, item: VisionItem) => {
@@ -481,15 +505,32 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     if (!rs.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
     rs.moved = true;
     const delta = Math.max(dx, dy);
-    const nextSize = Math.max(MIN_SIZE, Math.min(MAX_SIZE, rs.startSize + delta / TILE));
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, size: nextSize } : i));
+    rs.latestSize = Math.max(MIN_SIZE, Math.min(MAX_SIZE, rs.startSize + delta / TILE));
+    if (!resizeFrame.current) {
+      resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = 0;
+        const live = resizeState.current;
+        if (!live || live.id !== rs.id) return;
+        const el = tileRefs.current.get(live.id);
+        if (!el) return;
+        // Compositor-only scale while the finger is down; the real width and
+        // height are applied once, on release.
+        el.style.transformOrigin = '0 0';
+        el.style.transform = `scale(${live.latestSize / live.startSize})`;
+      });
+    }
   };
 
   const onResizePointerUp = async (e: React.PointerEvent, item: VisionItem) => {
     const rs = resizeState.current;
     resizeState.current = null;
-    if (!rs || rs.id !== item.id || !rs.moved) return;
-    const finalSize = itemsRef.current.find(i => i.id === item.id)?.size ?? rs.startSize;
+    if (resizeFrame.current) { cancelAnimationFrame(resizeFrame.current); resizeFrame.current = 0; }
+    if (!rs || rs.id !== item.id) return;
+    const el = tileRefs.current.get(item.id);
+    if (el) el.style.transform = '';
+    if (!rs.moved) return;
+    const finalSize = rs.latestSize;
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, size: finalSize } : i));
     try {
       await callApi(VISION_API, { action: 'resize-item', email, id: item.id, size: finalSize });
     } catch (err) { setError(String(err)); }
@@ -536,6 +577,10 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                 return (
                   <div
                     key={item.id}
+                    ref={el => {
+                      if (el) tileRefs.current.set(item.id, el);
+                      else tileRefs.current.delete(item.id);
+                    }}
                     onPointerDown={e => onTilePointerDown(e, item)}
                     onPointerMove={e => onTilePointerMove(e, item)}
                     onPointerUp={e => onTilePointerUp(e, item)}
