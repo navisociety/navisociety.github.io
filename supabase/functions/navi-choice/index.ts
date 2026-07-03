@@ -319,9 +319,12 @@ serve(async (req) => {
         askNavi(question),
         crux ? askNavi(crux.text) : Promise.resolve(''),
       ]);
+      // The question and the crux can hit the same knowledge node — don't say
+      // the same thing twice.
+      const cruxFresh = cruxInsight && cruxInsight !== qInsight ? cruxInsight : '';
       const answer = buildAnswer(question, prosList, consList, {
         question: qInsight || undefined,
-        crux: cruxInsight || undefined,
+        crux: cruxFresh || undefined,
         cruxText: crux?.text,
       });
 
