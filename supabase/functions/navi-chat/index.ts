@@ -2,8 +2,9 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v12 (313 nodes + RAG + full KJV Bible via bible.ts),
-// kept in sync with src/lib/navi-model.ts.
+// Deno port of NAVI Model v13 (329 nodes + RAG + full KJV Bible via bible.ts +
+// deterministic skills via skills.ts: math, unit conversion, date/time,
+// follow-up blending, anti-repetition), kept in sync with src/lib/navi-model.ts.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -11,6 +12,7 @@
 //   OPTIONS preflight handled for CORS. verify_jwt: false; gated by CORS origin.
 
 import { answerFromBible } from './bible.ts';
+import { trySkills, isFollowUp } from './skills.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -224,6 +226,13 @@ class NaviTokenizer {
       'visualisation','visualise','champion','comeback','choke','defeat','breakup','dating','situationship','unconditional','generational','parenting',
       // v12: bible
       'bible','scripture','scriptures','testament','psalm','psalms','proverbs','gospel','gospels','jesus','christ','holy','kjv','king','james','genesis','revelation','moses','apostle','disciples','commandment','commandments',
+      // v13: practical life (jobs, money admin, study), SA civics, geography, safety
+      'cv','resume','interview','interviews','vacancy','apply','application','applications','employer','recruiter','internship','learnership','graduate','experience','references',
+      'scam','scams','scammed','phishing','fraud','otp','password','passwords','privacy','hacked','verify','suspicious',
+      'nsfas','bursary','bursaries','tvet','varsity','matric','exam','exams','revision','memorise','memorize','flashcards','syllabus',
+      'sars','tax','efiling','uif','retrenched','retrenchment','cipc','registration','licence','license','learners',
+      'province','provinces','capital','capitals','pretoria','bloemfontein','johannesburg','gauteng','continent','continents','ocean','river','desert','everest','nile','sahara',
+      'aid','ambulance','choking','cpr','bleeding','wound','emergency','convert','kilometers','miles','celsius','fahrenheit','calculate',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -338,7 +347,7 @@ interface KNode {
 const KNOWLEDGE: KNode[] = [
   // ── Crisis (highest priority) ────────────────────────────────────────────
   {
-    triggers: ['kill myself', 'want to die', 'end it all', 'suicide', 'hurt myself', 'self harm', 'no reason to live', 'cant go on', 'better off dead', 'dont want to be here'],
+    triggers: ['kill myself', 'want to die', 'wanna die', 'end it all', 'end my life', 'take my own life', 'suicide', 'suicidal', 'hurt myself', 'harm myself', 'self harm', 'no reason to live', 'no point in living', 'cant go on', 'cant do this anymore', 'better off dead', 'dont want to be here', 'dont want to live'],
     responses: [
       "I hear you — and I'm taking that seriously. You matter. Please reach out right now: South Africa SADAG 0800 456 789, International befrienders.org. I'm also here. Tell me what's happening.",
       "That level of pain is real and it deserves real support. Please call SADAG: 0800 456 789 (SA) or text a crisis line near you. I'm here too — talk to me.",
@@ -366,7 +375,7 @@ const KNOWLEDGE: KNode[] = [
     priority: 9,
   },
   {
-    triggers: ['are you free', 'does this cost', 'pay', 'subscription', 'price', 'free forever', 'no cost', 'do i need account', 'do i need api key'],
+    triggers: ['are you free', 'does this cost', 'pay for navi', 'pay for this', 'do i have to pay', 'pay to use', 'subscription', 'price', 'free forever', 'no cost', 'do i need account', 'do i need api key'],
     responses: [
       "Free forever. No account. No API key. No payment. That's the whole point — NAVI belongs to everyone.",
       "Zero cost. Always. Prophet Dian built NAVI to be free to everyone, no strings attached.",
@@ -3197,6 +3206,149 @@ const KNOWLEDGE: KNode[] = [
     priority: 7,
   },
 
+  // ── v13: Practical life — jobs, admin, study, safety, SA civics ───────────
+  {
+    triggers: ['cv', 'write a cv', 'my cv', 'resume', 'curriculum vitae', 'cv tips', 'cover letter', 'update my cv'],
+    responses: [
+      "A CV that gets read: one to two pages, contact details at the top, then a 3-line summary of who you are, then work or project experience with results ('grew the page to 2,000 followers'), then education and skills. No photo needed, no long paragraphs. Tailor the summary to each job — recruiters spend under 30 seconds on it. What role are you going for?",
+      "Keep it tight: name and contacts, short professional summary, experience newest-first with what you achieved (numbers beat duties), education, skills, two references. If you have no formal experience yet, list real things — school leadership, volunteering, side hustles, projects. That counts. Want help shaping the summary?",
+      "The biggest CV mistake is listing duties instead of results. 'Responsible for sales' says nothing; 'brought in 15 new customers in 3 months' gets a call. One page if you're early career, clean layout, zero spelling errors. And write a short cover letter for each application — most people don't, so you stand out. What's the job?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['job interview', 'interview tips', 'prepare for an interview', 'interview questions', 'interview tomorrow', 'interview nerves', 'my interview'],
+    responses: [
+      "Interview prep is three moves: know the company (their work, their language, why you fit), prepare five stories from your life that show skill, struggle, and growth, and prepare two questions to ask them — that signals you're serious. Nerves are normal; they mean you care. Slow your first answer down and the rest follows. When is it?",
+      "Most interview questions are one question in disguise: 'can we trust you to do this job?' Answer with specifics — a time you solved something, a time you failed and fixed it, why this role and not any role. Dress one level smarter than their daily wear, arrive early, and send a short thank-you message after. You've got this. What role is it?",
+      "Use the STAR shape for every answer: Situation, Task, Action, Result. It keeps you concrete instead of rambling. And when they ask 'any questions for us?' — never say no. Ask what a great first six months looks like. That one question changes how they remember you. What are you most worried they'll ask?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['find a job', 'get a job', 'looking for work', 'job hunting', 'apply for jobs', 'no work experience', 'cant find a job', 'job applications'],
+    responses: [
+      "Job hunting is a numbers game plus a network game. Numbers: apply properly to a few good-fit jobs, not carelessly to fifty. Network: tell every person you know what you're looking for — most jobs are filled through people, not portals. And while you search, build proof of skill: a project, a portfolio, volunteering. Proof beats promises. What kind of work are you after?",
+      "No experience is a solvable problem: create your own. Volunteer, do a learnership, help a small business with their social media, build something and show it. Employers hire evidence. Also register on the real channels — company career pages, LinkedIn, government's ESSA portal — and treat the search itself like a job: set hours for it daily. What's your field?",
+      "Rejection in a job hunt isn't a verdict on you — it's noise in a crowded market. Control what you can: a sharp CV, a tailored application, following up after a week, and one new skill you're building while you wait. The person who's still standing in month three usually wins. How long have you been searching?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['scam', 'scams', 'scammed', 'phishing', 'is this a scam', 'scam message', 'fake sms', 'online fraud', 'ponzi', 'pyramid scheme', 'money doubling'],
+    responses: [
+      "Scam red flags: urgency ('act now or lose it'), requests for your OTP or PIN, prizes for competitions you never entered, jobs that ask YOU to pay first, and links that almost look like a real bank's. No bank, no SARS, no legit company will ever ask for your OTP — that code is the key to your money. If a message triggered this question, don't click anything. What did it say?",
+      "The rule that beats most scams: real opportunities don't need pressure. Anyone rushing you, asking for upfront 'release fees', or promising guaranteed returns — walk away. Money-doubling schemes and stokvel 'investments' with recruitment rewards are pyramid schemes; they pay early joiners with late joiners' money until they collapse. Rather verify directly: phone the company on its official number, not the number in the message.",
+      "If you've already been scammed: don't be ashamed — these operations are professional and they catch sharp people daily. Act fast: call your bank's fraud line immediately, change your passwords, and report it at your nearest police station and on the SAFPS (South African Fraud Prevention Service). Speed matters more than embarrassment. What happened?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['strong password', 'password safety', 'online privacy', 'protect my data', 'account safety', 'two factor', '2fa', 'account hacked', 'my account was hacked', 'personal information online'],
+    responses: [
+      "Three habits protect most people: long unique passwords (a phrase like 'BlueTaxi!RainsInJune' beats 'P@ssw0rd'), a different password for email and banking than everything else, and two-factor authentication switched on everywhere it exists. Your email is the master key — if that's secure, attackers can't reset the rest. Want to lock down a specific account?",
+      "If an account's been hacked: change the password from a device you trust, turn on two-factor, sign out all sessions, and check the recovery email and phone number haven't been swapped. Then change any other account using the same password — that's how one breach becomes five. And tell your contacts, because hacked accounts get used to scam friends next.",
+      "Privacy basics that actually matter: share your location and daily routine sparingly, keep your ID number off social media, don't do banking on public Wi-Fi, and assume anything posted is permanent. You don't need paranoia — just the same care you'd take locking your front door. What raised this?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['nsfas', 'bursary', 'bursaries', 'student funding', 'apply to university', 'university application', 'varsity applications', 'tvet college', 'cant afford university', 'study funding'],
+    responses: [
+      "NSFAS funds university and TVET college for South African students from households earning under the threshold (around R350,000 a year) — it covers tuition plus allowances for food, accommodation, and learning materials. Apply online at nsfas.org.za with your ID, and your parents' or guardian's proof of income. Applications open around September for the next year — apply early, and apply to institutions at the same time; they're separate processes. What do you want to study?",
+      "Funding routes worth chasing: NSFAS first, then bursaries from companies in your field (they often come with job placement), university merit awards, and the Funza Lushaka bursary if you'll teach. Apply to more than one — treat bursary applications like a campaign, not a lottery ticket. And keep certified copies of your ID and results ready; every application wants them. Which field are you aiming at?",
+      "If you can't afford varsity this year, the door isn't closed. TVET colleges are NSFAS-funded and lead to real trades. Some universities allow late applications or a gap year without penalty. And a year of working plus a distance-learning course through UNISA can move you forward while you reapply. The goal is momentum, not a perfect route. What's your situation?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['matric', 'grade 12', 'matric exams', 'matric results', 'failed matric', 'rewrite matric', 'pass matric'],
+    responses: [
+      "Matric is a marathon with a sprint at the end. From now: past papers are gold — do them under timed conditions, mark them honestly, and study your mistakes, not your highlights. Pick your battle subjects (the ones between you and the pass you need) and give them daily minutes. Sleep the night before an exam beats cramming through it, every time. Which subjects are the fight?",
+      "Your matric results open doors but they don't define your ceiling — and they're also more fixable than people think. Didn't get what you needed? You can rewrite specific subjects through the Second Chance programme, upgrade marks at accredited colleges, or take a supplementary exam if you qualify. One year of focused rewriting has changed thousands of stories. What did you get and what do you need?",
+      "Failing matric feels like the end of the world at 18 and looks like a detour at 28. Register to rewrite — it's free through the Department of Basic Education's Second Chance programme — and use the year deliberately: part-time work, a skill, structure. The shame will pass. The comeback is what people remember. Are you okay?",
+    ],
+    priority: 9, // outranks the failure node (8), which also matches "failed"
+  },
+  {
+    triggers: ['how to study', 'study tips', 'study better', 'remember what i study', 'memorise', 'memorize', 'exam prep', 'preparing for exams', 'cramming', 'focus while studying', 'study schedule'],
+    responses: [
+      "The science of studying is clear: test yourself instead of rereading. Close the book, write what you remember, then check — that struggle is where memory forms. Space it out (three 40-minute sessions across three days beat one 3-hour night), and explain the topic out loud like you're teaching a friend. If you can teach it, you know it. What are you studying for?",
+      "Rereading and highlighting feel productive but store almost nothing. What works: flashcards you quiz yourself with, past papers under exam conditions, and the 'blank page' method — write everything you know on a topic from memory, then fill the gaps in red. Study your red ink. Also: phone in another room. Not on silent. Another room. When's the exam?",
+      "A study session that works: 25–40 minutes of full focus, 5-minute break, repeat. Start each session by recalling yesterday's material before touching today's — that's spaced repetition, the strongest memory tool we know. And protect sleep like it's part of the syllabus, because it is: memory consolidates while you sleep. What's the subject giving you trouble?",
+    ],
+    priority: 8, // outranks the learning node (7), which also matches "study"
+  },
+  {
+    triggers: ['sars', 'tax return', 'efiling', 'pay tax', 'tax number', 'provisional tax', 'tax season', 'do i pay tax'],
+    responses: [
+      "SARS basics: if you earn above the annual tax threshold, you pay income tax — usually deducted by your employer as PAYE. You still need a tax number (free, via SARS eFiling at sarsefiling.co.za or the SARS MobiApp) and, in most cases, to file a return in tax season (roughly July to October). Many salaried people now get auto-assessed — check it rather than ignoring it, because errors favour no one. Are you employed, freelancing, or running a business?",
+      "Freelancers and hustlers: SARS still counts your income even without a payslip. Register for eFiling, keep records of what you earn and what you spend to earn it (data, transport, equipment — these can be deductions), and if you earn above the threshold you may need to file as a provisional taxpayer twice a year. Sorting this early is cheap; sorting it after penalties is not. Want the first step?",
+      "If SARS feels scary, remember: they mostly want you registered and filing, and their processes are genuinely doable online now. Get your tax number on eFiling, file in season, keep your IRP5 from your employer, and never pay anyone who WhatsApps you claiming to 'release your refund' — that's a scam, always. What's your tax situation?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['uif', 'unemployment insurance', 'retrenched', 'retrenchment', 'claim uif', 'lost my job'],
+    responses: [
+      "If you've been retrenched or your contract ended, UIF exists exactly for this. You can claim if you and your employer contributed (that 1% on your payslip). Apply online at ufiling.labour.gov.za or at a Department of Labour centre with your ID, proof of employment ending, and bank details. Benefits are a portion of your salary, paid for a period based on how long you contributed — claim within 12 months of losing the job. Are you in that situation now?",
+      "Retrenchment is a financial hit and an identity hit — handle both. Money side: claim UIF immediately, check if you're owed severance (usually one week's pay per year of service), and cut fixed costs early, not late. Identity side: you lost a job, not your value. Structure your weeks, tell your network you're available, and treat finding work as the work. What happened?",
+      "UIF also covers more than retrenchment — maternity leave, illness that stops you working, and reduced work time. If contributions were deducted from your pay, you have the right to claim; if an employer deducted but never paid it over, report them to the Department of Labour. Keep your payslips as proof. What do you need to claim for?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['register a business', 'register my business', 'register a company', 'cipc', 'sole proprietor', 'business registration', 'make my business legal', 'start a company legally'],
+    responses: [
+      "Making your hustle official in South Africa: register a private company (Pty Ltd) through CIPC — easiest via bizportal.gov.za, it costs a few hundred rand or less and you can get a business bank account, tax registration, and even a domain in the same flow. Or stay a sole proprietor: no registration needed, you just trade in your own name and declare the income to SARS. Pty protects your personal assets; sole prop is simpler. How big is the operation?",
+      "The honest sequence: first get customers, then get registered. A registration doesn't make a business — revenue does. But once money is real, register with CIPC (bizportal.gov.za is the official one-stop), open a separate bank account so business and personal money never mix, and get your SARS side clean from day one. Mixing money is how small businesses die in year two. What are you building?",
+      "Company vs sole prop, short version: sole proprietor means you and the business are legally the same — simple, but debts are yours personally. A Pty Ltd is a separate legal person — more admin (annual CIPC returns, separate tax), but it protects you and looks serious to clients and funders. Many start sole prop and convert when contracts grow. Where are you in the journey?",
+    ],
+    priority: 9, // outranks the startup node (8), which also matches "my business"
+  },
+  {
+    triggers: ['learners licence', 'learners license', 'drivers licence', 'drivers license', 'k53', 'driving test', 'learners test', 'get my licence', 'get my license'],
+    responses: [
+      "The route to driving legally: learner's licence first (from 17 for a car) — book at a licensing centre (DLTC) or online via natis.gov.za, study the K53 rules of the road, road signs, and vehicle controls, and pass the written test. Then practise with a licensed driver, book the driver's test, and pass the K53 yard and road test. Book early — waiting lists are real. Are you starting with the learner's?",
+      "K53 test truths: most people fail on the small disciplines, not the driving — forgetting observation checks (mirror checks the examiner must SEE you do), rolling slightly on an incline, or touching a boundary line in the yard. Drill the pre-trip inspection and exaggerate your head movements on the day. Nervous is fine; unprepared is the problem. When's your test?",
+      "Two warnings on licences: only book through official channels (natis.gov.za or the DLTC itself) — anyone offering a licence 'without the test' for cash is selling you a crime that follows you for life. And if the test centre's booking dates are far out, check nearby towns; smaller centres often have shorter queues. Which stage are you at?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['first aid', 'someone is choking', 'choking', 'cpr', 'treat a burn', 'burn wound', 'snake bite', 'bleeding badly', 'emergency number', 'medical emergency'],
+    responses: [
+      "Emergency numbers in South Africa: 10177 for an ambulance, 112 from any cell phone (works even without airtime), 10111 for police. If someone's unresponsive and not breathing normally: call for help first, then hard, fast chest compressions in the centre of the chest — about two per second, don't stop until help arrives. If this is happening right now, call 112 before reading further. What's the situation?",
+      "Quick first aid that saves lives: Choking — five firm back blows between the shoulder blades, then five abdominal thrusts (hands just above the navel, pull sharply in and up), repeat. Burns — cool running water for 20 minutes, no ice, no butter, no toothpaste, cover loosely with clean cloth. Heavy bleeding — press hard directly on the wound with cloth and don't let go. Then get medical help. Is someone hurt right now?",
+      "Snake bite: keep the person still and calm (movement spreads venom), remove rings and tight items near the bite, do NOT cut, suck, or apply a tourniquet, and get to a hospital fast — call 10177 or 112. Try to remember the snake's appearance but don't chase it. Most bites are survivable with quick medical care. Is this happening now?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['capital of south africa', 'south africas capital', 'three capitals', 'what is the capital of sa', 'capital city of south africa'],
+    responses: [
+      "South Africa famously has three capitals: Pretoria is the executive capital (where the President and government administration sit), Cape Town is the legislative capital (home of Parliament), and Bloemfontein is the judicial capital (Supreme Court of Appeal). Johannesburg, the biggest city, isn't a capital at all — it's the economic engine. Trick question handled. What sparked it?",
+      "Three, not one: Pretoria (executive), Cape Town (legislative), Bloemfontein (judicial). It was a compromise struck when the Union of South Africa formed in 1910, so no single city took all the power. And Joburg — the largest city — holds the money instead of the government. Want more SA facts?",
+    ],
+    priority: 8, // outranks the Africa node (7), which also matches "south africa"
+  },
+  {
+    triggers: ['provinces of south africa', 'nine provinces', 'how many provinces', 'south african provinces', 'name the provinces'],
+    responses: [
+      "South Africa has nine provinces: Gauteng (smallest but richest — Joburg and Pretoria), Western Cape (Cape Town), KwaZulu-Natal (Durban), Eastern Cape, Northern Cape (largest and emptiest), Free State, Mpumalanga, Limpopo, and North West. Each has its own premier and legislature. Which one are you in?",
+      "Nine: Gauteng, Western Cape, Eastern Cape, Northern Cape, KwaZulu-Natal, Free State, Mpumalanga, Limpopo, North West. They were drawn up in 1994, replacing the old four-province system. Gauteng holds over a quarter of the population on the smallest land; the Northern Cape is the reverse — massive land, fewest people. Need detail on any of them?",
+    ],
+    priority: 8, // outranks the Africa node (7), which also matches "south africa"
+  },
+  {
+    triggers: ['how many continents', 'seven continents', 'name the continents', 'longest river', 'highest mountain', 'largest ocean', 'largest country', 'smallest country', 'biggest desert', 'deepest ocean'],
+    responses: [
+      "The big geography answers: seven continents — Africa, Asia, Europe, North America, South America, Australia, Antarctica. Longest river: the Nile (about 6,650 km, though some measurements crown the Amazon). Highest mountain: Everest, 8,849 m. Largest and deepest ocean: the Pacific. Largest country: Russia. Smallest: Vatican City. Which one were you after?",
+      "Earth's record holders: Asia is the largest continent, the Pacific the largest ocean, Russia the largest country and Vatican City the smallest. Everest stands highest at 8,849 m; the Nile runs longest at roughly 6,650 km. And the biggest hot desert is the Sahara — though technically Antarctica is the largest desert of all, because deserts are defined by dryness, not heat. What made you curious?",
+    ],
+    priority: 5,
+  },
+
 ];
 
 // ── NaviModel ─────────────────────────────────────────────────────────────────
@@ -3273,7 +3425,8 @@ class NaviModel {
     const msgWords = new Set(
       message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
     );
-    const msgLower = message.toLowerCase();
+    // Apostrophes are stripped so "can't go on" matches the trigger 'cant go on'.
+    const msgLower = message.toLowerCase().replace(/['‘’]/g, '');
     const scored: Array<{ node: KNode; score: number }> = [];
     for (const node of KNOWLEDGE) {
       let kwScore = 0;
@@ -3287,6 +3440,11 @@ class NaviModel {
         const s = matches / Math.max(tw.length, 1);
         if (s > kwScore) kwScore = s;
       }
+      // v13: crisis-tier nodes (priority >= 50) fire ONLY on an exact phrase
+      // match. Partial word overlap ('want', 'cant') multiplied by the huge
+      // priority used to send ordinary messages ("i want to start a business")
+      // to the crisis hotline response.
+      if ((node.priority ?? 5) >= 50 && kwScore < 1) continue;
       const embSim = cosine(queryEmb, node.embedding!);
       const score = (kwScore * 0.75 + embSim * 0.25) * (node.priority ?? 5) / 5;
       if (score > 0.04) scored.push({ node, score });
@@ -3346,14 +3504,37 @@ class NaviModel {
     const block = this.constitutionCheck(message);
     if (block) return block;
 
-    const queryEmb = this.encode(message);
-    const results = this.retrieveTopK(message, queryEmb);
+    // v13: deterministic skills — math, unit conversion, date/time — answer
+    // exactly-known questions before any retrieval guessing.
+    const skill = trySkills(message);
+    if (skill) return skill;
+
+    // v13: follow-up blending — a bare "why?" / "tell me more" is retrieved
+    // in the context of the previous user message, not on its own.
+    let retrievalText = message;
+    if (isFollowUp(message)) {
+      const users = history.filter(m => m.role === 'user');
+      // history may already include the current message as its last entry
+      if (users.length && users[users.length - 1].content === message) users.pop();
+      const prev = users[users.length - 1];
+      if (prev) retrievalText = `${prev.content} ${message}`;
+    }
+
+    const queryEmb = this.encode(retrievalText);
+    const results = this.retrieveTopK(retrievalText, queryEmb);
 
     if (results.length > 0) {
       const [primary, secondary] = results;
 
       // RAG step 1: pick the response variant most semantically aligned with this query.
       let response = this.selectBestVariant(primary.node.responses, queryEmb);
+
+      // v13: anti-repetition — never say the exact same thing twice in a row.
+      const lastNavi = [...history].reverse().find(m => m.role === 'assistant')?.content;
+      if (lastNavi && response === lastNavi && primary.node.responses.length > 1) {
+        const alternatives = primary.node.responses.filter(r => r !== lastNavi);
+        response = this.selectBestVariant(alternatives, queryEmb);
+      }
 
       // RAG step 2: cross-domain augmentation — when a second node is strongly
       // relevant and the primary match isn't already a clear single-topic hit,

@@ -9,6 +9,7 @@ import {
   answerFromBible,
   requestedVerseCount,
 } from './bible.ts';
+import { tryMath, tryUnits, tryDateTime, isFollowUp } from './skills.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -85,6 +86,60 @@ Deno.test('formats a single verse inline and a chapter as numbered lines', () =>
     { book: 'Psalms', chapter: 117, verse: 2, text: 'For his merciful kindness is great…' },
   ]);
   eq(out.startsWith('Psalms 117 (KJV)\n1. '), true, 'chapter header + numbering');
+});
+
+// ── v13 deterministic skills ─────────────────────────────────────────────────
+
+Deno.test('math: evaluates arithmetic asks', () => {
+  eq(tryMath('what is 25 * 17'), '25 × 17 = 425', 'multiplication');
+  eq(tryMath('what is 144 divided by 12?'), '144 ÷ 12 = 12', 'divided by words');
+  eq(tryMath('calculate 2 to the power of 10'), '2 ^ 10 = 1,024', 'powers');
+  eq(tryMath('square root of 81'), '√ 81 = 9', 'sqrt');
+  eq(tryMath('what is 15% of 200'), '15% of 200 is 30.', 'percent of');
+  eq(tryMath('3 plus 4 times 2'), '3 + 4 × 2 = 11', 'precedence');
+  eq(tryMath('(3 + 4) * 2'), '(3 + 4) × 2 = 14', 'parens');
+});
+
+Deno.test('math: rejects non-math messages', () => {
+  eq(tryMath('john 3:16'), null, 'bible ref has a colon');
+  eq(tryMath('i have 2 dogs and 3 cats'), null, 'sentence with numbers');
+  eq(tryMath('call 0800 456 789'), null, 'phone number, no operator');
+  eq(tryMath('what is love'), null, 'no digits');
+  eq(tryMath('i quit my job 3 months ago'), null, 'letters remain');
+});
+
+Deno.test('math: divide by zero gets a friendly answer', () => {
+  const out = tryMath('what is 5 / 0');
+  if (!out || !out.includes('dividing by zero')) throw new Error(`got: ${out}`);
+});
+
+Deno.test('units: converts between compatible units', () => {
+  eq(tryUnits('convert 10 km to miles'), '10 km ≈ 6.2137 miles.', 'km to miles');
+  eq(tryUnits('100 celsius to fahrenheit'), '100 °C = 212 °F.', 'c to f');
+  eq(tryUnits('how much is 5 kg in pounds'), '5 kg ≈ 11.0231 pounds.', 'kg to lbs');
+});
+
+Deno.test('units: rejects mismatched or missing units', () => {
+  eq(tryUnits('convert 10 km to kg'), null, 'length to mass');
+  eq(tryUnits('i ran 5 km in 30 minutes'), null, 'not a conversion ask');
+  eq(tryUnits('how are you today'), null, 'plain chat');
+});
+
+Deno.test('datetime: answers date/time asks and ignores plain chat', () => {
+  const day = tryDateTime('what day is it today?');
+  if (!day || !day.startsWith('Today is ')) throw new Error(`got: ${day}`);
+  const yr = tryDateTime('what year is it');
+  if (!yr || !/\d{4}/.test(yr)) throw new Error(`got: ${yr}`);
+  eq(tryDateTime('tell me about the day my father died'), null, 'not a date ask');
+  eq(tryDateTime('what a time to be alive'), null, 'idiom, not a time ask');
+});
+
+Deno.test('follow-ups: short continuations detected, real questions not', () => {
+  eq(isFollowUp('why?'), true, 'why');
+  eq(isFollowUp('tell me more'), true, 'tell me more');
+  eq(isFollowUp('like what?'), true, 'like what');
+  eq(isFollowUp('why do people dream'), false, 'full question');
+  eq(isFollowUp('ok'), false, 'plain ack is not a follow-up');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────
