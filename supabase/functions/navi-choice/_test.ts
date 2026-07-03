@@ -12,8 +12,7 @@ import {
   buildAnswer,
   weighItem,
   weighList,
-  isUsableInsight,
-  trimInsight,
+  usableInsight,
 } from './index.ts';
 
 Deno.test('parseList', () => {
@@ -77,18 +76,20 @@ Deno.test('NAVI LLM insights are woven into the answer when provided', () => {
   assert(wordCount(answer) >= 200, 'answer with insights must still clear the word minimum');
 });
 
-Deno.test('isUsableInsight filters fallbacks and counter-questions', () => {
-  assert(isUsableInsight('Discipline is choosing what you want most over what you want now, and it compounds.'));
-  assertEquals(isUsableInsight(''), false);
-  assertEquals(isUsableInsight('short'), false);
-  assertEquals(isUsableInsight("I don't have a sharp answer for that yet — but I'm growing. Tell me more."), false);
-  assertEquals(isUsableInsight("I hear something real in that. What's actually going on?"), false);
-});
-
-Deno.test('trimInsight keeps at most three sentences', () => {
-  const long = 'One. Two. Three. Four. Five.';
-  assertEquals(trimInsight(long), 'One. Two. Three.');
-  assertEquals(trimInsight('Just one sentence.'), 'Just one sentence.');
+Deno.test('usableInsight filters fallbacks, strips trailing questions, trims to 3 sentences', () => {
+  const keep = 'Discipline is choosing what you want most over what you want now, and it compounds.';
+  assertEquals(usableInsight(keep), keep);
+  // NAVI's conversational closing question is stripped, the substance kept.
+  assertEquals(
+    usableInsight("Purpose usually reveals itself through what you keep returning to — even when it's hard. What keeps pulling you back?"),
+    "Purpose usually reveals itself through what you keep returning to — even when it's hard.",
+  );
+  assertEquals(usableInsight(''), '');
+  assertEquals(usableInsight('short'), '');
+  assertEquals(usableInsight("I don't have a sharp answer for that yet — but I'm growing. Tell me more."), '');
+  // Pure counter-question with no substance left after stripping.
+  assertEquals(usableInsight("What's actually going on?"), '');
+  assertEquals(usableInsight('One is enough. Two is plenty. Three is the cap. Four is dropped. Five too.'), 'One is enough. Two is plenty. Three is the cap.');
 });
 
 Deno.test('buildAnswer always meets the 200-word minimum and states the verdict first and last', () => {

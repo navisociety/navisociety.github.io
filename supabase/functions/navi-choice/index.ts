@@ -157,15 +157,20 @@ const NAVI_FALLBACK_MARKERS = [
   "I'm still building in that area",
 ];
 
-export function isUsableInsight(reply: string): boolean {
-  if (!reply || reply.length < 40) return false;
-  if (NAVI_FALLBACK_MARKERS.some(s => reply.includes(s))) return false;
-  if (reply.trim().endsWith('?')) return false; // counter-question, not an answer
-  return true;
-}
-
-export function trimInsight(reply: string, maxSentences = 3): string {
-  return reply.trim().split(/(?<=[.!?])\s+/).slice(0, maxSentences).join(' ');
+// Turn a navi-chat reply into an insight usable inside a written verdict:
+// drop fallback replies entirely, strip NAVI's trailing conversational
+// questions (this answer is a document, not a chat turn), and keep at most
+// three substantive sentences. Returns '' when nothing usable remains.
+export function usableInsight(reply: string): string {
+  const trimmed = (reply ?? '').trim();
+  if (!trimmed) return '';
+  if (NAVI_FALLBACK_MARKERS.some(s => trimmed.includes(s))) return '';
+  const sentences = trimmed.split(/(?<=[.!?])\s+/);
+  while (sentences.length && sentences[sentences.length - 1].trim().endsWith('?')) {
+    sentences.pop();
+  }
+  const insight = sentences.slice(0, 3).join(' ').trim();
+  return insight.length >= 40 ? insight : '';
 }
 
 async function askNavi(message: string): Promise<string> {
@@ -178,8 +183,8 @@ async function askNavi(message: string): Promise<string> {
     });
     if (!res.ok) return '';
     const data = await res.json();
-    const reply = typeof data?.response === 'string' ? data.response.trim() : '';
-    return isUsableInsight(reply) ? trimInsight(reply) : '';
+    const reply = typeof data?.response === 'string' ? data.response : '';
+    return usableInsight(reply);
   } catch {
     return '';
   }
