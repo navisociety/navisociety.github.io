@@ -1,6 +1,8 @@
 // supabase/functions/navi-chat/skills.ts
 //
-// NAVI deterministic skills (v13): arithmetic, unit conversion, date/time.
+// NAVI deterministic skills (v13, extended in v15): arithmetic, percentages
+// (discounts/tips), list stats, date countdowns, unit conversion, date/time,
+// coin/dice/random numbers.
 // These answer exactly-known questions before knowledge retrieval, so NAVI
 // never guesses at math or the calendar. Mirrored inline in
 // src/lib/navi-model.ts (client copy uses the device's local time zone;
@@ -191,9 +193,130 @@ export function tryDateTime(message: string, tz: string | undefined = NAVI_TZ): 
   return null;
 }
 
+// ── v15 skills: percentages, list stats, date countdowns, randomness ─────────
+
+/** Discounts, increases, and tips: "20% off 500", "add 15% to 200", "10% tip on 340". */
+export function tryPercentOps(message: string): string | null {
+  const t = message.toLowerCase().replace(/,/g, '');
+
+  const off = t.match(/(\d+(?:\.\d+)?)\s*(?:%|percent)\s+(?:off|discount(?:\s+on)?)\s+(?:of\s+)?(?:r|\$|€|£)?\s*(\d+(?:\.\d+)?)/);
+  if (off) {
+    const p = parseFloat(off[1]), n = parseFloat(off[2]);
+    const save = (p / 100) * n;
+    return `${fmtNum(p)}% off ${fmtNum(n)} leaves ${fmtNum(n - save)} — you save ${fmtNum(save)}.`;
+  }
+
+  const add = t.match(/add\s+(\d+(?:\.\d+)?)\s*(?:%|percent)\s+to\s+(?:r|\$|€|£)?\s*(\d+(?:\.\d+)?)/);
+  if (add) {
+    const p = parseFloat(add[1]), n = parseFloat(add[2]);
+    return `${fmtNum(n)} plus ${fmtNum(p)}% is ${fmtNum(n + (p / 100) * n)}.`;
+  }
+
+  const tip = t.match(/(\d+(?:\.\d+)?)\s*(?:%|percent)\s+tip\s+on\s+(?:r|\$|€|£)?\s*(\d+(?:\.\d+)?)/);
+  if (tip) {
+    const p = parseFloat(tip[1]), n = parseFloat(tip[2]);
+    const amt = (p / 100) * n;
+    return `A ${fmtNum(p)}% tip on ${fmtNum(n)} is ${fmtNum(amt)}, so ${fmtNum(n + amt)} total.`;
+  }
+
+  return null;
+}
+
+/** Average / sum / max / min over a spoken list: "average of 4, 8 and 15". */
+export function tryListStats(message: string): string | null {
+  const m = message.toLowerCase().match(/\b(average|mean|sum|total|max(?:imum)?|min(?:imum)?)\s+of\s+([\d\s.,]+(?:and\s+[\d.]+)?)/);
+  if (!m) return null;
+  const nums = (m[2].match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+  if (nums.length < 2) return null;
+  const parts = nums.map(fmtNum);
+  const list = `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  const op = m[1];
+  if (op === 'average' || op === 'mean') {
+    const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
+    return `The average of ${list} is ${fmtNum(Number(avg.toFixed(6)))}.`;
+  }
+  if (op === 'sum' || op === 'total') {
+    return `The sum of ${list} is ${fmtNum(nums.reduce((a, b) => a + b, 0))}.`;
+  }
+  if (op.startsWith('max')) return `The biggest of ${list} is ${fmtNum(Math.max(...nums))}.`;
+  return `The smallest of ${list} is ${fmtNum(Math.min(...nums))}.`;
+}
+
+const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+
+const NAMED_DAYS: Array<{ rx: RegExp; month: number; day: number; label: string }> = [
+  { rx: /\bchristmas\b/, month: 12, day: 25, label: 'Christmas' },
+  { rx: /\bnew year'?s? eve\b/, month: 12, day: 31, label: "New Year's Eve" },
+  { rx: /\bnew year\b/, month: 1, day: 1, label: "New Year's Day" },
+  { rx: /\bvalentine'?s?(?:\s+day)?\b/, month: 2, day: 14, label: "Valentine's Day" },
+  { rx: /\bhalloween\b/, month: 10, day: 31, label: 'Halloween' },
+];
+
+function todayInTZ(tz: string): { y: number; m: number; d: number } {
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()).split('-').map(Number);
+  return { y, m, d };
+}
+
+/** "How many days until Christmas / 25 December / March 3" — counted in SA time. */
+export function tryDaysUntil(message: string, tz: string = NAVI_TZ): string | null {
+  const t = message.toLowerCase();
+  if (!/\b(days?\s+(?:until|till|to|left\s+(?:until|till|before))|how\s+long\s+(?:until|till)|countdown\s+to)\b/.test(t)) return null;
+
+  let month = 0, day = 0, label = '';
+  for (const nd of NAMED_DAYS) {
+    if (nd.rx.test(t)) { month = nd.month; day = nd.day; label = nd.label; break; }
+  }
+  if (!month) {
+    const dm = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)\b/) ??
+               t.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
+    if (!dm) return null;
+    const [a, b] = [dm[1], dm[2]];
+    if (/^\d/.test(a)) { day = parseInt(a, 10); month = MONTHS.indexOf(b) + 1; }
+    else { month = MONTHS.indexOf(a) + 1; day = parseInt(b, 10); }
+    if (day < 1 || day > 31) return null;
+    label = `${day} ${MONTHS[month - 1].charAt(0).toUpperCase()}${MONTHS[month - 1].slice(1)}`;
+  }
+
+  const now = todayInTZ(tz);
+  let target = Date.UTC(now.y, month - 1, day);
+  const today = Date.UTC(now.y, now.m - 1, now.d);
+  if (target < today) target = Date.UTC(now.y + 1, month - 1, day);
+  const days = Math.round((target - today) / 86400000);
+  if (days === 0) return `${label} is today. Enjoy it.`;
+  if (days === 1) return `${label} is tomorrow — one day away.`;
+  return `${label} is ${days.toLocaleString('en-US')} days away.`;
+}
+
+/** Coin flips, dice rolls, and random numbers. */
+export function tryRandom(message: string): string | null {
+  const t = message.toLowerCase();
+
+  if (/\b(flip|toss)\s+a\s+coin\b|\bcoin\s+(flip|toss)\b|\bheads\s+or\s+tails\b/.test(t)) {
+    return Math.random() < 0.5 ? 'Heads.' : 'Tails.';
+  }
+
+  const dice = t.match(/\broll\s+(?:a|the|one)?\s*(?:d(\d{1,3})|die|dice)\b/);
+  if (dice) {
+    const sides = dice[1] ? Math.max(2, Math.min(1000, parseInt(dice[1], 10))) : 6;
+    const roll = 1 + Math.floor(Math.random() * sides);
+    return `You rolled a ${roll}${dice[1] ? ` (d${sides})` : ''}.`;
+  }
+
+  const range = t.match(/\b(?:pick|choose|give\s+me|random)\s+(?:a\s+)?(?:random\s+)?number\s+(?:between|from)\s+(-?\d+)\s+(?:and|to)\s+(-?\d+)\b/);
+  if (range) {
+    const a = parseInt(range[1], 10), b = parseInt(range[2], 10);
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    const n = lo + Math.floor(Math.random() * (hi - lo + 1));
+    return `${n.toLocaleString('en-US')}. That's my pick between ${fmtNum(lo)} and ${fmtNum(hi)}.`;
+  }
+
+  return null;
+}
+
 /** All deterministic skills in priority order. Returns null when none apply. */
 export function trySkills(message: string): string | null {
-  return tryMath(message) ?? tryUnits(message) ?? tryDateTime(message);
+  return tryMath(message) ?? tryPercentOps(message) ?? tryListStats(message) ??
+    tryDaysUntil(message) ?? tryUnits(message) ?? tryDateTime(message) ?? tryRandom(message);
 }
 
 // A short reply like "why?" or "tell me more" inherits the previous user

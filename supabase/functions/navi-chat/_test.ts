@@ -9,7 +9,12 @@ import {
   answerFromBible,
   requestedVerseCount,
 } from './bible.ts';
-import { tryMath, tryUnits, tryDateTime, isFollowUp } from './skills.ts';
+import {
+  tryMath, tryUnits, tryDateTime, isFollowUp,
+  tryPercentOps, tryListStats, tryDaysUntil, tryRandom,
+} from './skills.ts';
+import { stem, withinOneEdit, wordsMatch } from './match.ts';
+import { extractProfile, answerProfileQuestion } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -140,6 +145,97 @@ Deno.test('follow-ups: short continuations detected, real questions not', () => 
   eq(isFollowUp('like what?'), true, 'like what');
   eq(isFollowUp('why do people dream'), false, 'full question');
   eq(isFollowUp('ok'), false, 'plain ack is not a follow-up');
+});
+
+// ── v15 fuzzy matching ───────────────────────────────────────────────────────
+
+Deno.test('stem: strips common suffixes', () => {
+  eq(stem('running'), 'run', 'running');
+  eq(stem('habits'), 'habit', 'habits');
+  eq(stem('calmly'), 'calm', 'calmly');
+  eq(stem('music'), 'music', 'music unchanged');
+});
+
+Deno.test('withinOneEdit: typos within one edit match, others do not', () => {
+  eq(withinOneEdit('depresed', 'depressed'), true, 'missing letter');
+  eq(withinOneEdit('musci', 'music'), true, 'transposition');
+  eq(withinOneEdit('anxeity', 'anxiety'), true, 'swapped letters');
+  eq(withinOneEdit('money', 'monkey'), true, 'one insert');
+  eq(withinOneEdit('faith', 'wrath'), false, 'two edits apart');
+});
+
+Deno.test('wordsMatch: fuzzy hits typos and word forms, exact-only mode does not', () => {
+  eq(wordsMatch('runing', 'running', true), true, 'typo + form');
+  eq(wordsMatch('discipilne', 'discipline', true), true, 'typo');
+  eq(wordsMatch('suicide', 'suicide', false), true, 'exact still matches without fuzz');
+  eq(wordsMatch('suicid', 'suicide', false), false, 'crisis mode requires exact');
+  eq(wordsMatch('what', 'want', true), false, 'short words stay exact');
+  eq(wordsMatch('tower', 'power', true), false, 'different first letter is a different word');
+});
+
+// ── v15 personal memory ──────────────────────────────────────────────────────
+
+Deno.test('memory: extracts name, age, and place from the conversation', () => {
+  const history: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    { role: 'user', content: 'my name is Thabo and I love music' },
+    { role: 'assistant', content: 'Good to meet you.' },
+    { role: 'user', content: "i'm 19 years old" },
+    { role: 'user', content: 'i live in cape town, been here all my life' },
+  ];
+  const p = extractProfile(history, 'how are you');
+  eq(p.name, 'Thabo', 'name');
+  eq(p.age, 19, 'age');
+  eq(p.place, 'Cape Town', 'place');
+});
+
+Deno.test('memory: ignores non-name and non-age phrasings', () => {
+  const p = extractProfile([], 'call me later, i am 30 minutes away');
+  eq(p.name, undefined, '"call me later" is not a name');
+  eq(p.age, undefined, '"30 minutes away" is not an age');
+});
+
+Deno.test('memory: answers profile questions, asks when unknown', () => {
+  const known = answerProfileQuestion("what's my name?", { name: 'Thabo' });
+  if (!known || !known.includes('Thabo')) throw new Error(`got: ${known}`);
+  const unknown = answerProfileQuestion('do you know my name?', {});
+  if (!unknown || !unknown.includes("haven't told me")) throw new Error(`got: ${unknown}`);
+  eq(answerProfileQuestion('what is your name', { name: 'Thabo' }), null, 'NAVI identity stays with nodes');
+  eq(answerProfileQuestion('how are you', {}), null, 'plain chat');
+});
+
+// ── v15 skills ───────────────────────────────────────────────────────────────
+
+Deno.test('percent: discounts, increases, tips', () => {
+  eq(tryPercentOps('what is 20% off 500'), '20% off 500 leaves 400 — you save 100.', 'discount');
+  eq(tryPercentOps('add 15% to 200'), '200 plus 15% is 230.', 'increase');
+  eq(tryPercentOps('10% tip on 340'), 'A 10% tip on 340 is 34, so 374 total.', 'tip');
+  eq(tryPercentOps('i gave 100 percent today'), null, 'not a percent op');
+});
+
+Deno.test('list stats: average, sum, max, min', () => {
+  eq(tryListStats('average of 4, 8 and 15'), 'The average of 4, 8 and 15 is 9.', 'average');
+  eq(tryListStats('what is the sum of 10, 20, 30'), 'The sum of 10, 20 and 30 is 60.', 'sum');
+  eq(tryListStats('max of 3, 99, 45'), 'The biggest of 3, 99 and 45 is 99.', 'max');
+  eq(tryListStats('average of one thing'), null, 'needs at least two numbers');
+});
+
+Deno.test('days until: named days and explicit dates', () => {
+  const xmas = tryDaysUntil('how many days until christmas?');
+  if (!xmas || !/Christmas is (\d|today|tomorrow)/.test(xmas)) throw new Error(`got: ${xmas}`);
+  const date = tryDaysUntil('days till 25 december');
+  if (!date || !date.includes('25 December')) throw new Error(`got: ${date}`);
+  eq(tryDaysUntil('i have three days until the deadline hits me'), null, 'no recognizable date');
+  eq(tryDaysUntil('how are you today'), null, 'plain chat');
+});
+
+Deno.test('random: coin, dice, number ranges', () => {
+  const coin = tryRandom('flip a coin');
+  if (coin !== 'Heads.' && coin !== 'Tails.') throw new Error(`got: ${coin}`);
+  const die = tryRandom('roll a dice');
+  if (!die || !/You rolled a [1-6]\./.test(die)) throw new Error(`got: ${die}`);
+  const pick = tryRandom('pick a number between 1 and 10');
+  if (!pick || !/^(10|[1-9])\./.test(pick)) throw new Error(`got: ${pick}`);
+  eq(tryRandom('life is a roll of the dice sometimes'), null, 'idiom stays with nodes');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────

@@ -2,11 +2,16 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v14 (329 nodes + RAG + full KJV Bible via bible.ts +
-// deterministic skills via skills.ts: math, unit conversion, date/time,
-// follow-up blending, anti-repetition), kept in sync with src/lib/navi-model.ts.
+// Deno port of NAVI Model v15 (329 nodes + RAG + full KJV Bible via bible.ts +
+// deterministic skills via skills.ts, fuzzy retrieval via match.ts, personal
+// memory via memory.ts). The client copy in src/lib/navi-model.ts is behind.
 // v14: full-length silent web augmentation (webLookup) + low-confidence factual
 // boost via navi.lastTopScore — web answers are delivered as NAVI's own words.
+// v15: typo/word-form tolerant retrieval (crisis nodes stay exact), name/age/
+// place memory from conversation history, percent/list/countdown/random skills,
+// per-conversation turn cadence, weak-match retry with previous-turn context,
+// anti-repetition across the whole conversation, Wikipedia summary engine +
+// broader factual detection in the silent web layer.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -15,6 +20,8 @@
 
 import { answerFromBible } from './bible.ts';
 import { trySkills, isFollowUp } from './skills.ts';
+import { wordsMatch } from './match.ts';
+import { extractProfile, answerProfileQuestion } from './memory.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -3359,7 +3366,6 @@ class NaviModel {
   private tokenizer: NaviTokenizer;
   private embedder: NaviEmbedder;
   private attention: NaviAttentionLayer;
-  private turnCount = 0;
   private greetCount = 0;
   /** Trigger confidence of the most recent infer() call: the primary node's
    *  keyword score. 1 = a trigger fully matched (or deterministic answer);
@@ -3428,21 +3434,28 @@ class NaviModel {
   }
 
   private retrieveTopK(message: string, queryEmb: number[], k = 3): Array<{ node: KNode; score: number; kw: number }> {
-    const msgWords = new Set(
-      message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)
-    );
+    const msgList = message.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter(w => w.length > 2).slice(0, 60);
+    const msgWords = new Set(msgList);
     // Apostrophes are stripped so "can't go on" matches the trigger 'cant go on'.
-    const msgLower = message.toLowerCase().replace(/['‘’]/g, '');
+    // v15: phrase triggers match on word boundaries — 'what is navi' must not
+    // fire inside "what is navisociety".
+    const msgPadded = ' ' + message.toLowerCase().replace(/['‘’]/g, '').replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
     const scored: Array<{ node: KNode; score: number; kw: number }> = [];
     for (const node of KNOWLEDGE) {
+      // v15: typos and word forms ("depresed", "running" vs "run") still match —
+      // except on crisis-tier nodes, which stay strictly exact (the v13 rule).
+      const fuzzy = (node.priority ?? 5) < 50;
       let kwScore = 0;
       for (const trigger of node.triggers) {
-        if (trigger.includes(' ') && msgLower.includes(trigger)) {
+        if (trigger.includes(' ') && msgPadded.includes(` ${trigger} `)) {
           kwScore = Math.max(kwScore, 1);
           continue;
         }
         const tw = trigger.split(/\s+/);
-        const matches = tw.filter(w => msgWords.has(w)).length;
+        const matches = tw.filter(w =>
+          msgWords.has(w) || (fuzzy && msgList.some(mw => wordsMatch(mw, w, true)))
+        ).length;
         const s = matches / Math.max(tw.length, 1);
         if (s > kwScore) kwScore = s;
       }
@@ -3505,8 +3518,11 @@ class NaviModel {
   }
 
   infer(message: string, history: NaviMessage[]): string {
-    this.turnCount++;
     this.lastTopScore = 1; // deterministic paths (block/skill) are fully confident
+
+    // v15: cadence follows THIS conversation, not a counter shared across
+    // every user on the isolate.
+    const convTurn = history.filter(m => m.role === 'assistant').length + 1;
 
     const block = this.constitutionCheck(message);
     if (block) return block;
@@ -3516,19 +3532,37 @@ class NaviModel {
     const skill = trySkills(message);
     if (skill) return skill;
 
+    // v15: personal memory — name/age/place stated earlier in the conversation
+    // answer "what's my name?" style questions before retrieval can mismatch.
+    const profile = extractProfile(history, message);
+    const profileAnswer = answerProfileQuestion(message, profile);
+    if (profileAnswer) return profileAnswer;
+
     // v13: follow-up blending — a bare "why?" / "tell me more" is retrieved
     // in the context of the previous user message, not on its own.
+    const users = history.filter(m => m.role === 'user');
+    // history may already include the current message as its last entry
+    if (users.length && users[users.length - 1].content === message) users.pop();
+    const prev = users[users.length - 1];
+
     let retrievalText = message;
-    if (isFollowUp(message)) {
-      const users = history.filter(m => m.role === 'user');
-      // history may already include the current message as its last entry
-      if (users.length && users[users.length - 1].content === message) users.pop();
-      const prev = users[users.length - 1];
-      if (prev) retrievalText = `${prev.content} ${message}`;
+    if (isFollowUp(message) && prev) retrievalText = `${prev.content} ${message}`;
+
+    let queryEmb = this.encode(retrievalText);
+    let results = this.retrieveTopK(retrievalText, queryEmb);
+
+    // v15: weak-match retry — when the message alone barely matches anything,
+    // re-retrieve with the previous user turn as context and keep the stronger
+    // read. Keeps multi-turn topics coherent without a bare follow-up phrase.
+    if (prev && retrievalText === message && (!results.length || results[0].kw < 0.5)) {
+      const blendedEmb = this.encode(`${prev.content} ${message}`);
+      const blended = this.retrieveTopK(`${prev.content} ${message}`, blendedEmb);
+      if (blended.length && (!results.length || blended[0].score > results[0].score)) {
+        queryEmb = blendedEmb;
+        results = blended;
+      }
     }
 
-    const queryEmb = this.encode(retrievalText);
-    const results = this.retrieveTopK(retrievalText, queryEmb);
     this.lastTopScore = results.length ? results[0].kw : 0;
 
     if (results.length > 0) {
@@ -3537,11 +3571,12 @@ class NaviModel {
       // RAG step 1: pick the response variant most semantically aligned with this query.
       let response = this.selectBestVariant(primary.node.responses, queryEmb);
 
-      // v13: anti-repetition — never say the exact same thing twice in a row.
-      const lastNavi = [...history].reverse().find(m => m.role === 'assistant')?.content;
-      if (lastNavi && response === lastNavi && primary.node.responses.length > 1) {
-        const alternatives = primary.node.responses.filter(r => r !== lastNavi);
-        response = this.selectBestVariant(alternatives, queryEmb);
+      // v15: anti-repetition across the whole conversation — prefer a variant
+      // NAVI hasn't already used, not just one different from the last reply.
+      const said = new Set(history.filter(m => m.role === 'assistant').map(m => m.content));
+      if (said.has(response)) {
+        const fresh = primary.node.responses.filter(r => !said.has(r));
+        if (fresh.length) response = this.selectBestVariant(fresh, queryEmb);
       }
 
       // RAG step 2: cross-domain augmentation — when a second node is strongly
@@ -3558,15 +3593,22 @@ class NaviModel {
         const secVariant = this.selectBestVariant(secondary.node.responses, queryEmb);
         const firstSent = secVariant.split(/(?<=[.!?])\s+/)[0];
         const bridges = ['Worth connecting:', 'Related to that:', 'Another angle:', 'Adding to that:'];
-        response += ` ${bridges[this.turnCount % bridges.length]} ${firstSent}`;
+        response += ` ${bridges[convTurn % bridges.length]} ${firstSent}`;
       }
 
       // Conversation memory threading. Skip sensitive nodes.
-      if (!isSensitive && history.length >= 3 && this.turnCount % 3 === 0) {
+      if (!isSensitive && history.length >= 3 && convTurn % 3 === 0) {
         const recalled = this.recallTopic(history, message);
         if (recalled) {
           response += ` And I haven't forgotten ${recalled} — that's connected to this too.`;
         }
+      }
+
+      // v15: occasionally address the user by the name they gave earlier.
+      if (!isSensitive && profile.name && convTurn % 4 === 2 && !response.includes(profile.name)) {
+        response = /^[A-Z][a-z]/.test(response)
+          ? `${profile.name}, ${response.charAt(0).toLowerCase()}${response.slice(1)}`
+          : `${profile.name} — ${response}`;
       }
       return response;
     }
@@ -3605,7 +3647,7 @@ class NaviModel {
     };
 
     const pool = fallbacks[intent] || fallbacks.generic;
-    let response = pool[this.turnCount % pool.length];
+    let response = pool[convTurn % pool.length];
     if (recalled && intent !== 'emotional') {
       response += ` And earlier you brought up ${recalled} — we can tie this back to that.`;
     }
@@ -3667,7 +3709,49 @@ function cleanWebText(raw: string): string {
   return text;
 }
 
-async function webLookup(query: string): Promise<string> {
+// Strip greeting fluff and politeness so the engines see the actual question.
+function refineQuery(message: string): string {
+  return message
+    .replace(/^\s*(?:hey|hi|hello|yo)?[,\s]*navi[,:\s]+/i, '')
+    .replace(/^\s*(?:please|pls)\s+/i, '')
+    .replace(/\s*(?:please|pls)\s*[.?!]*\s*$/i, '')
+    .replace(/[?!.]+\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim() || message.trim();
+}
+
+// Pull the entity out of "who is X" / "tell me about X" asks for the
+// Wikipedia summary endpoint. Returns '' when there's no clean title.
+function wikiTitle(query: string): string {
+  const t = refineQuery(query).toLowerCase()
+    .replace(/^(?:who|what|where)(?:'s| is| are| was| were)\s+/, '')
+    .replace(/^(?:tell me about|define|definition of|meaning of|explain|describe)\s+/, '')
+    .replace(/^(?:a|an|the)\s+/, '')
+    .trim();
+  if (!t || t.split(/\s+/).length > 6 || /[?:;!]/.test(t)) return '';
+  return t;
+}
+
+async function wikiLookup(query: string): Promise<string> {
+  const title = wikiTitle(query);
+  if (!title) return '';
+  try {
+    const res = await fetch(
+      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}?redirect=true`,
+      { signal: AbortSignal.timeout(3500), headers: { 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return '';
+    const data = await res.json();
+    if (data?.type === 'disambiguation') return '';
+    const extract = typeof data?.extract === 'string' ? data.extract.trim() : '';
+    return extract.length > 40 ? cleanWebText(extract) : '';
+  } catch {
+    return '';
+  }
+}
+
+async function webLookup(rawQuery: string): Promise<string> {
+  const query = refineQuery(rawQuery);
   // 1) Instant-answer API — direct answers, definitions, encyclopedic abstracts.
   try {
     const res = await fetch(
@@ -3683,9 +3767,14 @@ async function webLookup(query: string): Promise<string> {
       const related = data.RelatedTopics?.find((t: { Text?: string }) => t?.Text)?.Text;
       if (related) return cleanWebText(String(related));
     }
-  } catch { /* fall through to results page */ }
+  } catch { /* fall through to Wikipedia */ }
 
-  // 2) Results-page snippets — covers the many queries the instant-answer API skips.
+  // 2) Wikipedia summary — richer, cleaner answers for entity questions
+  //    ("who is Nelson Mandela", "tell me about the Eiffel Tower").
+  const wiki = await wikiLookup(query);
+  if (wiki) return wiki;
+
+  // 3) Results-page snippets — covers the many queries the other engines skip.
   try {
     const res = await fetch(
       `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
@@ -3730,9 +3819,12 @@ function isNaviFallback(response: string): boolean {
 // a knowledge node deserve a real web answer, not a mismatched node response.
 // Brand/identity and scripture questions are never overridden.
 function looksFactual(message: string): boolean {
-  const t = message.trim().toLowerCase();
+  const t = refineQuery(message).toLowerCase();
   if (/\b(navi|navisociety|prophet|dian|bible|scripture|verse)\b/.test(t)) return false;
-  return /^(who|what|when|where|which|how (many|much|far|tall|old|long|big|fast|heavy|deep|wide))\b/.test(t);
+  if (/^(who|what|when|where|which|how (many|much|far|tall|old|long|big|fast|heavy|deep|wide))\b/.test(t)) return true;
+  // v15: definition and encyclopedia-style asks deserve real answers too.
+  if (/^(define|definition of|meaning of|explain|describe|tell me about)\b/.test(t)) return true;
+  return /^(capital|population|president|ceo|founder|currency|distance|height|area|size) of\b/.test(t);
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
