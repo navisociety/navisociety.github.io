@@ -1,8 +1,9 @@
 // supabase/functions/navi-chat/skills.ts
 //
-// NAVI deterministic skills (v13, extended in v15): arithmetic, percentages
-// (discounts/tips), list stats, date countdowns, unit conversion, date/time,
-// coin/dice/random numbers.
+// NAVI deterministic skills (v13, extended in v15 + v16): arithmetic,
+// percentages (discounts/tips), list stats, date countdowns, unit conversion,
+// date/time, world time, day-of-week for any date, birth-year age, word tools
+// (spell/letters/reverse), coin/dice/random numbers.
 // These answer exactly-known questions before knowledge retrieval, so NAVI
 // never guesses at math or the calendar. Mirrored inline in
 // src/lib/navi-model.ts (client copy uses the device's local time zone;
@@ -252,7 +253,7 @@ const NAMED_DAYS: Array<{ rx: RegExp; month: number; day: number; label: string 
   { rx: /\bhalloween\b/, month: 10, day: 31, label: 'Halloween' },
 ];
 
-function todayInTZ(tz: string): { y: number; m: number; d: number } {
+export function todayInTZ(tz: string): { y: number; m: number; d: number } {
   const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()).split('-').map(Number);
   return { y, m, d };
 }
@@ -313,10 +314,129 @@ export function tryRandom(message: string): string | null {
   return null;
 }
 
+// ── v16 skills: world time, day-of-week, birth-year age, word tools ─────────
+
+const CITY_TZ: Array<{ rx: RegExp; tz: string; label: string }> = [
+  { rx: /\b(johannesburg|joburg|jozi|pretoria|cape town|durban|south africa|sa)\b/, tz: 'Africa/Johannesburg', label: 'South Africa' },
+  { rx: /\b(london|uk|england|britain)\b/, tz: 'Europe/London', label: 'London' },
+  { rx: /\b(paris|france)\b/, tz: 'Europe/Paris', label: 'Paris' },
+  { rx: /\b(berlin|germany)\b/, tz: 'Europe/Berlin', label: 'Berlin' },
+  { rx: /\b(amsterdam|netherlands|holland)\b/, tz: 'Europe/Amsterdam', label: 'Amsterdam' },
+  { rx: /\b(madrid|spain)\b/, tz: 'Europe/Madrid', label: 'Madrid' },
+  { rx: /\b(rome|italy)\b/, tz: 'Europe/Rome', label: 'Rome' },
+  { rx: /\b(lisbon|portugal)\b/, tz: 'Europe/Lisbon', label: 'Lisbon' },
+  { rx: /\b(athens|greece)\b/, tz: 'Europe/Athens', label: 'Athens' },
+  { rx: /\b(istanbul|turkey)\b/, tz: 'Europe/Istanbul', label: 'Istanbul' },
+  { rx: /\b(moscow|russia)\b/, tz: 'Europe/Moscow', label: 'Moscow' },
+  { rx: /\b(new york|nyc|manhattan)\b/, tz: 'America/New_York', label: 'New York' },
+  { rx: /\b(los angeles|la|california|san francisco|seattle)\b/, tz: 'America/Los_Angeles', label: 'the US West Coast' },
+  { rx: /\b(chicago|texas|houston|dallas)\b/, tz: 'America/Chicago', label: 'the US Central zone' },
+  { rx: /\b(toronto|canada)\b/, tz: 'America/Toronto', label: 'Toronto' },
+  { rx: /\b(mexico city|mexico)\b/, tz: 'America/Mexico_City', label: 'Mexico City' },
+  { rx: /\b(sao paulo|brazil|rio)\b/, tz: 'America/Sao_Paulo', label: 'Brazil' },
+  { rx: /\b(buenos aires|argentina)\b/, tz: 'America/Argentina/Buenos_Aires', label: 'Buenos Aires' },
+  { rx: /\b(cairo|egypt)\b/, tz: 'Africa/Cairo', label: 'Cairo' },
+  { rx: /\b(lagos|nigeria)\b/, tz: 'Africa/Lagos', label: 'Lagos' },
+  { rx: /\b(nairobi|kenya)\b/, tz: 'Africa/Nairobi', label: 'Nairobi' },
+  { rx: /\b(dubai|uae|abu dhabi)\b/, tz: 'Asia/Dubai', label: 'Dubai' },
+  { rx: /\b(mumbai|delhi|india|bangalore)\b/, tz: 'Asia/Kolkata', label: 'India' },
+  { rx: /\b(bangkok|thailand)\b/, tz: 'Asia/Bangkok', label: 'Bangkok' },
+  { rx: /\b(jakarta|indonesia)\b/, tz: 'Asia/Jakarta', label: 'Jakarta' },
+  { rx: /\b(singapore)\b/, tz: 'Asia/Singapore', label: 'Singapore' },
+  { rx: /\b(hong kong)\b/, tz: 'Asia/Hong_Kong', label: 'Hong Kong' },
+  { rx: /\b(beijing|shanghai|china)\b/, tz: 'Asia/Shanghai', label: 'China' },
+  { rx: /\b(tokyo|japan)\b/, tz: 'Asia/Tokyo', label: 'Tokyo' },
+  { rx: /\b(seoul|korea)\b/, tz: 'Asia/Seoul', label: 'Seoul' },
+  { rx: /\b(manila|philippines)\b/, tz: 'Asia/Manila', label: 'Manila' },
+  { rx: /\b(sydney|melbourne|australia)\b/, tz: 'Australia/Sydney', label: 'Sydney' },
+  { rx: /\b(perth)\b/, tz: 'Australia/Perth', label: 'Perth' },
+  { rx: /\b(auckland|new zealand)\b/, tz: 'Pacific/Auckland', label: 'New Zealand' },
+];
+
+/** "What time is it in Tokyo / London / New York" — any mapped city or country. */
+export function tryWorldTime(message: string): string | null {
+  const t = message.toLowerCase();
+  const m = t.match(/\b(?:time\s+(?:is\s+it\s+)?(?:right\s+now\s+)?in|current\s+time\s+in)\s+([a-z .'-]{2,30}?)\s*[?.!]*$/);
+  if (!m) return null;
+  const city = CITY_TZ.find(c => c.rx.test(m[1].trim()));
+  if (!city) return null;
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: city.tz });
+  const day = now.toLocaleDateString('en-GB', { weekday: 'long', timeZone: city.tz });
+  return `It's ${time} in ${city.label} right now — ${day} there.`;
+}
+
+/** "What day of the week is 25 December 2026" / "what day was 1 january 2000". */
+export function tryDayOfWeek(message: string, tz: string = NAVI_TZ): string | null {
+  const t = message.toLowerCase();
+  if (!/\bwhat day (?:of the week )?(?:is|was|will|does|did)\b|\bfalls? on\b|\bday of the week\b/.test(t)) return null;
+
+  const dm = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/) ??
+             t.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b/);
+  if (!dm) return null;
+  let day: number, month: number;
+  if (/^\d/.test(dm[1])) { day = parseInt(dm[1], 10); month = MONTHS.indexOf(dm[2]) + 1; }
+  else { month = MONTHS.indexOf(dm[1]) + 1; day = parseInt(dm[2], 10); }
+  if (day < 1 || day > 31 || month < 1) return null;
+
+  const now = todayInTZ(tz);
+  let year = dm[3] ? parseInt(dm[3], 10) : now.y;
+  const today = Date.UTC(now.y, now.m - 1, now.d);
+  // No year given and the date already passed → the upcoming occurrence.
+  if (!dm[3] && Date.UTC(year, month - 1, day) < today) year++;
+
+  const target = Date.UTC(year, month - 1, day);
+  const weekday = new Date(target).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' });
+  const label = `${day} ${MONTHS[month - 1].charAt(0).toUpperCase()}${MONTHS[month - 1].slice(1)} ${year}`;
+  return target < today ? `${label} was a ${weekday}.` : `${label} falls on a ${weekday}.`;
+}
+
+/** "I was born in 1998 — how old am I?" answered without guessing. */
+export function tryBornYear(message: string, tz: string = NAVI_TZ): string | null {
+  const t = message.toLowerCase();
+  if (!/\b(how old|what age|age)\b/.test(t)) return null;
+  const m = t.match(/\bborn in (19\d{2}|20\d{2})\b/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const cur = todayInTZ(tz).y;
+  if (year > cur) return null;
+  const n = cur - year;
+  if (n === 0) return `Born in ${year} means turning 1 next year — a brand new human.`;
+  return `Born in ${year} means turning ${n} in ${cur} — so ${n - 1} before the birthday this year, ${n} after it.`;
+}
+
+/** Word tools: spell it, count its letters, reverse it. */
+export function tryWordTools(message: string): string | null {
+  const t = message.toLowerCase().trim().replace(/[?.!]+$/, '');
+
+  const sp = t.match(/(?:how (?:do|would) (?:you|i) spell|can you spell|spell(?: the word)?)\s+"?([a-z'-]{2,30})"?$/);
+  if (sp) {
+    const w = sp[1];
+    return `"${w}" is spelled ${w.toUpperCase().split('').join('-')}.`;
+  }
+
+  const ct = t.match(/how many letters (?:are )?(?:in|does)\s+(?:the word )?"?([a-z'-]{2,30})"?(?:\s+have)?$/);
+  if (ct) {
+    const w = ct[1];
+    const n = (w.match(/[a-z]/g) ?? []).length;
+    return `"${w}" has ${n} letters.`;
+  }
+
+  const rv = t.match(/reverse (?:the word )?"?([a-z'-]{2,30})"?$/);
+  if (rv) {
+    const w = rv[1];
+    return `"${w}" reversed is "${w.split('').reverse().join('')}".`;
+  }
+
+  return null;
+}
+
 /** All deterministic skills in priority order. Returns null when none apply. */
 export function trySkills(message: string): string | null {
   return tryMath(message) ?? tryPercentOps(message) ?? tryListStats(message) ??
-    tryDaysUntil(message) ?? tryUnits(message) ?? tryDateTime(message) ?? tryRandom(message);
+    tryDaysUntil(message) ?? tryUnits(message) ?? tryDayOfWeek(message) ??
+    tryWorldTime(message) ?? tryDateTime(message) ?? tryBornYear(message) ??
+    tryWordTools(message) ?? tryRandom(message);
 }
 
 // A short reply like "why?" or "tell me more" inherits the previous user

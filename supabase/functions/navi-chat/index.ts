@@ -2,7 +2,7 @@
 //
 // NAVI chat Edge Function — the NAVI LLM running server-side on Supabase (Deno).
 // This IS the model. It does NOT call Claude, OpenAI, or any external LLM.
-// Deno port of NAVI Model v15 (329 nodes + RAG + full KJV Bible via bible.ts +
+// Deno port of NAVI Model v16 (329 nodes + RAG + full KJV Bible via bible.ts +
 // deterministic skills via skills.ts, fuzzy retrieval via match.ts, personal
 // memory via memory.ts). The client copy in src/lib/navi-model.ts is behind.
 // v14: full-length silent web augmentation (webLookup) + low-confidence factual
@@ -12,6 +12,11 @@
 // per-conversation turn cadence, weak-match retry with previous-turn context,
 // anti-repetition across the whole conversation, Wikipedia summary engine +
 // broader factual detection in the silent web layer.
+// v16: memory 2.0 (birthday countdown, favourites, "remember that…" facts,
+// "what do you know about me"), pronoun follow-up resolution for factual
+// chains via context.ts, world-time/day-of-week/born-year/word-tool skills,
+// acknowledgment replies for bare reactions via acts.ts, and a faster web
+// layer (DuckDuckGo + Wikipedia in parallel with an in-memory answer cache).
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -21,7 +26,9 @@
 import { answerFromBible } from './bible.ts';
 import { trySkills, isFollowUp } from './skills.ts';
 import { wordsMatch } from './match.ts';
-import { extractProfile, answerProfileQuestion } from './memory.ts';
+import { extractProfile, answerProfileQuestion, memoryAcknowledgement } from './memory.ts';
+import { resolveReference } from './context.ts';
+import { tryAcknowledgment } from './acts.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -3527,6 +3534,11 @@ class NaviModel {
     const block = this.constitutionCheck(message);
     if (block) return block;
 
+    // v16: bare reactions ("ok", "yes", "lol", "wow") get short forward-moving
+    // replies instead of falling into the generic fallback pool.
+    const ack = tryAcknowledgment(message, convTurn);
+    if (ack) return ack;
+
     // v13: deterministic skills — math, unit conversion, date/time — answer
     // exactly-known questions before any retrieval guessing.
     const skill = trySkills(message);
@@ -3534,9 +3546,15 @@ class NaviModel {
 
     // v15: personal memory — name/age/place stated earlier in the conversation
     // answer "what's my name?" style questions before retrieval can mismatch.
+    // v16: also birthday, favourites, and explicit "remember that…" facts.
     const profile = extractProfile(history, message);
     const profileAnswer = answerProfileQuestion(message, profile);
     if (profileAnswer) return profileAnswer;
+
+    // v16: confirm memory statements ("remember that…", "my favourite X is Y",
+    // "my birthday is…") directly instead of letting retrieval guess.
+    const memoryAck = memoryAcknowledgement(message, profile);
+    if (memoryAck) return memoryAck;
 
     // v13: follow-up blending — a bare "why?" / "tell me more" is retrieved
     // in the context of the previous user message, not on its own.
@@ -3564,6 +3582,15 @@ class NaviModel {
     }
 
     this.lastTopScore = results.length ? results[0].kw : 0;
+
+    // v16: a question whose best node shares NOT ONE trigger word (kw = 0,
+    // pure embedding noise) must not get that node's answer — "how tall is
+    // Nelson Mandela?" once drew the identity node. Fall through to the
+    // question fallback, which hands the message to the web layer.
+    if (results.length && results[0].kw === 0 && this.detectIntent(message) === 'question') {
+      results = [];
+      this.lastTopScore = 0;
+    }
 
     if (results.length > 0) {
       const [primary, secondary] = results;
@@ -3726,6 +3753,8 @@ function wikiTitle(query: string): string {
   const t = refineQuery(query).toLowerCase()
     .replace(/^(?:who|what|where)(?:'s| is| are| was| were)\s+/, '')
     .replace(/^(?:tell me about|define|definition of|meaning of|explain|describe)\s+/, '')
+    // v16: attribute asks still map to the entity's summary page.
+    .replace(/^how (?:tall|old|big|high|long|heavy|deep|wide|fast|far) (?:is|was|are|were)\s+/, '')
     .replace(/^(?:a|an|the)\s+/, '')
     .trim();
   if (!t || t.split(/\s+/).length > 6 || /[?:;!]/.test(t)) return '';
@@ -3750,31 +3779,27 @@ async function wikiLookup(query: string): Promise<string> {
   }
 }
 
-async function webLookup(rawQuery: string): Promise<string> {
-  const query = refineQuery(rawQuery);
-  // 1) Instant-answer API — direct answers, definitions, encyclopedic abstracts.
+// DuckDuckGo instant-answer API — direct answers, definitions, abstracts.
+async function ddgInstant(query: string): Promise<{ direct: string; related: string }> {
   try {
     const res = await fetch(
       `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
       { signal: AbortSignal.timeout(3500) }
     );
-    if (res.ok) {
-      const data = await res.json();
-      const direct = [data.Answer, data.AbstractText, data.Definition]
-        .map((v: unknown) => (typeof v === 'string' ? v.trim() : ''))
-        .find((v: string) => v.length > 0);
-      if (direct) return cleanWebText(direct);
-      const related = data.RelatedTopics?.find((t: { Text?: string }) => t?.Text)?.Text;
-      if (related) return cleanWebText(String(related));
-    }
-  } catch { /* fall through to Wikipedia */ }
+    if (!res.ok) return { direct: '', related: '' };
+    const data = await res.json();
+    const direct = [data.Answer, data.AbstractText, data.Definition]
+      .map((v: unknown) => (typeof v === 'string' ? v.trim() : ''))
+      .find((v: string) => v.length > 0) ?? '';
+    const related = data.RelatedTopics?.find((t: { Text?: string }) => t?.Text)?.Text ?? '';
+    return { direct: direct ? cleanWebText(direct) : '', related: related ? cleanWebText(String(related)) : '' };
+  } catch {
+    return { direct: '', related: '' };
+  }
+}
 
-  // 2) Wikipedia summary — richer, cleaner answers for entity questions
-  //    ("who is Nelson Mandela", "tell me about the Eiffel Tower").
-  const wiki = await wikiLookup(query);
-  if (wiki) return wiki;
-
-  // 3) Results-page snippets — covers the many queries the other engines skip.
+// Results-page snippets — covers the many queries the other engines skip.
+async function ddgSnippets(query: string): Promise<string> {
   try {
     const res = await fetch(
       `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
@@ -3793,6 +3818,33 @@ async function webLookup(rawQuery: string): Promise<string> {
   } catch {
     return '';
   }
+}
+
+// v16: answers NAVI already looked up come back instantly (per warm isolate).
+const WEB_CACHE_TTL = 6 * 60 * 60 * 1000;
+const WEB_CACHE_MAX = 500;
+const webCache = new Map<string, { text: string; exp: number }>();
+
+// v16: the instant-answer API and Wikipedia race in parallel instead of
+// sequentially, and Wikipedia's summary outranks DDG's weaker related-topic
+// blurbs. The slow results-page scrape stays as the last resort.
+async function webLookup(rawQuery: string): Promise<string> {
+  const query = refineQuery(rawQuery);
+  const key = query.toLowerCase();
+
+  const hit = webCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.text;
+
+  const [ddgR, wikiR] = await Promise.allSettled([ddgInstant(query), wikiLookup(query)]);
+  const ddg = ddgR.status === 'fulfilled' ? ddgR.value : { direct: '', related: '' };
+  const wiki = wikiR.status === 'fulfilled' ? wikiR.value : '';
+
+  const answer = ddg.direct || wiki || ddg.related || await ddgSnippets(query);
+  if (answer) {
+    if (webCache.size >= WEB_CACHE_MAX) webCache.delete(webCache.keys().next().value as string);
+    webCache.set(key, { text: answer, exp: Date.now() + WEB_CACHE_TTL });
+  }
+  return answer;
 }
 
 // Only search when navi.infer() produced a generic fallback (no knowledge match).
@@ -3867,12 +3919,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // from the full KJV in navi_bible_verses (31,102 verses), not the nodes.
     let response = await answerFromBible(message) ?? "";
     if (!response) {
-      response = navi.infer(message, [...history, { role: "user", content: message }]);
+      // v16: pronoun follow-ups in factual chains ("who is Nelson Mandela" →
+      // "how old is he?") are rewritten with the entity before retrieval and
+      // the web lookup ever see them.
+      const effective = resolveReference(message, history) ?? message;
+      response = navi.infer(effective, [...history, { role: "user", content: effective }]);
       // Silent web augmentation: fires when NAVI hit a generic fallback, or when
       // a factual question only weakly matched a node. The web answer replaces
       // the response invisibly; if the lookup finds nothing, NAVI's own reply stands.
-      if (isNaviFallback(response) || (looksFactual(message) && navi.lastTopScore < 1)) {
-        const web = await webLookup(message);
+      if (isNaviFallback(response) || (looksFactual(effective) && navi.lastTopScore < 1)) {
+        const web = await webLookup(effective);
         if (web) response = web;
       }
     }

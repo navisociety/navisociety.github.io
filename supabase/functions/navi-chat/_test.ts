@@ -12,9 +12,12 @@ import {
 import {
   tryMath, tryUnits, tryDateTime, isFollowUp,
   tryPercentOps, tryListStats, tryDaysUntil, tryRandom,
+  tryWorldTime, tryDayOfWeek, tryBornYear, tryWordTools,
 } from './skills.ts';
 import { stem, withinOneEdit, wordsMatch } from './match.ts';
-import { extractProfile, answerProfileQuestion } from './memory.ts';
+import { extractProfile, answerProfileQuestion, memoryAcknowledgement, toSecondPerson } from './memory.ts';
+import { extractTopicEntity, resolveReference } from './context.ts';
+import { tryAcknowledgment } from './acts.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -236,6 +239,127 @@ Deno.test('random: coin, dice, number ranges', () => {
   const pick = tryRandom('pick a number between 1 and 10');
   if (!pick || !/^(10|[1-9])\./.test(pick)) throw new Error(`got: ${pick}`);
   eq(tryRandom('life is a roll of the dice sometimes'), null, 'idiom stays with nodes');
+});
+
+// ── v16 memory 2.0 ───────────────────────────────────────────────────────────
+
+Deno.test('memory 2.0: favourites are extracted and recalled', () => {
+  const p = extractProfile([{ role: 'user', content: 'my favourite colour is blue' }], 'how are you');
+  eq(p.favorites?.color, 'Blue', 'favourite colour stored (normalized key)');
+  const ans = answerProfileQuestion("what's my favourite colour?", p);
+  if (!ans || !ans.includes('Blue')) throw new Error(`got: ${ans}`);
+  const us = answerProfileQuestion('what is my favorite color', p);
+  if (!us || !us.includes('Blue')) throw new Error(`got: ${us}`);
+  const unknown = answerProfileQuestion('what is my favourite movie', p);
+  if (!unknown || !unknown.includes("haven't told me")) throw new Error(`got: ${unknown}`);
+});
+
+Deno.test('memory 2.0: birthday extracted, recalled with countdown', () => {
+  const p = extractProfile([{ role: 'user', content: 'my birthday is on 12 march' }], 'hey');
+  eq(p.birthday, { month: 3, day: 12 }, 'birthday stored');
+  const ans = answerProfileQuestion('when is my birthday?', p);
+  if (!ans || !ans.includes('12 March')) throw new Error(`got: ${ans}`);
+  const none = answerProfileQuestion('when is my birthday?', {});
+  if (!none || !none.includes("haven't told me")) throw new Error(`got: ${none}`);
+});
+
+Deno.test('memory 2.0: remember-that facts stored, echoed in second person', () => {
+  const p = extractProfile([{ role: 'user', content: 'remember that i have a meeting on friday' }], 'hi');
+  eq(p.facts?.length, 1, 'fact stored');
+  eq(toSecondPerson('i have a meeting on friday'), 'you have a meeting on friday', 'pronoun flip');
+  const summary = answerProfileQuestion('what do you know about me?', p);
+  if (!summary || !summary.includes('you have a meeting on friday')) throw new Error(`got: ${summary}`);
+});
+
+Deno.test('memory 2.0: statements get a direct confirmation', () => {
+  const p1 = extractProfile([], 'remember that my dog is called Rex');
+  const ack1 = memoryAcknowledgement('remember that my dog is called Rex', p1);
+  if (!ack1 || !ack1.toLowerCase().includes('your dog is called rex')) throw new Error(`got: ${ack1}`);
+
+  const p2 = extractProfile([], 'my favourite food is pizza');
+  const ack2 = memoryAcknowledgement('my favourite food is pizza', p2);
+  if (!ack2 || !ack2.includes('Pizza')) throw new Error(`got: ${ack2}`);
+
+  eq(memoryAcknowledgement('i love pizza and my dog', extractProfile([], 'i love pizza and my dog')), null, 'plain chat is not a memory statement');
+});
+
+Deno.test('memory 2.0: empty profile summary invites the user', () => {
+  const out = answerProfileQuestion('what do you know about me', {});
+  if (!out || !out.includes('remember that')) throw new Error(`got: ${out}`);
+});
+
+// ── v16 conversational context (pronoun follow-ups) ─────────────────────────
+
+Deno.test('context: extracts entities from factual questions only', () => {
+  eq(extractTopicEntity('who is nelson mandela?'), 'nelson mandela', 'who is');
+  eq(extractTopicEntity('tell me about the eiffel tower'), 'eiffel tower', 'tell me about');
+  eq(extractTopicEntity('who are you'), null, 'NAVI self-question skipped');
+  eq(extractTopicEntity('i love music'), null, 'statement skipped');
+});
+
+Deno.test('context: resolves pronoun follow-ups to the last entity', () => {
+  const history: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    { role: 'user', content: 'who is nelson mandela?' },
+    { role: 'assistant', content: 'Nelson Mandela was a South African statesman…' },
+  ];
+  eq(resolveReference('how old is he?', history), 'how old is nelson mandela?', 'subject pronoun');
+  eq(resolveReference('where was his house?', history), "where was nelson mandela's house?", 'possessive');
+  eq(resolveReference('he hurt me', history), null, 'first-person emotional message untouched');
+  eq(resolveReference('how old is he?', []), null, 'no entity in history');
+  eq(resolveReference('how old are you?', history), null, 'no third-person pronoun');
+});
+
+// ── v16 skills ───────────────────────────────────────────────────────────────
+
+Deno.test('world time: mapped cities answered, unknown places skipped', () => {
+  const out = tryWorldTime('what time is it in london?');
+  if (!out || !/^It's \d{2}:\d{2} in London right now/.test(out)) throw new Error(`got: ${out}`);
+  const country = tryWorldTime('time in japan');
+  if (!country || !country.includes('Tokyo')) throw new Error(`got: ${country}`);
+  eq(tryWorldTime('what time is it in my life'), null, 'unknown place');
+  eq(tryWorldTime('what time is it'), null, 'no place — stays with tryDateTime');
+});
+
+Deno.test('day of week: explicit years, past tense, bad dates rejected', () => {
+  eq(tryDayOfWeek('what day of the week is 25 december 2026?'), '25 December 2026 falls on a Friday.', 'future date');
+  eq(tryDayOfWeek('what day was 1 january 2000'), '1 January 2000 was a Saturday.', 'past date');
+  eq(tryDayOfWeek('what day is it today'), null, 'no date — stays with tryDateTime');
+  eq(tryDayOfWeek('i met her on 12 june'), null, 'not a day-of-week ask');
+});
+
+Deno.test('born year: age computed both sides of the birthday', () => {
+  const cur = new Date().getFullYear();
+  const out = tryBornYear('i was born in 1998, how old am i?');
+  if (!out || !out.includes(String(cur - 1998))) throw new Error(`got: ${out}`);
+  eq(tryBornYear('i was born in 1998'), null, 'statement without an age ask');
+  eq(tryBornYear('how old am i'), null, 'no birth year');
+});
+
+Deno.test('word tools: spell, letters, reverse', () => {
+  eq(tryWordTools('how do you spell banana?'), '"banana" is spelled B-A-N-A-N-A.', 'spell');
+  eq(tryWordTools('how many letters in banana'), '"banana" has 6 letters.', 'letters');
+  eq(tryWordTools('reverse the word stressed'), '"stressed" reversed is "desserts".', 'reverse');
+  eq(tryWordTools('i cast a spell on you'), null, 'idiom stays with nodes');
+});
+
+// ── v16 acknowledgment intelligence ─────────────────────────────────────────
+
+Deno.test('acts: bare reactions get forward-moving replies', () => {
+  for (const msg of ['ok', 'yes', 'no', 'lol', 'wow', 'hmm', 'okay cool', 'nice']) {
+    // 'okay cool' is two words but still a bare reaction? — no: only exact matches fire.
+    if (msg === 'okay cool') { eq(tryAcknowledgment(msg, 0), null, 'two-word non-listed combo skipped'); continue; }
+    const out = tryAcknowledgment(msg, 0);
+    if (!out) throw new Error(`no ack for: ${msg}`);
+  }
+});
+
+Deno.test('acts: rotation varies by turn, content messages skipped', () => {
+  const a = tryAcknowledgment('ok', 0), b = tryAcknowledgment('ok', 1);
+  if (!a || !b || a === b) throw new Error(`rotation failed: ${a} / ${b}`);
+  eq(tryAcknowledgment('ok so i was thinking about my dad', 0), null, 'real content passes through');
+  eq(tryAcknowledgment('yes i want to die', 0), null, 'crisis phrasing never swallowed');
+  eq(tryAcknowledgment('thanks', 0), null, 'thanks stays with its node');
+  eq(tryAcknowledgment('hello', 0), null, 'greeting stays with its node');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────
