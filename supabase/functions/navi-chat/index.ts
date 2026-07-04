@@ -3722,6 +3722,7 @@ function cleanWebText(raw: string): string {
     .replace(/\bduck\s?duck\s?go\b/gi, '')
     .replace(/\(\s*\/[^)]*\)/g, '')                 // pronunciation guides: (/ ˈaɪfəl / EYE-fəl; …)
     .replace(/\[[^\]]*[^\x00-\x7F][^\]]*\]/g, '')   // bracketed IPA like [tuʁ ɛfɛl]
+    .replace(/\[\s*\w{1,3}\s*\]/g, '')              // footnote markers like [4] or [a]
     .replace(/ⓘ/g, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s+([.,;:!?])/g, '$1')
