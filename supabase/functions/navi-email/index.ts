@@ -72,13 +72,65 @@ function hdr(headers: { name: string; value: string }[] | undefined, name: strin
   return (headers ?? []).find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 }
 
-function extractBody(payload: { body?: { data?: string }; parts?: { mimeType: string; body?: { data?: string } }[] }): string {
-  if (payload.body?.data) return b64url(payload.body.data);
+type GmailPart = { mimeType: string; body?: { data?: string }; parts?: GmailPart[] };
+
+function findPart(parts: GmailPart[], mimeType: string): GmailPart | undefined {
+  for (const p of parts) {
+    if (p.mimeType === mimeType && p.body?.data) return p;
+  }
+  for (const p of parts) {
+    if (p.parts) {
+      const found = findPart(p.parts, mimeType);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&mdash;/gi, '—')
+    .replace(/&ndash;/gi, '–')
+    .replace(/&hellip;/gi, '…')
+    .replace(/&[lr]squo;/gi, "'")
+    .replace(/&[lr]dquo;/gi, '"')
+    .replace(/&copy;/gi, '©')
+    .replace(/&reg;/gi, '®')
+    .replace(/&trade;/gi, '™')
+    .replace(/&amp;/gi, '&');
+}
+
+function htmlToText(html: string): string {
+  const stripped = html
+    .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  return decodeEntities(stripped)
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractBody(payload: { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] }): string {
   if (payload.parts) {
-    const plain = payload.parts.find(p => p.mimeType === 'text/plain');
+    const plain = findPart(payload.parts, 'text/plain');
     if (plain?.body?.data) return b64url(plain.body.data);
-    const html = payload.parts.find(p => p.mimeType === 'text/html');
-    if (html?.body?.data) return b64url(html.body.data).replace(/<[^>]+>/g, '');
+    const html = findPart(payload.parts, 'text/html');
+    if (html?.body?.data) return htmlToText(b64url(html.body.data));
+  }
+  if (payload.body?.data) {
+    const decoded = b64url(payload.body.data);
+    return payload.mimeType === 'text/html' ? htmlToText(decoded) : decoded;
   }
   return '';
 }
