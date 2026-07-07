@@ -31,6 +31,11 @@ import {
 import { detectComparison, splitCompound, tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
 import { addCuriosity } from './curiosity.ts';
+import { trySummarize, tryRewrite, rewriteMode } from './understand.ts';
+import { parseCompose, tryCompose } from './compose.ts';
+import { parsePlanGoal, tryPlan } from './plan.ts';
+import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
+import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -654,6 +659,169 @@ Deno.test('addCuriosity stays silent when it would be noise', () => {
   eq(addCuriosity('Short.', 'what is a habit', [], { sensitive: false, isFallback: false, terse: false }), 'Short.', 'too-short');
   const asks = longReply + ' What do you think?';
   eq(addCuriosity(asks, 'what is a habit', [], { sensitive: false, isFallback: false, terse: false }), asks, 'already-asks');
+});
+
+// ── v21: fuzzy-match false friends ───────────────────────────────────────────
+
+Deno.test('false friends never fuzzy-match; real typos still do', () => {
+  eq(wordsMatch('invent', 'invest', true), false, 'invent≠invest');
+  eq(wordsMatch('quiet', 'quite', true), false, 'quiet≠quite');
+  eq(wordsMatch('invesst', 'invest', true), true, 'real typo still matches');
+  eq(wordsMatch('invest', 'invest', true), true, 'exact still matches');
+});
+
+// ── v21: Summarize & Rewrite ─────────────────────────────────────────────────
+
+const PASTED = 'The ocean covers most of the planet and drives the weather everywhere. ' +
+  'Ocean currents move heat from the equator toward the poles, which keeps coastal climates mild. ' +
+  'Phytoplankton in the ocean produce a large share of the oxygen we breathe. ' +
+  'Human activity is warming the ocean and changing its chemistry. ' +
+  'Warmer water holds less oxygen and bleaches coral reefs. ' +
+  'Protecting the ocean means protecting the systems that make the planet livable.';
+
+Deno.test('trySummarize condenses pasted text', () => {
+  const out = trySummarize(`summarize: ${PASTED}`);
+  if (!out.startsWith("Here's the heart of it:")) throw new Error(`no summary: ${out}`);
+  if (out.length >= PASTED.length) throw new Error('summary not shorter than source');
+});
+
+Deno.test('trySummarize ignores topic asks and non-commands', () => {
+  eq(trySummarize('summarize the bible'), '', 'topic ask, no pasted text');
+  eq(trySummarize('what does summarize mean'), '', 'not a command');
+});
+
+Deno.test('rewriteMode detects the four reshape commands', () => {
+  eq(rewriteMode('in one sentence'), 'one-sentence', 'one sentence');
+  eq(rewriteMode('say that simpler'), 'simpler', 'simpler');
+  eq(rewriteMode('eli5'), 'simpler', 'eli5');
+  eq(rewriteMode('make it shorter'), 'shorter', 'shorter');
+  eq(rewriteMode('bullet points please'), 'bullets', 'bullets');
+  eq(rewriteMode('what is shorter than a meter'), null, 'not a command');
+  eq(rewriteMode('i want a simpler life'), null, 'not anchored');
+});
+
+Deno.test('tryRewrite reshapes the previous answer', () => {
+  const hist = [
+    { role: 'user' as const, content: 'tell me about the ocean' },
+    { role: 'assistant' as const, content: PASTED },
+  ];
+  const one = tryRewrite('in one sentence', hist);
+  if (!one.startsWith('One sentence:')) throw new Error(`one-sentence failed: ${one}`);
+  const bullets = tryRewrite('bullet points', hist);
+  if (!bullets.startsWith('• ')) throw new Error(`bullets failed: ${bullets}`);
+  const simple = tryRewrite('explain that like i\'m 5', hist);
+  if (!simple.startsWith('Simply put:')) throw new Error(`simpler failed: ${simple}`);
+  eq(tryRewrite('in one sentence', []), '', 'no previous answer');
+});
+
+// ── v21: Creative Composer ───────────────────────────────────────────────────
+
+Deno.test('parseCompose reads kind, topic, and recipient', () => {
+  const p = parseCompose('write me a prayer about strength');
+  eq(p?.kind, 'prayer', 'prayer kind');
+  eq(p?.topic, 'strength', 'prayer topic');
+  const a = parseCompose('write an apology to my brother');
+  eq(a?.kind, 'apology', 'apology kind');
+  eq(a?.recipient, 'my brother', 'apology recipient');
+  eq(parseCompose('i want to write a book someday'), null, 'not a command');
+  eq(parseCompose('write me a letter to the president'), null, 'unknown kind');
+});
+
+Deno.test('tryCompose produces the piece with the topic woven in', () => {
+  const prayer = tryCompose('write me a prayer about my exams');
+  if (!prayer.includes('my exams') || !prayer.includes('Amen')) throw new Error(`prayer: ${prayer}`);
+  const caption = tryCompose('write a caption for my new song');
+  if (!caption.toLowerCase().includes('my new song')) throw new Error(`caption: ${caption}`);
+  const moti = tryCompose('write me a motivational message about the gym');
+  if (!moti.includes('the gym')) throw new Error(`motivation: ${moti}`);
+  eq(tryCompose('how do i write better lyrics'), '', 'question, not a command');
+});
+
+// ── v21: Goal Planner ────────────────────────────────────────────────────────
+
+Deno.test('parsePlanGoal extracts explicit goals only', () => {
+  eq(parsePlanGoal('give me steps to start a business'), 'start a business', 'steps to');
+  eq(parsePlanGoal('help me plan my first EP'), 'my first ep', 'help me plan, my kept');
+  eq(parsePlanGoal('how do i start a youtube channel'), 'start a youtube channel', 'how do i start prepends start');
+  eq(parsePlanGoal('how do i start investing'), 'start investing', 'gerund goal');
+  eq(parsePlanGoal("what's your plan for today"), null, 'not a plan ask');
+  eq(parsePlanGoal('i have a plan'), null, 'statement');
+});
+
+Deno.test('tryPlan returns a numbered domain plan', () => {
+  const plan = tryPlan('give me steps to start a business');
+  if (!plan.includes("Here's your plan to start a business")) throw new Error(`header: ${plan}`);
+  if (!plan.includes('1. ') || !plan.includes('5. ')) throw new Error('not numbered');
+  if (!/customers|sale|sellable/.test(plan)) throw new Error('not the business domain bank');
+  const generic = tryPlan('help me plan to read the whole bible in a year');
+  if (!generic.includes('1. ')) throw new Error('generic plan missing steps');
+});
+
+// ── v21: Episodic memory ─────────────────────────────────────────────────────
+
+Deno.test('topicFrom captures clean topics and rejects personal ones', () => {
+  eq(topicFrom('who is nikola tesla'), 'nikola tesla', 'entity ask');
+  eq(topicFrom('teach me about photosynthesis'), 'photosynthesis', 'lesson ask');
+  eq(topicFrom('how do i start a business'), 'business', 'plan ask');
+  eq(topicFrom('i feel so lost lately'), null, 'emotional message');
+  eq(topicFrom('thanks'), null, 'no topic');
+});
+
+Deno.test('updateTopics rolls newest-first, deduped, capped', () => {
+  eq(updateTopics(undefined, 'tell me about jazz'), ['jazz'], 'first topic');
+  eq(updateTopics(['jazz'], 'who is nelson mandela'), ['nelson mandela', 'jazz'], 'newest first');
+  eq(updateTopics(['jazz'], 'tell me about jazz'), ['jazz'], 'dedupe');
+  eq(updateTopics(['a', 'b', 'c', 'd', 'e'], 'tell me about jazz')?.length, 5, 'cap at 5');
+  eq(updateTopics(['jazz'], 'ok'), ['jazz'], 'no topic keeps list');
+});
+
+Deno.test('tryEpisodic answers "last time" asks from the stored trail', () => {
+  const out = tryEpisodic('what did we talk about last time?', { lastTopics: ['jazz', 'tesla'] });
+  if (!out.includes('jazz') || !out.includes('tesla')) throw new Error(`missing topics: ${out}`);
+  const empty = tryEpisodic('what did we talk about last time?', {});
+  if (!empty.includes("haven't built up")) throw new Error(`empty case: ${empty}`);
+  eq(tryEpisodic('what were we talking about?', { lastTopics: ['jazz'] }), '', 'current-session ask stays with recall.ts');
+  eq(tryEpisodic('what is jazz', { lastTopics: ['jazz'] }), '', 'not an episodic ask');
+});
+
+// ── v21: Teach & Quiz ────────────────────────────────────────────────────────
+
+Deno.test('lessonTopic reads "teach me about X" and guards the reserved lanes', () => {
+  eq(lessonTopic('teach me about photosynthesis'), 'photosynthesis', 'plain');
+  eq(lessonTopic('navi, teach me about the solar system'), 'the solar system', 'navi prefix, article kept for display');
+  eq(lessonTopic('teach me about yourself'), null, 'personal');
+  eq(lessonTopic('teach me about prophet dian'), null, 'reserved');
+  eq(lessonTopic('learn that the sky is blue'), null, 'teaching NAVI, not a lesson');
+});
+
+Deno.test('buildLesson structures points from across the text', () => {
+  const text = PASTED + ' ' + PASTED.replace(/ocean/g, 'sea');
+  const out = buildLesson('the ocean', text);
+  if (!out.includes('lesson on the ocean')) throw new Error(`header: ${out}`);
+  if (!out.includes('1)') || !out.includes('2)')) throw new Error('not structured');
+  if (!out.includes('tell me more')) throw new Error('no deepen invitation');
+  eq(buildLesson('x', 'too short'), '', 'thin source rejected');
+});
+
+Deno.test('tryQuiz starts a quiz and grades answers with fuzzy matching', () => {
+  const start = tryQuiz('quiz me on the bible', []);
+  if (!start.includes('Q: ') || !/ark|Goliath|Genesis|Israelites/.test(start)) throw new Error(`start: ${start}`);
+
+  const hist = [
+    { role: 'user' as const, content: 'quiz me on the bible' },
+    { role: 'assistant' as const, content: 'Quiz time. Answer straight — I\'ll keep score in spirit.\n\nQ: Who built the ark that survived the great flood?' },
+  ];
+  const right = tryQuiz('noah', hist);
+  if (!right.startsWith('Correct — Noah.')) throw new Error(`grade right: ${right}`);
+  if (!right.includes('Q: ')) throw new Error('no next question');
+  const wrong = tryQuiz('moses', hist);
+  if (!wrong.startsWith('Not quite — the answer is Noah.')) throw new Error(`grade wrong: ${wrong}`);
+  const skip = tryQuiz('idk', hist);
+  if (!skip.startsWith("No stress — it's Noah.")) throw new Error(`skip: ${skip}`);
+  const stop = tryQuiz('stop', hist);
+  if (!stop.includes('quiz mode closed')) throw new Error(`stop: ${stop}`);
+  eq(tryQuiz('what is the capital of france?', hist), '', 'subject change falls through');
+  eq(tryQuiz('noah', []), '', 'no pending quiz');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────

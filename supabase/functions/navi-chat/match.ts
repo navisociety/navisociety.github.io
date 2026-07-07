@@ -39,6 +39,16 @@ export function withinOneEdit(a: string, b: string): boolean {
   return short.slice(i) === long.slice(i + 1); // one insert/delete
 }
 
+// v21: real English words that sit one edit apart but mean different things —
+// they must never be treated as typos of each other ("what did Tesla INVENT"
+// must not hit an INVEST node). Pairs are stored alphabetically sorted.
+const FALSE_FRIENDS = new Set([
+  'invent|invest', 'angel|angle', 'quiet|quite', 'dairy|diary',
+  'contact|contract', 'medal|metal', 'trail|trial', 'desert|dessert',
+  'later|latter', 'moral|morale', 'weather|whether', 'thorough|through',
+  'accept|except', 'affect|effect', 'advice|advise', 'device|devise',
+]);
+
 /**
  * Does a message word count as a match for a trigger word?
  * Exact always matches. With fuzzy enabled: equal stems, or one typo on
@@ -51,6 +61,8 @@ export function wordsMatch(msgWord: string, trigWord: string, fuzzy: boolean): b
   // Typos rarely land on the first letter — requiring it to match kills the
   // worst false neighbours (tower/power, might/night) while keeping real typos.
   if (msgWord.length >= 5 && trigWord.length >= 5 && msgWord[0] === trigWord[0]) {
+    const pair = msgWord < trigWord ? `${msgWord}|${trigWord}` : `${trigWord}|${msgWord}`;
+    if (FALSE_FRIENDS.has(pair)) return false;
     return withinOneEdit(msgWord, trigWord);
   }
   return false;

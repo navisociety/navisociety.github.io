@@ -31,6 +31,9 @@ export type Profile = {
   // v18: persistence + continuity metadata (stored in their own DB columns).
   lastSeen?: string;              // ISO timestamp of the previous message
   lastMood?: string;              // last detected mood label ('low' | 'stressed' | …)
+  // v21: episodic memory — the topics recently explored, newest first, so
+  // "what did we talk about last time?" works across chats and devices.
+  lastTopics?: string[];
 };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
@@ -374,7 +377,12 @@ export function addReturningGreeting(response: string, stored: Profile, nowMs = 
   if (!Number.isFinite(last) || nowMs - last < RETURN_GAP_MS) return response;
 
   const who = stored.name ? `, ${stored.name}` : '';
-  let lead = `Welcome back${who}.`;
+  // v21: pick the thread back up — name the last topic when mood doesn't
+  // take precedence, so the welcome feels like a continued relationship.
+  const topic = stored.lastTopics?.[0];
+  let lead = topic
+    ? `Welcome back${who}. Last time we were into ${topic} — happy to go back there anytime.`
+    : `Welcome back${who}.`;
   if (stored.lastMood === 'low') {
     lead = `Good to see you again${who}. Last time you were carrying something heavy — I've been thinking about that. How are you holding up today?`;
   } else if (stored.lastMood === 'stressed') {

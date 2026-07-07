@@ -51,6 +51,11 @@ import {
 import { tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
 import { addCuriosity } from './curiosity.ts';
+import { trySummarize, tryRewrite } from './understand.ts';
+import { tryCompose } from './compose.ts';
+import { tryPlan } from './plan.ts';
+import { tryEpisodic, updateTopics } from './episodic.ts';
+import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -3917,7 +3922,7 @@ function refineQuery(message: string): string {
 function wikiTitle(query: string): string {
   const t = refineQuery(query).toLowerCase()
     .replace(/^(?:who|what|where)(?:'s| is| are| was| were)\s+/, '')
-    .replace(/^(?:tell me about|define|definition of|meaning of|explain|describe)\s+/, '')
+    .replace(/^(?:tell me about|teach me about|teach me on|teach me|define|definition of|meaning of|explain|describe)\s+/, '')
     // v16: attribute asks still map to the entity's summary page.
     .replace(/^how (?:tall|old|big|high|long|heavy|deep|wide|fast|far) (?:is|was|are|were)\s+/, '')
     .replace(/^(?:a|an|the)\s+/, '')
@@ -4038,6 +4043,10 @@ function isNaviFallback(response: string): boolean {
 function looksFactual(message: string): boolean {
   const t = refineQuery(message).toLowerCase();
   if (/\b(navi|navisociety|prophet|dian|bible|scripture|verse)\b/.test(t)) return false;
+  // v21: "teach me about X" is a lesson ask — factual by nature (checked
+  // before the first-person guard, which would otherwise trip on "me"), so
+  // its "tell me more" follow-up continues from the same source article.
+  if (/^teach me (about|on)\b/.test(t)) return true;
   // v17: first-person / emotional questions ("why do I feel lost", "how do I
   // move on") are NAVI's own lane, not encyclopedia lookups — never route them
   // to the web, even when they start with why/how.
@@ -4176,6 +4185,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // memory confirmations are delivered verbatim.
     let conversational = false;
     let sensitive = false;
+
+    // v21: capability engines. Each returns '' when it doesn't apply, and each
+    // is delivered verbatim — a composed prayer, a numbered plan, a quiz turn,
+    // or a rewritten answer must not be reshaped by the tone/curiosity layers.
+    if (!response) response = trySummarize(message) || tryRewrite(message, history);
+    if (!response) response = tryQuiz(message, history);
+    if (!response) {
+      const topic = lessonTopic(message);
+      if (topic) {
+        const lookup = topic.replace(/^(a|an|the)\s+/i, '');
+        const source = (await wikiFullExtract(lookup)) || (await webLookup(`what is ${lookup}`));
+        response = buildLesson(topic, source);
+      }
+    }
+    if (!response) response = tryCompose(message, stored);
+    if (!response) response = tryPlan(message);
+    if (!response && email) response = tryEpisodic(message, stored);
+
     if (!response) {
       // v17: "tell me more" after a factual answer serves the next slice of the
       // source article, so depth-on-demand actually goes deeper.
@@ -4183,7 +4210,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // v20: reasoning engine — compound and comparative questions are
       // decomposed, each part answered, and synthesised into one reply.
       const reasoned = deeper ? "" : await tryReason(message, history, {
-        answer: (q: string) => navi.infer(q, [{ role: "user", content: q }]),
+        answer: (q: string) => {
+          const r = navi.infer(q, [{ role: "user", content: q }]);
+          // v21: a weakly-matched node must not masquerade as a sub-answer —
+          // better to bail and let the whole question take the normal path.
+          return navi.lastTopScore < 1 ? "" : r;
+        },
         lookup: webLookup,
         isFallback: isNaviFallback,
       });
@@ -4206,6 +4238,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // Silent knowledge augmentation (v19). For a factual question — or any
         // time NAVI fell back — consult what it has already LEARNED first.
         const wasFallback = isNaviFallback(response);
+        // v21: a greeting/identity blurb is a NON-answer to a factual question —
+        // treat it like a fallback so the web gets consulted, and never let it
+        // stand as the final reply to a real question.
+        const nonAnswer = looksFactual(effective) &&
+          /^(hey\b|hi\b|hello\b|yo\b|i'm navi|navi here|navi online|greetings)/i.test(response.trim());
         const weakNode = looksFactual(effective) && navi.lastTopScore < 1;
         if (wasFallback || looksFactual(effective)) {
           const known = await recallKnowledge(effective);
@@ -4213,9 +4250,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
           // (that's the point of teaching NAVI). A web-learned fact only steps in
           // when NAVI's own brain was weak or fell back — it never overrides a
           // strong curated node answer.
-          if (known && (known.source === 'taught' || wasFallback || weakNode)) {
+          if (known && (known.source === 'taught' || wasFallback || nonAnswer || weakNode)) {
             response = known.answer;
-          } else if (!known && (wasFallback || weakNode)) {
+          } else if (!known && (wasFallback || nonAnswer || weakNode)) {
             const web = await webLookup(effective);
             if (web) {
               response = web;
@@ -4225,6 +4262,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
               // NAVI's brain AND the web both missed — log the blind spot so its
               // most-asked gaps surface as a self-improvement backlog.
               await logGap(effective);
+              if (nonAnswer) {
+                response = "That one's at the edge of what I know. What would be most useful to you right now?";
+              }
             }
           }
         }
@@ -4256,6 +4296,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       merged.lastSeen = new Date().toISOString();
       const mood = detectMood(message);
       if (mood) merged.lastMood = mood;
+      // v21: roll this turn's topic (if any) into the episodic topic trail.
+      merged.lastTopics = updateTopics(stored.lastTopics, message);
       await saveStoredProfile(email, merged);
     }
 

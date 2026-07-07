@@ -190,8 +190,10 @@ export async function tryReason(
     const resolved = parts.map((p, i) => (i === 0 ? p : carryEntity(p, entity)));
     const answers = await Promise.all(resolved.map(p => resolve(p, deps)));
     const good = answers.filter(Boolean);
-    // Need at least two real answers to justify a synthesised multi-part reply.
-    if (good.length >= 2) return good.join('\n\n');
+    // v21: even ONE solid sub-answer beats bailing — the whole compound
+    // phrasing rarely survives the normal pipeline's lookups, so delivering
+    // the answerable half is strictly better than a fallback.
+    if (good.length >= 1) return good.join('\n\n');
   }
 
   return '';
