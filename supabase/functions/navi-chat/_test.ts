@@ -24,6 +24,10 @@ import { tryAcknowledgment } from './acts.ts';
 import { tryRepair } from './repair.ts';
 import { tryRecall } from './recall.ts';
 import { wantsMore, nextChunk } from './deepen.ts';
+import {
+  normalizeKey, detectTeach, detectFeedback, previousUserQuestion,
+  recallKnowledge, learnKnowledge, logGap,
+} from './learn.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -518,6 +522,48 @@ Deno.test('deepen: nextChunk returns empty when no overlap or nothing new', () =
   eq(nextChunk(full, full, 900), '', 'all shown → empty');
 });
 
+// ── v19 learning system ─────────────────────────────────────────────────────
+
+Deno.test('normalizeKey strips address, politeness, punctuation', () => {
+  eq(normalizeKey('Hey NAVI, who is the founder of NAVI?'), 'who is the founder of navi', 'norm1');
+  eq(normalizeKey('  Please   explain gravity!! '), 'explain gravity', 'norm2');
+});
+
+Deno.test('detectTeach captures a plain declarative fact', () => {
+  const t = detectTeach('learn that the founder of NAVI is Prophet Dian');
+  eq(t?.key, 'the founder of navi is prophet dian', 'teach-key');
+  eq(t?.answer, 'The founder of NAVI is Prophet Dian.', 'teach-answer-cased');
+});
+
+Deno.test('detectTeach supports explicit question :: answer', () => {
+  const t = detectTeach('learn this: who runs Rekkies :: Prophet Dian runs Rekkies');
+  eq(t?.key, 'who runs rekkies', 'qa-key');
+  eq(t?.answer, 'Prophet Dian runs Rekkies.', 'qa-answer');
+});
+
+Deno.test('detectTeach ignores ordinary talk', () => {
+  eq(detectTeach('I want to learn guitar'), null, 'no-false-teach');
+  eq(detectTeach('remember that time we spoke'), null, 'too-short-or-not-anchored');
+});
+
+Deno.test('detectFeedback reads correction and praise, not content', () => {
+  eq(detectFeedback("that's wrong"), 'down', 'fb-down');
+  eq(detectFeedback('no, incorrect'), 'down', 'fb-down2');
+  eq(detectFeedback("that's right"), 'up', 'fb-up');
+  eq(detectFeedback('perfect, that helped'), 'up', 'fb-up2');
+  eq(detectFeedback('why is war wrong'), null, 'fb-content-not-feedback');
+  eq(detectFeedback('tell me why that is incorrect in physics'), null, 'fb-long-not-feedback');
+});
+
+Deno.test('previousUserQuestion finds the question behind the last answer', () => {
+  const h = [
+    { role: 'user' as const, content: 'who is Newton' },
+    { role: 'assistant' as const, content: 'Isaac Newton was a physicist.' },
+    { role: 'user' as const, content: "that's wrong" },
+  ];
+  eq(previousUserQuestion(h), 'who is Newton', 'prevq');
+});
+
 // ── Live integration (skipped without credentials) ──────────────────────────
 
 const LIVE = !!(Deno.env.get('SUPABASE_URL') && Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
@@ -540,4 +586,19 @@ Deno.test({ name: 'live: topic search returns scripture', ignore: !LIVE, fn: asy
 Deno.test({ name: 'live: normal chat returns null (falls through to model)', ignore: !LIVE, fn: async () => {
   const out = await answerFromBible('how do i stay disciplined with music');
   eq(out, null, 'non-bible message');
+}});
+
+Deno.test({ name: 'live: NAVI learns a fact and recalls it re-phrased', ignore: !LIVE, fn: async () => {
+  const q = 'what is the ' + Date.now() + ' test protocol';
+  await learnKnowledge(q, 'The test protocol is a NAVI self-check.', 'web');
+  const rephrased = 'tell me about the ' + q.replace('what is the ', '');
+  const out = await recallKnowledge(rephrased);
+  if (!out.includes('self-check')) throw new Error(`recall failed: ${out}`);
+}});
+
+Deno.test({ name: 'live: an unanswered question is logged as a gap', ignore: !LIVE, fn: async () => {
+  const q = 'what is the ' + Date.now() + ' unknowable thing';
+  await logGap(q);
+  const out = await recallKnowledge(q); // gaps are not answers
+  eq(out, '', 'gap-not-recalled');
 }});

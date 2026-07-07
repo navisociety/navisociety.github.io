@@ -37,6 +37,10 @@ import { tryAcknowledgment } from './acts.ts';
 import { tryRepair } from './repair.ts';
 import { tryRecall } from './recall.ts';
 import { wantsMore, wikiFullExtract, nextChunk } from './deepen.ts';
+import {
+  detectTeach, teachKnowledge, detectFeedback, applyFeedback,
+  previousUserQuestion, recallKnowledge, learnKnowledge, logGap,
+} from './learn.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4120,6 +4124,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
+    // v19: a signed-in user can TEACH NAVI directly ("learn that…"). The fact
+    // is saved to the shared knowledge base (higher trust than web answers) and
+    // recalled forever after, for anyone, however they phrase the question.
+    // Signed-in only, so the shared base can't be poisoned by anonymous input.
+    if (email) {
+      const teaching = detectTeach(message);
+      if (teaching) {
+        const reply = await teachKnowledge(teaching, email, history.length);
+        return new Response(JSON.stringify({ response: reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // v19: learn from CORRECTION. "That's wrong" / "that's right" about NAVI's
+    // last answer nudges that learned answer's confidence up or down — and an
+    // answer NAVI keeps getting corrected on is retired, so it stops repeating a
+    // mistake. Signed-in only. Doesn't change the reply itself (repair.ts owns
+    // the conversational response); this is the silent learning side-effect.
+    if (email) {
+      const verdict = detectFeedback(message);
+      if (verdict) {
+        const prevQ = previousUserQuestion(history);
+        if (prevQ) await applyFeedback(prevQ, verdict);
+      }
+    }
+
     // Bible first: verse references and explicit scripture asks are answered
     // from the full KJV in navi_bible_verses (31,102 verses), not the nodes.
     let response = await answerFromBible(message) ?? "";
@@ -4137,12 +4169,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // v18: stored memory is threaded into inference so name-drop and
         // "what's my name?" work across chats, not just within this session.
         response = navi.infer(effective, [...history, { role: "user", content: effective }], stored);
-        // Silent web augmentation: fires when NAVI hit a generic fallback, or when
-        // a factual question only weakly matched a node. The web answer replaces
-        // the response invisibly; if the lookup finds nothing, NAVI's own reply stands.
-        if (isNaviFallback(response) || (looksFactual(effective) && navi.lastTopScore < 1)) {
-          const web = await webLookup(effective);
-          if (web) response = web;
+        // Silent knowledge augmentation: fires when NAVI hit a generic fallback,
+        // or when a factual question only weakly matched a node.
+        const wasFallback = isNaviFallback(response);
+        if (wasFallback || (looksFactual(effective) && navi.lastTopScore < 1)) {
+          // v19: ask what NAVI has already LEARNED first — taught facts and past
+          // web answers come back instantly from navi_knowledge, no re-fetch.
+          const known = await recallKnowledge(effective);
+          if (known) {
+            response = known;
+          } else {
+            const web = await webLookup(effective);
+            if (web) {
+              response = web;
+              // v19: remember it, so the next person who asks gets it instantly.
+              await learnKnowledge(effective, web, 'web');
+            } else if (looksFactual(effective) || wasFallback) {
+              // v19: NAVI's brain AND the web both missed — log the blind spot so
+              // its most-asked gaps surface as a self-improvement backlog.
+              await logGap(effective);
+            }
+          }
         }
       }
     }
