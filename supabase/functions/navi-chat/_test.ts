@@ -28,6 +28,9 @@ import {
   normalizeKey, detectTeach, detectFeedback, previousUserQuestion,
   recallKnowledge, learnKnowledge, logGap,
 } from './learn.ts';
+import { detectComparison, splitCompound, tryReason } from './reason.ts';
+import { adaptTone, userIsTerse } from './tone.ts';
+import { addCuriosity } from './curiosity.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -565,6 +568,92 @@ Deno.test('previousUserQuestion finds the question behind the last answer', () =
     { role: 'user' as const, content: "that's wrong" },
   ];
   eq(previousUserQuestion(h), 'who is Newton', 'prevq');
+});
+
+// ── v20: Reasoning Engine ────────────────────────────────────────────────────
+
+Deno.test('detectComparison pulls both sides', () => {
+  eq(detectComparison("what's the difference between a virus and a bacteria"),
+    ['virus', 'bacteria'], 'difference-between');
+  eq(detectComparison('compare python and javascript'), ['python', 'javascript'], 'compare-and');
+  eq(detectComparison('coffee vs tea'), ['coffee', 'tea'], 'vs');
+  eq(detectComparison('who is Newton'), null, 'not-a-comparison');
+});
+
+Deno.test('splitCompound separates multi-part questions', () => {
+  eq(splitCompound('who is Tesla and what did he invent'),
+    ['who is Tesla?', 'what did he invent?'], 'wh-and-wh');
+  eq(splitCompound('who is Tesla? what did he invent?'),
+    ['who is Tesla?', 'what did he invent?'], 'two-question-marks');
+  eq(splitCompound('how are you'), [], 'single-question');
+});
+
+Deno.test('tryReason synthesises a comparison, skips first-person/emotional', async () => {
+  const answer = (q: string) =>
+    /virus/i.test(q) ? 'A virus is a tiny infectious agent.'
+    : /bacteria/i.test(q) ? 'Bacteria are single-celled organisms.'
+    : "I don't have a sharp answer for that yet";
+  const deps = { answer, lookup: (_q: string) => Promise.resolve(''), isFallback: (r: string) => r.includes("I don't have a sharp answer") };
+
+  const out = await tryReason("what's the difference between a virus and a bacteria", [], deps);
+  if (!out.includes('infectious') || !out.includes('single-celled')) throw new Error(`comparison: ${out}`);
+
+  const skip = await tryReason('why do I feel lost and how do I move on', [], deps);
+  eq(skip, '', 'first-person emotional is not decomposed');
+
+  const brand = await tryReason('what is NAVI and who is Prophet Dian', [], deps);
+  eq(brand, '', 'brand questions stay on their own path');
+});
+
+// ── v20: Adaptive Tone Engine ────────────────────────────────────────────────
+
+const longReply = 'A habit is a behaviour repeated until it runs automatically. It forms through a cue, a routine, and a reward looping over time. The brain wires it in to save energy. Breaking one means disrupting the cue or swapping the routine. It takes consistency, not willpower, to reshape it fully.';
+
+Deno.test('adaptTone leaves sensitive replies untouched', () => {
+  const out = adaptTone(longReply, 'ok', [], { sensitive: true, isFallback: false });
+  eq(out, longReply, 'sensitive-passthrough');
+});
+
+Deno.test('adaptTone softens for distress and mirrors hype', () => {
+  const soft = adaptTone('Discipline is built by repetition.', 'i feel so alone and broken', [], { sensitive: false, isFallback: false });
+  if (!/^(i hear you|i'm with you|that's a lot)/i.test(soft)) throw new Error(`soften: ${soft}`);
+
+  const hype = adaptTone('Discipline is built by repetition.', 'LETS GOOO this is amazing!!!', [], { sensitive: false, isFallback: false });
+  if (!/^(let's go|yes|love that energy|right there)/i.test(hype)) throw new Error(`hype: ${hype}`);
+});
+
+Deno.test('adaptTone compresses long answers for terse users', () => {
+  const hist = [
+    { role: 'user' as const, content: 'yo' },
+    { role: 'assistant' as const, content: 'hey' },
+    { role: 'user' as const, content: 'cool' },
+    { role: 'assistant' as const, content: 'yeah' },
+  ];
+  const out = adaptTone(longReply, 'habits', hist, { sensitive: false, isFallback: false });
+  if (out.length >= longReply.length) throw new Error(`not compressed: ${out}`);
+  if (!/[.!?]$/.test(out.trim())) throw new Error(`not clean end: ${out}`);
+});
+
+Deno.test('userIsTerse reads sustained short rhythm, not one short word', () => {
+  eq(userIsTerse('what is the meaning of consciousness and free will', []), false, 'long-message');
+  eq(userIsTerse('cool', [{ role: 'user', content: 'nice' }, { role: 'user', content: 'ok' }]), true, 'terse-rhythm');
+});
+
+// ── v20: Curiosity Engine ────────────────────────────────────────────────────
+
+Deno.test('addCuriosity appends a topic-aware follow-up on substantive replies', () => {
+  const out = addCuriosity(longReply, 'what is a habit', [], { sensitive: false, isFallback: false, terse: false });
+  if (!out.includes('?')) throw new Error(`no follow-up: ${out}`);
+  if (out === longReply) throw new Error('nothing appended');
+});
+
+Deno.test('addCuriosity stays silent when it would be noise', () => {
+  eq(addCuriosity(longReply, 'thanks', [], { sensitive: false, isFallback: false, terse: false }), longReply, 'farewell/thanks');
+  eq(addCuriosity(longReply, 'what is a habit', [], { sensitive: true, isFallback: false, terse: false }), longReply, 'sensitive');
+  eq(addCuriosity(longReply, 'what is a habit', [], { sensitive: false, isFallback: false, terse: true }), longReply, 'terse');
+  eq(addCuriosity('Short.', 'what is a habit', [], { sensitive: false, isFallback: false, terse: false }), 'Short.', 'too-short');
+  const asks = longReply + ' What do you think?';
+  eq(addCuriosity(asks, 'what is a habit', [], { sensitive: false, isFallback: false, terse: false }), asks, 'already-asks');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────

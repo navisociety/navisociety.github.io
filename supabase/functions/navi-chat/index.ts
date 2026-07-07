@@ -17,6 +17,13 @@
 // chains via context.ts, world-time/day-of-week/born-year/word-tool skills,
 // acknowledgment replies for bare reactions via acts.ts, and a faster web
 // layer (DuckDuckGo + Wikipedia in parallel with an in-memory answer cache).
+// v20: three LLM evolutions — (1) Reasoning Engine (reason.ts): compound and
+// comparative questions are decomposed, each part answered from brain/knowledge/
+// web, then synthesised into one structured reply; (2) Adaptive Tone Engine
+// (tone.ts): delivery is reshaped to the user — soften for distress, mirror
+// hype, compress long answers for terse quick-chat; (3) Curiosity Engine
+// (curiosity.ts): substantive answers get one entity-aware forward follow-up.
+// All three skip crisis/sensitive replies (navi.lastWasSensitive) and Bible.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -41,6 +48,9 @@ import {
   detectTeach, teachKnowledge, detectFeedback, applyFeedback,
   previousUserQuestion, recallKnowledge, learnKnowledge, logGap,
 } from './learn.ts';
+import { tryReason } from './reason.ts';
+import { adaptTone, userIsTerse } from './tone.ts';
+import { addCuriosity } from './curiosity.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -3508,6 +3518,10 @@ class NaviModel {
    *  keyword score. 1 = a trigger fully matched (or deterministic answer);
    *  below 1 = only partial word overlap; 0 = no node matched at all. */
   lastTopScore = 1;
+  /** v20: true when the most recent infer() answered from a crisis / sensitive
+   *  node (priority >= 9) or was blocked by the constitution. The tone and
+   *  curiosity layers read this and leave such replies exactly as written. */
+  lastWasSensitive = false;
 
   // Topics worth remembering across a conversation, keyed by detectable theme.
   private static readonly MEMORY_TOPICS: { key: string; words: string[]; label: string }[] = [
@@ -3656,13 +3670,14 @@ class NaviModel {
 
   infer(message: string, history: NaviMessage[], stored?: Profile): string {
     this.lastTopScore = 1; // deterministic paths (block/skill) are fully confident
+    this.lastWasSensitive = false; // v20: reset per call; set on crisis/sensitive paths
 
     // v15: cadence follows THIS conversation, not a counter shared across
     // every user on the isolate.
     const convTurn = history.filter(m => m.role === 'assistant').length + 1;
 
     const block = this.constitutionCheck(message);
-    if (block) return block;
+    if (block) { this.lastWasSensitive = true; return block; }
 
     // v17: repair signals aimed at NAVI ("that's wrong", "you're not helping",
     // "that's not what I asked", "you already said that") get a composed reset
@@ -3758,6 +3773,7 @@ class NaviModel {
       // relevant and the primary match isn't already a clear single-topic hit,
       // append the best-matching line from the secondary node as extra context.
       const isSensitive = (primary.node.priority ?? 5) >= 9;
+      this.lastWasSensitive = isSensitive; // v20: guard tone/curiosity off crisis replies
       if (
         !isSensitive &&
         secondary &&
@@ -4155,12 +4171,28 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Bible first: verse references and explicit scripture asks are answered
     // from the full KJV in navi_bible_verses (31,102 verses), not the nodes.
     let response = await answerFromBible(message) ?? "";
+    // v20: only the conversational (node/knowledge/web/reasoning) path is
+    // reshaped by the tone + curiosity layers. Bible verses, deepen slices, and
+    // memory confirmations are delivered verbatim.
+    let conversational = false;
+    let sensitive = false;
     if (!response) {
       // v17: "tell me more" after a factual answer serves the next slice of the
       // source article, so depth-on-demand actually goes deeper.
       const deeper = await tryDeepen(message, history);
+      // v20: reasoning engine — compound and comparative questions are
+      // decomposed, each part answered, and synthesised into one reply.
+      const reasoned = deeper ? "" : await tryReason(message, history, {
+        answer: (q: string) => navi.infer(q, [{ role: "user", content: q }]),
+        lookup: webLookup,
+        isFallback: isNaviFallback,
+      });
       if (deeper) {
         response = deeper;
+      } else if (reasoned) {
+        response = reasoned;
+        conversational = true;
+        sensitive = false; // reasoned answers are factual, never crisis
       } else {
         // v16: pronoun follow-ups in factual chains ("who is Nelson Mandela" →
         // "how old is he?") are rewritten with the entity before retrieval and
@@ -4169,6 +4201,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // v18: stored memory is threaded into inference so name-drop and
         // "what's my name?" work across chats, not just within this session.
         response = navi.infer(effective, [...history, { role: "user", content: effective }], stored);
+        conversational = true;
+        sensitive = navi.lastWasSensitive;
         // Silent knowledge augmentation (v19). For a factual question — or any
         // time NAVI fell back — consult what it has already LEARNED first.
         const wasFallback = isNaviFallback(response);
@@ -4195,6 +4229,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
           }
         }
       }
+    }
+
+    // v20: adaptive delivery — reshape tone/length to match the user, then add a
+    // forward-driving follow-up. Conversational replies only; Bible verses,
+    // deepen slices, memory confirmations, and crisis replies are untouched.
+    if (conversational) {
+      const fallbackNow = isNaviFallback(response);
+      const terse = userIsTerse(message, history);
+      response = adaptTone(response, message, history, { sensitive, isFallback: fallbackNow });
+      response = addCuriosity(response, message, history, { sensitive, isFallback: fallbackNow, terse });
     }
 
     // v18: returning-user warmth — on the first message of a fresh session,
