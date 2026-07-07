@@ -29,6 +29,9 @@ import { wordsMatch } from './match.ts';
 import { extractProfile, answerProfileQuestion, memoryAcknowledgement } from './memory.ts';
 import { resolveReference } from './context.ts';
 import { tryAcknowledgment } from './acts.ts';
+import { tryRepair } from './repair.ts';
+import { tryRecall } from './recall.ts';
+import { wantsMore, wikiFullExtract, nextChunk } from './deepen.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -249,6 +252,11 @@ class NaviTokenizer {
       'sars','tax','efiling','uif','retrenched','retrenchment','cipc','registration','licence','license','learners',
       'province','provinces','capital','capitals','pretoria','bloemfontein','johannesburg','gauteng','continent','continents','ocean','river','desert','everest','nile','sahara',
       'aid','ambulance','choking','cpr','bleeding','wound','emergency','convert','kilometers','miles','celsius','fahrenheit','calculate',
+      // v17: practical life skills
+      'negotiate','negotiation','raise','offer','criticism','feedback','critique','procrastinate','procrastination',
+      'goals','smart','system','systems','habit','habits','cue','routine','reward','streak','recall','spaced','repetition',
+      'revision','exams','cram','cramming','sleep','insomnia','caffeine','presentation','speaking','stage','fright','nerves',
+      'friends','friendship','social','rejection','rejected','decision','decisions','decide','choice','options','saving','investing','diversify','index',
     ];
     this.vocab = new Map(words.map((w, i) => [w, i]));
     this.vocabSize = words.length;
@@ -3356,6 +3364,119 @@ const KNOWLEDGE: KNode[] = [
     ],
     priority: 8, // outranks the Africa node (7), which also matches "south africa"
   },
+  // ── v17: practical life skills ───────────────────────────────────────────
+  {
+    triggers: ['prepare for an interview', 'job interview', 'interview tips', 'nervous for interview', 'how do i interview', 'ace an interview', 'interview questions', 'pass an interview'],
+    responses: [
+      "Interviews reward preparation, not luck. Three moves: (1) Research the company enough to say why THEM specifically — not just any job. (2) Have three stories ready that show a problem you solved, framed as Situation → what you did → the result. (3) Prepare two real questions to ask them; it flips you from applicant to peer. On the day, slow down — a two-second pause before answering reads as thoughtful, not stuck. What role is it for?",
+      "The secret most people miss: an interview isn't a test, it's a conversation about whether you solve their problem. So find out what problem the role exists to solve, then show — with a specific past example — that you've done something like it. Dress one notch above the everyday, arrive early, and end by asking what success looks like in the first 90 days. That last question alone sets you apart. Want help prepping answers?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['write a cv', 'write a resume', 'make a cv', 'my cv', 'cv tips', 'resume tips', 'improve my cv', 'good cv', 'what goes on a cv'],
+    responses: [
+      "A CV isn't your life story — it's a one-page argument that you can do the job. Lead with a two-line summary of who you are and what you're after. Then experience in reverse order, and here's the key: write achievements, not duties. Not 'responsible for sales' but 'grew sales 30% in six months.' Numbers make it real. Keep it to one or two pages, no photo unless asked, and tailor the top third to each job. Want me to sharpen a specific section?",
+      "Recruiters scan a CV in about seven seconds, so the top third decides everything. Put your strongest, most relevant win right up there. Use active verbs — built, led, grew, launched — and quantify wherever you can. Cut anything older than ten years or irrelevant to this role. Clean layout, consistent formatting, zero typos (read it backwards to catch them). And always match the words in the job ad — many CVs get filtered by software first. What's the job you're targeting?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['negotiate salary', 'ask for a raise', 'salary negotiation', 'negotiate a price', 'how to negotiate', 'negotiating', 'ask for more money', 'counter offer'],
+    responses: [
+      "Negotiation isn't a fight — it's showing that what you bring is worth more than the number on the table. First, know the market rate (ask around, check listings) so you're anchored in reality, not hope. Then let them name a figure first when you can. When you counter, tie it to value you've delivered, not your needs. And use silence — after you state your number, stop talking. The discomfort works in your favour. What are you negotiating?",
+      "Three rules that win most negotiations: (1) Never accept the first offer — there's almost always room, and asking rarely costs you. (2) Argue from value and market data, not from 'I really need it.' (3) Be willing to walk, at least in your head — the person who can walk away holds the power. Frame it as a partnership: 'I want to make this work — here's what would.' What's the situation?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['handle criticism', 'take criticism', 'deal with feedback', 'receiving feedback', 'someone criticized me', 'handle feedback', 'take feedback', 'people criticize me'],
+    responses: [
+      "Criticism stings because it hits identity — but you can separate the signal from the sting. First, don't react in the moment; just say 'let me think about that.' Then ask: is there even 5% truth here I can use? Take the 5%, leave the rest. Feedback about your work isn't a verdict on your worth. The people who grow fastest are the ones who can hear a hard thing without collapsing or defending. What was said to you?",
+      "Here's the reframe: every piece of criticism is either useful information or noise, and your only job is to sort which. Useful — thank them, it's a gift most people won't give you. Noise — let it pass; not every opinion deserves rent in your head. The trap is treating all of it as either fully true or fully false. Sit with it a day before deciding. What are you dealing with?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['stop procrastinating', 'beat procrastination', 'i procrastinate', 'always procrastinate', 'how to stop procrastinating', 'keep procrastinating', 'cant start', 'cant get started'],
+    responses: [
+      "Procrastination isn't laziness — it's usually the task feeling too big or too vague, so your brain avoids the discomfort. Two fixes that actually work: (1) Shrink it. Don't 'write the essay' — write one bad sentence. Starting is the whole battle; momentum does the rest. (2) The two-minute rule: commit to just two minutes. You'll almost always keep going, and if you don't, two minutes still beat zero. What are you putting off?",
+      "The real move against procrastination is making starting stupidly easy and distraction stupidly hard. Put the phone in another room. Break the task into the smallest possible first step — so small it feels silly to skip. And forgive yourself for past delay; guilt just feeds the avoidance loop. Done imperfectly beats perfect-and-never. Pick the one thing you're avoiding and tell me — we'll shrink it together.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['set goals', 'setting goals', 'how to set goals', 'achieve my goals', 'smart goals', 'reach my goals', 'stick to goals', 'goal setting'],
+    responses: [
+      "Goals fail when they're wishes, not designs. Make them SMART — Specific, Measurable, Achievable, Relevant, Time-bound. 'Get fit' is a wish; 'run 5km without stopping by March, training three times a week' is a plan. But here's the deeper truth: you don't rise to your goals, you fall to your systems. So set the goal for direction, then build the daily habit that makes it inevitable. What are you aiming at?",
+      "The best goal-setting move is to focus on the process, not just the outcome. You can't control 'get 10,000 followers' directly — but you can control 'post one real thing daily,' and that produces the outcome. Write the goal down (people who do are far more likely to hit it), break it into weekly steps, and review it every Sunday. Direction from the goal, progress from the system. What goal are we building?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['study better', 'how to study', 'study effectively', 'study for exams', 'revision tips', 'remember what i study', 'study tips', 'exam preparation', 'prepare for exams'],
+    responses: [
+      "Most studying is inefficient because it's passive — re-reading and highlighting feel productive but barely stick. The two techniques research keeps proving: (1) Active recall — close the book and test yourself; struggling to remember is what builds memory. (2) Spaced repetition — review at growing intervals (day 1, 3, 7) instead of cramming. Cramming gets you through tomorrow; spacing gets you through the year. What are you studying for?",
+      "Study smarter with three moves: teach it (if you can explain it simply, you know it — if you can't, you've found your gap); test yourself instead of re-reading; and space your sessions out rather than marathon cramming. Add short breaks — 25 minutes on, 5 off keeps focus sharp. And sleep before the exam beats the extra all-nighter hour every time; memory consolidates while you rest. What subject's giving you trouble?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['sleep better', 'cant sleep', 'how to sleep', 'improve my sleep', 'sleep problems', 'insomnia', 'fall asleep', 'trouble sleeping', 'sleep hygiene'],
+    responses: [
+      "Better sleep is mostly built in the hours before bed, not in bed. The big levers: keep a consistent wake time (even weekends — it anchors your whole rhythm), get sunlight early in the day, and cut screens and bright light in the last hour — the blue light tells your brain it's still daytime. Keep the room cool and dark. If you can't sleep after 20 minutes, get up and do something dull until you're drowsy; lying there frustrated just trains your brain to fight sleep. What's keeping you up?",
+      "If sleep won't come, stop chasing it — the effort makes it worse. Instead, build the runway: no caffeine after early afternoon (it lingers 6+ hours), dim the lights in the evening, and give your mind a wind-down ritual so it learns bed means rest. A cool, dark, quiet room helps more than people think. And if a racing mind is the problem, write tomorrow's worries on paper — it lets your brain put them down. What does your evening look like right now?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['saving vs investing', 'should i save or invest', 'start investing', 'how to invest', 'investing for beginners', 'what is investing', 'saving or investing', 'begin investing'],
+    responses: [
+      "Saving and investing do different jobs. Saving is money you keep safe and reachable — your emergency fund (aim for 3–6 months of expenses) lives here. Investing is money you grow over years by putting it to work, accepting short-term ups and downs for long-term gains. Rule of thumb: save first for emergencies, then invest what you won't need soon. For beginners, low-cost index funds spread your risk across the whole market instead of betting on one company. This is general guidance, not personalised financial advice — but what's your situation?",
+      "The order that keeps people safe: (1) small emergency buffer, (2) clear high-interest debt — no investment reliably beats 20% credit-card interest, (3) then invest for the long term. Investing works through time and compounding, so starting small and early beats waiting to start big. Spread your money (diversify) rather than gambling on one stock, and only invest what you can leave alone for years. Not formal financial advice — but tell me where you're starting from and I'll help you think it through.",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['build a habit', 'form a habit', 'stick to a habit', 'make it a habit', 'build good habits', 'break a habit', 'how habits work', 'new habit'],
+    responses: [
+      "Every habit runs on a loop: cue → routine → reward. To build one, attach it to something you already do ('after I brew coffee, I write for ten minutes') so the existing action becomes the cue. Make it tiny at first — showing up daily matters more than intensity; you're wiring the pattern, not winning the day. To break a bad habit, keep the cue and reward but swap the routine, or remove the cue entirely. What habit are you building or breaking?",
+      "The science is clear: habits stick when they're small, obvious, and rewarding. Shrink it until it's almost impossible to fail — one push-up, one sentence. Make the cue visible (gym clothes out the night before). And give yourself an immediate win, even just ticking a box, because your brain repeats what feels good now, not what pays off later. Miss a day? Never miss twice — the streak isn't the point, the identity is. What are you trying to make automatic?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['public speaking', 'scared of public speaking', 'speak in public', 'presentation nerves', 'nervous presenting', 'fear of speaking', 'stage fright', 'talk in front of people'],
+    responses: [
+      "Stage fright is just energy with nowhere to go — the goal isn't to kill it but to channel it. Three things that work: (1) Over-prepare your opening; once the first 30 seconds go smoothly, your body calms down. (2) Reframe the nerves — the racing heart is the same as excitement; tell yourself 'I'm excited,' and it genuinely helps. (3) Focus on serving the audience, not on being judged; it pulls attention off yourself. And practise out loud, not just in your head. What are you presenting?",
+      "Everyone shakes before speaking — the confident ones just prepared enough that the shaking doesn't run the show. Know your first and last lines cold. Slow down; nerves make us rush, and pauses read as authority. Look at a few friendly faces, not the whole crowd. And remember the audience wants you to do well — they're not hunting for your mistakes. Practise the actual thing standing up, ideally to one person first. What's the occasion?",
+    ],
+    priority: 6,
+  },
+  {
+    triggers: ['make friends', 'making friends', 'how to make friends', 'hard to make friends', 'no friends', 'meet new people', 'social confidence', 'build friendships'],
+    responses: [
+      "Friendship grows from two things: repeated contact and genuine interest. So put yourself where the same people show up regularly — a class, a gym, a team, a community — because closeness is built through repetition, not single perfect meetings. Then be curious: ask people about themselves and actually listen. Most people are also hoping someone reaches out first, so being the one who does is quietly powerful. What's making it hard right now?",
+      "The thing nobody says about making friends: it's a skill, not a personality trait, and it starts with small risks. Follow up ('want to grab coffee?'), remember details people tell you, and be willing to go slightly deeper than small talk. Vulnerability — sharing something real — is what turns acquaintances into friends. And consistency matters more than charisma; the friend who keeps showing up wins. Where are you meeting people, or not?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['deal with rejection', 'handle rejection', 'got rejected', 'fear of rejection', 'rejection hurts', 'scared of rejection', 'being rejected', 'cope with rejection'],
+    responses: [
+      "Rejection hurts because we're wired to fear exclusion — for most of human history, being cast out was dangerous. Knowing that helps: the pain is ancient wiring, not proof you're unworthy. A rejection is information about one fit, one moment, one person's taste — not a verdict on your value. The people who get what they want are usually just the ones who stayed in the game after being told no. What got rejected — and what do you want to do next?",
+      "Here's the reframe that changes everything: rejection is redirection, and it's also evidence you're actually trying. Every no narrows the field toward your yes. Feel it — don't pretend it doesn't sting — but don't build a story that it means something about your whole worth. Give it a day, then take one more shot, at this or the next thing. Courage isn't not being afraid of no; it's asking anyway. What happened?",
+    ],
+    priority: 5,
+  },
+  {
+    triggers: ['make a decision', 'hard decision', 'cant decide', 'how to decide', 'making decisions', 'tough choice', 'stuck on a decision', 'help me decide'],
+    responses: [
+      "When a decision won't resolve, it's usually because you're waiting for certainty that isn't coming. Try this: (1) Write the real options down — vague choices feel scarier than they are. (2) For each, ask 'what does this cost me, and what does it open?' (3) Play it forward — imagine it's a year from now having chosen each; which version of you do you respect more? Often the fear of choosing wrong is worse than any actual outcome. What's the choice?",
+      "A few tools for a stuck decision: the 10-10-10 test — how will you feel about this in 10 minutes, 10 months, 10 years? It cuts through short-term fear. If two options feel equal, that's real information — it means either is fine, so pick and commit; the agonising is the only wrong move. And notice your gut reaction the instant you imagine choosing one — that flash often knows before your logic does. What are you deciding between?",
+    ],
+    priority: 5,
+  },
   {
     triggers: ['how many continents', 'seven continents', 'name the continents', 'longest river', 'highest mountain', 'largest ocean', 'largest country', 'smallest country', 'biggest desert', 'deepest ocean'],
     responses: [
@@ -3534,6 +3655,13 @@ class NaviModel {
     const block = this.constitutionCheck(message);
     if (block) return block;
 
+    // v17: repair signals aimed at NAVI ("that's wrong", "you're not helping",
+    // "that's not what I asked", "you already said that") get a composed reset
+    // instead of being matched against the knowledge nodes. Runs first so a
+    // frustrated user is never handed a mismatched essay.
+    const repair = tryRepair(message, convTurn);
+    if (repair) return repair;
+
     // v16: bare reactions ("ok", "yes", "lol", "wow") get short forward-moving
     // replies instead of falling into the generic fallback pool.
     const ack = tryAcknowledgment(message, convTurn);
@@ -3555,6 +3683,12 @@ class NaviModel {
     // "my birthday is…") directly instead of letting retrieval guess.
     const memoryAck = memoryAcknowledgement(message, profile);
     if (memoryAck) return memoryAck;
+
+    // v17: conversation recall — "what were we talking about?", "recap",
+    // "where were we?" — reconstruct the thread from history instead of
+    // guessing at a knowledge node.
+    const recall = tryRecall(message, history);
+    if (recall) return recall;
 
     // v13: follow-up blending — a bare "why?" / "tell me more" is retrieved
     // in the context of the previous user message, not on its own.
@@ -3874,10 +4008,52 @@ function isNaviFallback(response: string): boolean {
 function looksFactual(message: string): boolean {
   const t = refineQuery(message).toLowerCase();
   if (/\b(navi|navisociety|prophet|dian|bible|scripture|verse)\b/.test(t)) return false;
+  // v17: first-person / emotional questions ("why do I feel lost", "how do I
+  // move on") are NAVI's own lane, not encyclopedia lookups — never route them
+  // to the web, even when they start with why/how.
+  if (/\b(i|i'm|im|me|my|mine|myself|we|us|our)\b/.test(t)) return false;
+  if (/\b(feel|feeling|sad|happy|scared|hurt|alone|lonely|angry|stressed|overwhelmed|anxious|depressed|cope|heal)\b/.test(t)) return false;
   if (/^(who|what|when|where|which|how (many|much|far|tall|old|long|big|fast|heavy|deep|wide))\b/.test(t)) return true;
   // v15: definition and encyclopedia-style asks deserve real answers too.
   if (/^(define|definition of|meaning of|explain|describe|tell me about)\b/.test(t)) return true;
+  // v17: causal ("why does the sky look blue", "what causes rust") and process
+  // ("how does a jet engine work") questions are genuine factual lookups.
+  if (/^why (?:does|do|did|is|are|was|were|can|would|has|have)\b/.test(t)) return true;
+  if (/^how (?:does|do|did|is|are|can) .+\b(work|works|happen|happens|form|forms|made|caused|function)\b/.test(t)) return true;
+  if (/^what (?:causes|caused|makes|is the cause of)\b/.test(t)) return true;
+  // v17: comparisons ("difference between X and Y", "X vs Y", "compare X and Y").
+  if (/\b(difference between|compared to|versus|\bvs\b|compare)\b/.test(t)) return true;
   return /^(capital|population|president|ceo|founder|currency|distance|height|area|size) of\b/.test(t);
+}
+
+// v17: progressive depth. A bare "tell me more" after NAVI answered a factual
+// question pulls the full article for that topic and returns the next unseen
+// slice. Returns '' whenever it doesn't cleanly apply, so the normal pipeline
+// (which handles emotional/topical "tell me more" via follow-up blending) runs.
+async function tryDeepen(message: string, history: NaviMessage[]): Promise<string> {
+  if (!wantsMore(message)) return '';
+
+  let ai = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'assistant') { ai = i; break; }
+  }
+  if (ai < 0) return '';
+  const lastAnswer = history[ai].content;
+
+  let prevQ = '';
+  for (let i = ai - 1; i >= 0; i--) {
+    if (history[i].role === 'user') { prevQ = history[i].content; break; }
+  }
+  if (!prevQ || !looksFactual(prevQ)) return '';
+
+  const title = wikiTitle(prevQ);
+  if (!title) return '';
+
+  const full = await wikiFullExtract(title);
+  if (!full) return '';
+
+  const chunk = nextChunk(full, lastAnswer, 900);
+  return chunk ? cleanWebText(chunk) : '';
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -3920,17 +4096,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // from the full KJV in navi_bible_verses (31,102 verses), not the nodes.
     let response = await answerFromBible(message) ?? "";
     if (!response) {
-      // v16: pronoun follow-ups in factual chains ("who is Nelson Mandela" →
-      // "how old is he?") are rewritten with the entity before retrieval and
-      // the web lookup ever see them.
-      const effective = resolveReference(message, history) ?? message;
-      response = navi.infer(effective, [...history, { role: "user", content: effective }]);
-      // Silent web augmentation: fires when NAVI hit a generic fallback, or when
-      // a factual question only weakly matched a node. The web answer replaces
-      // the response invisibly; if the lookup finds nothing, NAVI's own reply stands.
-      if (isNaviFallback(response) || (looksFactual(effective) && navi.lastTopScore < 1)) {
-        const web = await webLookup(effective);
-        if (web) response = web;
+      // v17: "tell me more" after a factual answer serves the next slice of the
+      // source article, so depth-on-demand actually goes deeper.
+      const deeper = await tryDeepen(message, history);
+      if (deeper) {
+        response = deeper;
+      } else {
+        // v16: pronoun follow-ups in factual chains ("who is Nelson Mandela" →
+        // "how old is he?") are rewritten with the entity before retrieval and
+        // the web lookup ever see them.
+        const effective = resolveReference(message, history) ?? message;
+        response = navi.infer(effective, [...history, { role: "user", content: effective }]);
+        // Silent web augmentation: fires when NAVI hit a generic fallback, or when
+        // a factual question only weakly matched a node. The web answer replaces
+        // the response invisibly; if the lookup finds nothing, NAVI's own reply stands.
+        if (isNaviFallback(response) || (looksFactual(effective) && navi.lastTopScore < 1)) {
+          const web = await webLookup(effective);
+          if (web) response = web;
+        }
       }
     }
 

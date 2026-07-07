@@ -18,6 +18,9 @@ import { stem, withinOneEdit, wordsMatch } from './match.ts';
 import { extractProfile, answerProfileQuestion, memoryAcknowledgement, toSecondPerson } from './memory.ts';
 import { extractTopicEntity, resolveReference } from './context.ts';
 import { tryAcknowledgment } from './acts.ts';
+import { tryRepair } from './repair.ts';
+import { tryRecall } from './recall.ts';
+import { wantsMore, nextChunk } from './deepen.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -360,6 +363,76 @@ Deno.test('acts: rotation varies by turn, content messages skipped', () => {
   eq(tryAcknowledgment('yes i want to die', 0), null, 'crisis phrasing never swallowed');
   eq(tryAcknowledgment('thanks', 0), null, 'thanks stays with its node');
   eq(tryAcknowledgment('hello', 0), null, 'greeting stays with its node');
+});
+
+// ── v17 conversational repair ───────────────────────────────────────────────
+
+Deno.test('repair: criticism aimed at NAVI gets a composed reset', () => {
+  for (const msg of [
+    "that's wrong", "you're wrong", "no that's not right", "wrong answer",
+    "you're not helping", "that's not helpful", "useless", "you don't get it",
+    "that's not what i asked", "you misunderstood", "you already said that",
+    "stop repeating yourself", "you keep saying the same thing", "you're stupid",
+  ]) {
+    if (!tryRepair(msg, 0)) throw new Error(`no repair for: ${msg}`);
+  }
+});
+
+Deno.test('repair: real content and factual "wrong" pass through', () => {
+  eq(tryRepair('why is slavery wrong', 0), null, 'factual wrong not a complaint');
+  eq(tryRepair('what did i do wrong in my essay', 0), null, 'real question passes through');
+  eq(tryRepair('that makes sense thank you', 0), null, 'praise is not repair');
+  eq(tryRepair('tell me about the wrong turn we took on the trip', 0), null, 'long content passes');
+  const a = tryRepair("that's wrong", 0), b = tryRepair("that's wrong", 1);
+  if (!a || !b || a === b) throw new Error(`rotation failed: ${a} / ${b}`);
+});
+
+// ── v17 conversation recall ─────────────────────────────────────────────────
+
+Deno.test('recall: reconstructs the thread from history', () => {
+  const history = [
+    { role: 'user' as const, content: 'how do i stay disciplined making music' },
+    { role: 'assistant' as const, content: '...' },
+    { role: 'user' as const, content: 'i want to grow my instagram following' },
+    { role: 'assistant' as const, content: '...' },
+  ];
+  const out = tryRecall('what were we talking about', history);
+  if (!out || !out.includes('music')) throw new Error(`got: ${out}`);
+  if (!/instagram|content|audience/i.test(out)) throw new Error(`missing recent topic: ${out}`);
+});
+
+Deno.test('recall: only fires on recall requests, handles empty history', () => {
+  eq(tryRecall('how do i make a beat', []), null, 'not a recall request');
+  const early = tryRecall('what were we talking about', []);
+  if (!early || !/getting started|nothing substantial/i.test(early)) throw new Error(`empty got: ${early}`);
+  // recap request itself should not be quoted back as a topic
+  const h = [{ role: 'user' as const, content: 'recap please' }];
+  const out = tryRecall('what have we been discussing', h);
+  if (!out) throw new Error('expected a recall reply');
+});
+
+// ── v17 progressive depth ────────────────────────────────────────────────────
+
+Deno.test('deepen: wantsMore detects follow-ups, skips real questions', () => {
+  for (const m of ['tell me more', 'go on', 'more', 'keep going', 'go deeper']) {
+    if (!wantsMore(m)) throw new Error(`missed: ${m}`);
+  }
+  eq(wantsMore('tell me more about how engines work'), false, 'specific question is not a bare more');
+  eq(wantsMore('who is nelson mandela'), false, 'real question skipped');
+});
+
+Deno.test('deepen: nextChunk returns unseen sentences only', () => {
+  const full = 'Nelson Mandela was a South African leader. He was born in 1918. He became president in 1994. He won the Nobel Peace Prize.';
+  const shown = 'Nelson Mandela was a South African leader. He was born in 1918.';
+  const chunk = nextChunk(full, shown, 900);
+  if (!chunk.includes('president in 1994')) throw new Error(`got: ${chunk}`);
+  if (chunk.includes('born in 1918')) throw new Error(`repeated shown text: ${chunk}`);
+});
+
+Deno.test('deepen: nextChunk returns empty when no overlap or nothing new', () => {
+  const full = 'Alpha one. Beta two. Gamma three.';
+  eq(nextChunk(full, 'completely unrelated prior answer text here', 900), '', 'no overlap → no fabrication');
+  eq(nextChunk(full, full, 900), '', 'all shown → empty');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────
