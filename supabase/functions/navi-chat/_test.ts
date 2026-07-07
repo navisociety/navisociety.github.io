@@ -593,12 +593,12 @@ Deno.test({ name: 'live: NAVI learns a fact and recalls it re-phrased', ignore: 
   await learnKnowledge(q, 'The test protocol is a NAVI self-check.', 'web');
   const rephrased = 'tell me about the ' + q.replace('what is the ', '');
   const out = await recallKnowledge(rephrased);
-  if (!out.includes('self-check')) throw new Error(`recall failed: ${out}`);
+  if (!out?.answer.includes('self-check')) throw new Error(`recall failed: ${JSON.stringify(out)}`);
 }});
 
 Deno.test({ name: 'live: an unanswered question is logged as a gap', ignore: !LIVE, fn: async () => {
   const q = 'what is the ' + Date.now() + ' unknowable thing';
   await logGap(q);
   const out = await recallKnowledge(q); // gaps are not answers
-  eq(out, '', 'gap-not-recalled');
+  eq(out, null, 'gap-not-recalled');
 }});

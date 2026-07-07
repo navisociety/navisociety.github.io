@@ -90,41 +90,47 @@ async function rpc(name: string, params: Record<string, unknown>): Promise<unkno
 }
 
 // ── 3. Recall — answer from what NAVI already learned ────────────────────────
+export type Recall = { answer: string; source: string };
+
 // Exact key first (instant), then fuzzy full-text search gated by real word
-// overlap so an unrelated learned fact never hijacks a different question.
-export async function recallKnowledge(query: string): Promise<string> {
-  if (!SUPABASE_URL || !SERVICE_KEY) return '';
+// overlap so an unrelated learned fact never hijacks a different question. The
+// source comes back too: a 'taught' answer is user-authoritative and the caller
+// lets it win even over a strong knowledge node; a 'web' answer only fills gaps.
+export async function recallKnowledge(query: string): Promise<Recall | null> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return null;
   const key = normalizeKey(query);
-  if (!key) return '';
+  if (!key) return null;
 
   // Exact prior question — return immediately.
   try {
     const url = `${SUPABASE_URL}/rest/v1/navi_knowledge` +
-      `?query_key=eq.${encodeURIComponent(key)}&confidence=gt.0&select=answer&limit=1`;
+      `?query_key=eq.${encodeURIComponent(key)}&confidence=gt.0&select=answer,source&limit=1`;
     const res = await fetch(url, { headers: authHeaders, signal: AbortSignal.timeout(4000) });
     if (res.ok) {
       const rows = await res.json();
-      if (Array.isArray(rows) && rows[0]?.answer) return String(rows[0].answer);
+      if (Array.isArray(rows) && rows[0]?.answer) {
+        return { answer: String(rows[0].answer), source: String(rows[0].source ?? 'web') };
+      }
     }
   } catch { /* fall through to fuzzy */ }
 
   // Fuzzy: re-phrasings of something NAVI already knows.
   const rows = await rpc('navi_knowledge_search', { q: query, max_results: 5 });
-  if (!Array.isArray(rows) || rows.length === 0) return '';
+  if (!Array.isArray(rows) || rows.length === 0) return null;
 
   const qTok = sigTokens(query);
-  if (qTok.length === 0) return '';
+  if (qTok.length === 0) return null;
   const need = Math.min(2, qTok.length); // 1-word asks need 1 hit; longer need 2+
   const qStems = qTok.map(stem);
 
   for (const row of rows) {
-    const cand = row as { query_text?: string; answer?: string };
+    const cand = row as { query_text?: string; answer?: string; source?: string };
     if (!cand.answer || !cand.query_text) continue;
     const cStems = new Set(sigTokens(cand.query_text).map(stem));
     const shared = qStems.filter(s => cStems.has(s)).length;
-    if (shared >= need) return String(cand.answer);
+    if (shared >= need) return { answer: String(cand.answer), source: String(cand.source ?? 'web') };
   }
-  return '';
+  return null;
 }
 
 // ── 1. Web-fact learning ─────────────────────────────────────────────────────

@@ -4169,24 +4169,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // v18: stored memory is threaded into inference so name-drop and
         // "what's my name?" work across chats, not just within this session.
         response = navi.infer(effective, [...history, { role: "user", content: effective }], stored);
-        // Silent knowledge augmentation: fires when NAVI hit a generic fallback,
-        // or when a factual question only weakly matched a node.
+        // Silent knowledge augmentation (v19). For a factual question — or any
+        // time NAVI fell back — consult what it has already LEARNED first.
         const wasFallback = isNaviFallback(response);
-        if (wasFallback || (looksFactual(effective) && navi.lastTopScore < 1)) {
-          // v19: ask what NAVI has already LEARNED first — taught facts and past
-          // web answers come back instantly from navi_knowledge, no re-fetch.
+        const weakNode = looksFactual(effective) && navi.lastTopScore < 1;
+        if (wasFallback || looksFactual(effective)) {
           const known = await recallKnowledge(effective);
-          if (known) {
-            response = known;
-          } else {
+          // A TAUGHT fact is user-authoritative: it wins even over a strong node
+          // (that's the point of teaching NAVI). A web-learned fact only steps in
+          // when NAVI's own brain was weak or fell back — it never overrides a
+          // strong curated node answer.
+          if (known && (known.source === 'taught' || wasFallback || weakNode)) {
+            response = known.answer;
+          } else if (!known && (wasFallback || weakNode)) {
             const web = await webLookup(effective);
             if (web) {
               response = web;
-              // v19: remember it, so the next person who asks gets it instantly.
+              // Remember it, so the next person who asks gets it instantly.
               await learnKnowledge(effective, web, 'web');
-            } else if (looksFactual(effective) || wasFallback) {
-              // v19: NAVI's brain AND the web both missed — log the blind spot so
-              // its most-asked gaps surface as a self-improvement backlog.
+            } else {
+              // NAVI's brain AND the web both missed — log the blind spot so its
+              // most-asked gaps surface as a self-improvement backlog.
               await logGap(effective);
             }
           }
