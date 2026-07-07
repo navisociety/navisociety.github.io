@@ -20,6 +20,8 @@
 // pipeline runs. First-person / emotional questions are never decomposed —
 // those are NAVI's own lane, not an encyclopedia lookup.
 
+import { extractTopicEntity } from './context.ts';
+
 type Msg = { role: 'user' | 'assistant'; content: string };
 
 export interface ReasonDeps {
@@ -95,13 +97,46 @@ export function splitCompound(message: string): string[] {
   return [];
 }
 
-/** Best available answer to a single sub-question: brain first, web to fill gaps. */
+// Node-brain replies that are wrong for a factual sub-question — greetings and
+// the identity blurb. The brain hands these out for bare "what is X" asks about
+// entities it has no node for, and they aren't in the generic-fallback list, so
+// they must be rejected explicitly or they'd leak into a reasoned answer.
+const NON_ANSWER = /^(hey\b|hi\b|hello\b|yo\b|i'm navi|navi here|navi online|greetings)/i;
+function isNonAnswer(r: string, deps: ReasonDeps): boolean {
+  return !r || deps.isFallback(r) || NON_ANSWER.test(r.trim()) || /what's on your mind/i.test(r);
+}
+
+/**
+ * Best available answer to a single sub-question. The sub-questions inside a
+ * comparison / compound ask are factual by construction, so the silent web
+ * layer is consulted FIRST; the node-brain only fills in when the web has
+ * nothing and the brain actually has something real to say (not a greeting).
+ */
 async function resolve(q: string, deps: ReasonDeps): Promise<string> {
-  const brain = deps.answer(q);
-  if (brain && !deps.isFallback(brain)) return brain;
   const web = await deps.lookup(q);
   if (web) return web;
-  return '';
+  const brain = deps.answer(q);
+  return isNonAnswer(brain, deps) ? '' : brain;
+}
+
+/** Trim to the first N sentences (≤ maxChars) for a clean side-by-side contrast. */
+function firstSentences(text: string, n = 2, maxChars = 340): string {
+  const sentences = text.match(/[^.!?]+[.!?]+(\s|$)/g);
+  if (!sentences) return text.length > maxChars ? text.slice(0, maxChars).trimEnd() + '…' : text;
+  let out = '';
+  for (const s of sentences.slice(0, n)) {
+    if (out && (out + s).length > maxChars) break;
+    out += s;
+  }
+  return out.trim() || sentences[0].trim();
+}
+
+/** Rewrite pronouns in a later compound part using the first part's entity. */
+function carryEntity(part: string, entity: string | null): string {
+  if (!entity) return part;
+  return part
+    .replace(/\b(his|her|its|their)\b/gi, `${entity}'s`)
+    .replace(/\b(he|she|it|they|him|them)\b/gi, entity);
 }
 
 // Rotating synthesis closers for comparisons — the "reasoning" that ties the
@@ -135,13 +170,13 @@ export async function tryReason(
       resolve(`what is ${a}`, deps),
       resolve(`what is ${b}`, deps),
     ]);
-    // Only worth it if we can actually speak to at least one side well; two
-    // blanks means we know neither, so let the normal pipeline try.
-    if (!ansA && !ansB) return '';
+    // Need both sides answered to justify a synthesised contrast — one blank
+    // side is a worse answer than the normal pipeline, so bail and let it run.
+    if (!ansA || !ansB) return '';
     const closer = CONTRAST_CLOSERS[m.length % CONTRAST_CLOSERS.length];
     const parts = [
-      `${cap(a)} — ${ansA || 'I don\'t have a sharp read on that one yet.'}`,
-      `${cap(b)} — ${ansB || 'I don\'t have a sharp read on that one yet.'}`,
+      `${cap(a)} — ${firstSentences(ansA)}`,
+      `${cap(b)} — ${firstSentences(ansB)}`,
     ];
     return `${parts.join('\n\n')}\n\n${closer}`;
   }
@@ -149,7 +184,11 @@ export async function tryReason(
   // ── Compound / multi-part ─────────────────────────────────────────────────
   const parts = splitCompound(m);
   if (parts.length >= 2) {
-    const answers = await Promise.all(parts.map(p => resolve(p, deps)));
+    // Later parts often lean on a pronoun ("...and what did HE invent") — carry
+    // the first part's entity into them so each sub-question stands on its own.
+    const entity = extractTopicEntity(parts[0]);
+    const resolved = parts.map((p, i) => (i === 0 ? p : carryEntity(p, entity)));
+    const answers = await Promise.all(resolved.map(p => resolve(p, deps)));
     const good = answers.filter(Boolean);
     // Need at least two real answers to justify a synthesised multi-part reply.
     if (good.length >= 2) return good.join('\n\n');
