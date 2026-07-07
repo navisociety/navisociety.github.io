@@ -72,6 +72,10 @@ function capitalizeFirst(s: string): string {
   return /[.!?]$/.test(withCap) ? withCap : withCap + '.';
 }
 
+// Read RPC (fuzzy search) — works from the edge runtime. Writes go through the
+// direct table helpers below instead: the injected service-role JWT reliably
+// writes to tables (store.ts proves it) but volatile SECURITY DEFINER write RPCs
+// don't persist from the edge runtime, so we never route writes through /rpc.
 async function rpc(name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!SUPABASE_URL || !SERVICE_KEY) return null;
   try {
@@ -88,6 +92,48 @@ async function rpc(name: string, params: Record<string, unknown>): Promise<unkno
     return null;
   }
 }
+
+/** Best-effort GET one row from a table. Returns the first row or null. */
+async function getRow(table: string, query: string): Promise<Record<string, unknown> | null> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort write to a table (POST upsert / PATCH / DELETE). */
+async function tableWrite(
+  path: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+  extraPrefer = '',
+): Promise<void> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return;
+  const headers: Record<string, string> = { ...authHeaders };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const prefer = ['return=minimal', extraPrefer].filter(Boolean).join(',');
+  if (prefer) headers['Prefer'] = prefer;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(4000),
+    });
+  } catch {
+    // Best-effort: a failed learning write just means this fact isn't kept.
+  }
+}
+
+const nowISO = () => new Date().toISOString();
 
 // ── 3. Recall — answer from what NAVI already learned ────────────────────────
 export type Recall = { answer: string; source: string };
@@ -134,7 +180,13 @@ export async function recallKnowledge(query: string): Promise<Recall | null> {
 }
 
 // ── 1. Web-fact learning ─────────────────────────────────────────────────────
-/** Remember an answer NAVI just produced. Fire-and-forget. */
+/**
+ * Remember an answer NAVI just produced. Fire-and-forget.
+ * A TAUGHT fact overwrites whatever's there (it's authoritative). A WEB answer
+ * only fills a gap — it uses ignore-duplicates so it never clobbers a taught
+ * answer or an existing learned one. Once anything answers a key, that key is
+ * cleared from the gaps backlog.
+ */
 export async function learnKnowledge(
   query: string,
   answer: string,
@@ -143,14 +195,19 @@ export async function learnKnowledge(
 ): Promise<void> {
   const key = normalizeKey(query);
   if (!key || !answer || answer.trim().length < 3) return;
-  await rpc('navi_learn', {
-    p_key: key,
-    p_text: source === 'taught' ? query.trim() : normalizeKey(query),
-    p_answer: answer.trim(),
-    p_source: source,
-    p_conf: source === 'taught' ? TAUGHT_CONFIDENCE : WEB_CONFIDENCE,
-    p_email: email ?? null,
-  });
+  const row = {
+    query_key: key,
+    query_text: source === 'taught' ? query.trim() : key,
+    answer: answer.trim(),
+    source,
+    confidence: source === 'taught' ? TAUGHT_CONFIDENCE : WEB_CONFIDENCE,
+    taught_by: email ?? null,
+    updated_at: nowISO(),
+  };
+  const resolution = source === 'taught' ? 'resolution=merge-duplicates' : 'resolution=ignore-duplicates';
+  await tableWrite('navi_knowledge?on_conflict=query_key', 'POST', [row], resolution);
+  // Once we can answer it, it's no longer a gap.
+  await tableWrite(`navi_gaps?query_key=eq.${encodeURIComponent(key)}`, 'PATCH', { resolved: true });
 }
 
 // ── 2. Being taught ──────────────────────────────────────────────────────────
@@ -193,14 +250,9 @@ const TEACH_REPLIES = [
 /** Persist a teaching and return NAVI's confirmation. */
 export async function teachKnowledge(t: Teaching, email: string, convTurn = 0): Promise<string> {
   if (!t.key) return TEACH_REPLIES[0];
-  await rpc('navi_learn', {
-    p_key: t.key,
-    p_text: t.text,
-    p_answer: t.answer,
-    p_source: 'taught',
-    p_conf: TAUGHT_CONFIDENCE,
-    p_email: email || null,
-  });
+  // t.text is the recall text; learnKnowledge keys it on normalizeKey(t.text),
+  // which equals t.key for both plain facts and Q::A teachings.
+  await learnKnowledge(t.text, t.answer, 'taught', email);
   return TEACH_REPLIES[convTurn % TEACH_REPLIES.length];
 }
 
@@ -240,37 +292,68 @@ export function previousUserQuestion(history: Msg[]): string {
   return '';
 }
 
-/** Move a learned answer's confidence up or down based on user feedback. */
+/**
+ * Move a learned answer's confidence up or down based on user feedback. A
+ * repeatedly-corrected answer crosses zero and is retired, so NAVI stops
+ * repeating a mistake it was told is wrong. Only touches answers that are
+ * actually in the knowledge base (a stray "thanks" is harmless).
+ */
 export async function applyFeedback(prevQuestion: string, verdict: 'up' | 'down'): Promise<void> {
   const key = normalizeKey(prevQuestion);
   if (!key) return;
-  // Only touch an answer that's actually in the knowledge base.
-  let realKey = '';
-  try {
-    const url = `${SUPABASE_URL}/rest/v1/navi_knowledge` +
-      `?query_key=eq.${encodeURIComponent(key)}&select=query_key&limit=1`;
-    const res = await fetch(url, { headers: authHeaders, signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const rows = await res.json();
-      if (Array.isArray(rows) && rows[0]?.query_key) realKey = String(rows[0].query_key);
-    }
-  } catch { /* ignore */ }
-  if (!realKey) {
-    // Maybe the prior answer came from a fuzzy match — find that row's key.
+
+  // Find the affected row: exact key, else the top fuzzy match.
+  let row = await getRow(
+    'navi_knowledge',
+    `query_key=eq.${encodeURIComponent(key)}&select=query_key,confidence,up,down&limit=1`,
+  );
+  if (!row) {
     const rows = await rpc('navi_knowledge_search', { q: prevQuestion, max_results: 1 });
-    if (Array.isArray(rows) && rows[0]) {
-      const r = rows[0] as { query_key?: string };
-      if (r.query_key) realKey = r.query_key;
-    }
+    if (Array.isArray(rows) && rows[0]) row = rows[0] as Record<string, unknown>;
   }
-  if (!realKey) return;
-  await rpc('navi_feedback', { p_key: realKey, p_delta: verdict === 'up' ? FEEDBACK_UP : FEEDBACK_DOWN });
+  if (!row?.query_key) return;
+
+  const realKey = String(row.query_key);
+  const delta = verdict === 'up' ? FEEDBACK_UP : FEEDBACK_DOWN;
+  const newConf = Number(row.confidence ?? 1) + delta;
+  const path = `navi_knowledge?query_key=eq.${encodeURIComponent(realKey)}`;
+  if (newConf <= 0) {
+    // Corrected into the ground — retire the wrong answer.
+    await tableWrite(path, 'DELETE');
+    return;
+  }
+  await tableWrite(path, 'PATCH', {
+    confidence: newConf,
+    up: Number(row.up ?? 0) + (delta > 0 ? 1 : 0),
+    down: Number(row.down ?? 0) + (delta < 0 ? 1 : 0),
+    updated_at: nowISO(),
+  });
 }
 
 // ── 5. Learning its gaps ─────────────────────────────────────────────────────
-/** Record a question NAVI couldn't answer, so its blind spots surface. */
+/**
+ * Record a question NAVI couldn't answer (its brain AND the web both missed),
+ * so its most-asked blind spots surface as a self-improvement backlog. Bumps a
+ * hit counter on repeats; skips anything already answered in the knowledge base.
+ */
 export async function logGap(query: string): Promise<void> {
   const key = normalizeKey(query);
   if (!key || key.split(' ').length < 2) return; // ignore trivial one-word noise
-  await rpc('navi_gap', { p_key: key, p_text: query.trim().slice(0, 300) });
+
+  // Already answerable? Then it isn't a gap.
+  const known = await getRow('navi_knowledge', `query_key=eq.${encodeURIComponent(key)}&confidence=gt.0&select=query_key&limit=1`);
+  if (known) return;
+
+  const existing = await getRow('navi_gaps', `query_key=eq.${encodeURIComponent(key)}&select=hits&limit=1`);
+  if (existing) {
+    await tableWrite(`navi_gaps?query_key=eq.${encodeURIComponent(key)}`, 'PATCH', {
+      hits: Number(existing.hits ?? 1) + 1,
+      last_asked: nowISO(),
+    });
+  } else {
+    await tableWrite('navi_gaps?on_conflict=query_key', 'POST', [{
+      query_key: key,
+      query_text: query.trim().slice(0, 300),
+    }], 'resolution=merge-duplicates');
+  }
 }
