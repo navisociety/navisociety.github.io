@@ -549,7 +549,10 @@ Deno.test('detectTeach ignores ordinary talk', () => {
 Deno.test('detectFeedback reads correction and praise, not content', () => {
   eq(detectFeedback("that's wrong"), 'down', 'fb-down');
   eq(detectFeedback('no, incorrect'), 'down', 'fb-down2');
+  eq(detectFeedback('that is wrong'), 'down', 'fb-down-spelled');
+  eq(detectFeedback('it is incorrect'), 'down', 'fb-down-it');
   eq(detectFeedback("that's right"), 'up', 'fb-up');
+  eq(detectFeedback('that is correct'), 'up', 'fb-up-spelled');
   eq(detectFeedback('perfect, that helped'), 'up', 'fb-up2');
   eq(detectFeedback('why is war wrong'), null, 'fb-content-not-feedback');
   eq(detectFeedback('tell me why that is incorrect in physics'), null, 'fb-long-not-feedback');

@@ -260,10 +260,18 @@ export async function teachKnowledge(t: Teaching, email: string, convTurn = 0): 
 // Tight, short-message patterns so real content ("why is war wrong") is never
 // read as feedback. Applies only to a learned answer that matches the prior
 // question, so a stray "thanks" is harmless.
-const FEEDBACK_DOWN_RX =
-  /^(?:no[, ]+|nope[, ]+)?(?:that ?s|thats|it ?s|its) (?:wrong|incorrect|not right|not correct|false|not true|off|mistaken)\b|^(?:that ?s|thats) not (?:right|correct|true)\b|^(?:no[, ]+|nope[, ]+)?(?:wrong|incorrect|not right|not correct)( answer)?$|^you ?re wrong\b/i;
-const FEEDBACK_UP_RX =
-  /^(?:yes[, ]+)?(?:that ?s|thats|it ?s|its) (?:right|correct|perfect|exactly right|spot on|true|it)\b|^(?:perfect|exactly right|spot on|nailed it)\b|^that ?s? (?:helped|helps|helpful)\b|^(?:thanks|thank you|thx)[,! ]*(?:that (?:helped|was helpful|was right))?$|^good answer\b/i;
+const SUBJ = '(?:that ?s|thats|that is|that was|it ?s|its|it is|it was)';
+const FEEDBACK_DOWN_RX = new RegExp(
+  `^(?:no[, ]+|nope[, ]+)?${SUBJ} (?:wrong|incorrect|not right|not correct|false|not true|off|mistaken)\\b` +
+  `|^${SUBJ} not (?:right|correct|true)\\b` +
+  `|^(?:no[, ]+|nope[, ]+)?(?:wrong|incorrect|not right|not correct)( answer)?$` +
+  `|^(?:you ?re|you are) wrong\\b`, 'i');
+const FEEDBACK_UP_RX = new RegExp(
+  `^(?:yes[, ]+)?${SUBJ} (?:right|correct|perfect|exactly right|spot on|true)\\b` +
+  `|^(?:perfect|exactly right|spot on|nailed it)\\b` +
+  `|^that ?(?:s|is|was)? (?:helped|helps|helpful)\\b` +
+  `|^(?:thanks|thank you|thx)[,! ]*(?:that (?:helped|was helpful|was right))?$` +
+  `|^good answer\\b`, 'i');
 
 /** Classify a message as reinforcement about NAVI's last answer, or null. */
 export function detectFeedback(message: string): 'up' | 'down' | null {
