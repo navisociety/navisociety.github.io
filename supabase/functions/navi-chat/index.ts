@@ -26,7 +26,12 @@
 import { answerFromBible } from './bible.ts';
 import { trySkills, isFollowUp } from './skills.ts';
 import { wordsMatch } from './match.ts';
-import { extractProfile, answerProfileQuestion, memoryAcknowledgement } from './memory.ts';
+import {
+  extractProfile, answerProfileQuestion, memoryAcknowledgement,
+  mergeProfiles, detectMood, detectForget, applyForget, addReturningGreeting,
+  type Profile,
+} from './memory.ts';
+import { loadStoredProfile, saveStoredProfile } from './store.ts';
 import { resolveReference } from './context.ts';
 import { tryAcknowledgment } from './acts.ts';
 import { tryRepair } from './repair.ts';
@@ -3645,7 +3650,7 @@ class NaviModel {
     return null;
   }
 
-  infer(message: string, history: NaviMessage[]): string {
+  infer(message: string, history: NaviMessage[], stored?: Profile): string {
     this.lastTopScore = 1; // deterministic paths (block/skill) are fully confident
 
     // v15: cadence follows THIS conversation, not a counter shared across
@@ -3675,7 +3680,12 @@ class NaviModel {
     // v15: personal memory — name/age/place stated earlier in the conversation
     // answer "what's my name?" style questions before retrieval can mismatch.
     // v16: also birthday, favourites, and explicit "remember that…" facts.
-    const profile = extractProfile(history, message);
+    // v18: merge the durable memory (loaded from navi_memory for signed-in
+    // users) with what's been said in THIS conversation, so "what's my name?"
+    // and name-drop personalization work across chats, sessions, and devices.
+    const profile = stored
+      ? mergeProfiles(stored, extractProfile(history, message))
+      : extractProfile(history, message);
     const profileAnswer = answerProfileQuestion(message, profile);
     if (profileAnswer) return profileAnswer;
 
@@ -4075,6 +4085,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     const body = await req.json().catch(() => ({}));
     const message: string = typeof body?.message === "string" ? body.message : "";
+    // v18: signed-in users get permanent memory. Anonymous users (no email)
+    // keep the old per-conversation behaviour — nothing is stored for them.
+    const email: string = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
     const history: NaviMessage[] = Array.isArray(body?.history)
       ? body.history
           .filter((m: unknown) =>
@@ -4088,6 +4101,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!message.trim()) {
       return new Response(JSON.stringify({ error: "message is required" }), {
         status: 400,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // v18: load this user's durable memory (empty for anonymous users).
+    const stored: Profile = email ? await loadStoredProfile(email) : {};
+
+    // v18: memory control — "forget my birthday" / "forget everything about me"
+    // is honoured before anything else, and persisted immediately.
+    const forget = detectForget(message);
+    if (email && forget) {
+      const { profile, reply } = applyForget(stored, forget);
+      await saveStoredProfile(email, profile);
+      return new Response(JSON.stringify({ response: reply }), {
+        status: 200,
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }
@@ -4106,7 +4134,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // "how old is he?") are rewritten with the entity before retrieval and
         // the web lookup ever see them.
         const effective = resolveReference(message, history) ?? message;
-        response = navi.infer(effective, [...history, { role: "user", content: effective }]);
+        // v18: stored memory is threaded into inference so name-drop and
+        // "what's my name?" work across chats, not just within this session.
+        response = navi.infer(effective, [...history, { role: "user", content: effective }], stored);
         // Silent web augmentation: fires when NAVI hit a generic fallback, or when
         // a factual question only weakly matched a node. The web answer replaces
         // the response invisibly; if the lookup finds nothing, NAVI's own reply stands.
@@ -4115,6 +4145,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
           if (web) response = web;
         }
       }
+    }
+
+    // v18: returning-user warmth — on the first message of a fresh session,
+    // a signed-in user who's been away gets a welcome-back (and a gentle
+    // check-in if they last left on a low note). Never wraps crisis replies.
+    if (email && history.length === 0) {
+      response = addReturningGreeting(response, stored);
+    }
+
+    // v18: persist anything newly learned this turn + refresh last_seen and
+    // last_mood, so it's remembered in every future chat. Best-effort.
+    if (email) {
+      const learned = extractProfile([], message);
+      const merged = mergeProfiles(stored, learned);
+      merged.lastSeen = new Date().toISOString();
+      const mood = detectMood(message);
+      if (mood) merged.lastMood = mood;
+      await saveStoredProfile(email, merged);
     }
 
     return new Response(JSON.stringify({ response }), {

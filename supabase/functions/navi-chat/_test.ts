@@ -15,7 +15,10 @@ import {
   tryWorldTime, tryDayOfWeek, tryBornYear, tryWordTools,
 } from './skills.ts';
 import { stem, withinOneEdit, wordsMatch } from './match.ts';
-import { extractProfile, answerProfileQuestion, memoryAcknowledgement, toSecondPerson } from './memory.ts';
+import {
+  extractProfile, answerProfileQuestion, memoryAcknowledgement, toSecondPerson,
+  mergeProfiles, detectMood, detectForget, applyForget, addReturningGreeting,
+} from './memory.ts';
 import { extractTopicEntity, resolveReference } from './context.ts';
 import { tryAcknowledgment } from './acts.ts';
 import { tryRepair } from './repair.ts';
@@ -289,6 +292,86 @@ Deno.test('memory 2.0: statements get a direct confirmation', () => {
 Deno.test('memory 2.0: empty profile summary invites the user', () => {
   const out = answerProfileQuestion('what do you know about me', {});
   if (!out || !out.includes('remember that')) throw new Error(`got: ${out}`);
+});
+
+// ── v18 permanent memory ─────────────────────────────────────────────────────
+
+Deno.test('v18: extracts goals, work, and people', () => {
+  const p = extractProfile([], "my goal is to launch my app. i work as a nurse. my brother is called Sipho");
+  eq(p.goals, ['to launch my app'], 'goal');
+  eq(p.work, 'nurse', 'work');
+  eq(p.people, { brother: 'Sipho' }, 'person');
+});
+
+Deno.test('v18: relation aliases canonicalise (mum → mother)', () => {
+  const p = extractProfile([], "my mum's name is Grace");
+  eq(p.people, { mother: 'Grace' }, 'mum maps to mother');
+});
+
+Deno.test('v18: answers goal / work / person questions', () => {
+  const p = extractProfile([], "my goal is to finish my album. i work as a teacher. my sister is called Lerato");
+  if (!answerProfileQuestion("what's my goal?", p)!.includes('finish my album')) throw new Error('goal recall');
+  if (!answerProfileQuestion('what do i do for work?', p)!.toLowerCase().includes('teacher')) throw new Error('work recall');
+  if (!answerProfileQuestion("what's my sister's name?", p)!.includes('Lerato')) throw new Error('person recall');
+});
+
+Deno.test('v18: full recall includes work, people, and goals', () => {
+  const p = extractProfile([], "my name is Dian. i work as a builder. my dog is called Rex. my goal is to grow NAVI");
+  const out = answerProfileQuestion('what do you know about me', p)!;
+  for (const s of ['Dian', 'builder', 'Rex', 'grow navi']) {
+    if (!out.includes(s)) throw new Error(`missing "${s}" in: ${out}`);
+  }
+});
+
+Deno.test('v18: mergeProfiles unions facts/goals and overlays scalars', () => {
+  const base = { name: 'Dian', facts: ['likes coffee'], goals: ['ship v18'], favorites: { color: 'Cyan' } };
+  const overlay = { age: 30, facts: ['likes coffee', 'has a dog'], goals: ['learn piano'], favorites: { food: 'Pizza' } };
+  const m = mergeProfiles(base, overlay);
+  eq(m.name, 'Dian', 'base name kept');
+  eq(m.age, 30, 'overlay age added');
+  eq(m.facts, ['likes coffee', 'has a dog'], 'facts unioned, no dupes');
+  eq(m.goals, ['ship v18', 'learn piano'], 'goals unioned');
+  eq(m.favorites, { color: 'Cyan', food: 'Pizza' }, 'favourites merged');
+});
+
+Deno.test('v18: detectMood reads first-person feeling, ignores neutral', () => {
+  eq(detectMood('i feel so hopeless today'), 'low', 'low');
+  eq(detectMood("i'm really stressed about work"), 'stressed', 'stressed');
+  eq(detectMood("i'm feeling great today"), 'good', 'good');
+  eq(detectMood('what is the capital of France'), null, 'neutral has no mood');
+});
+
+Deno.test('v18: detectForget targets fields, favourites, people, and all', () => {
+  eq(detectForget('forget my birthday'), { kind: 'field', field: 'birthday' }, 'field');
+  eq(detectForget('forget my favourite colour'), { kind: 'favorite', thing: 'color' }, 'favourite');
+  eq(detectForget('forget everything about me'), { kind: 'all' }, 'all');
+  eq(detectForget("forget my brother"), { kind: 'person', relation: 'brother' }, 'person');
+  eq(detectForget('i can never forget her'), null, 'not a command mid-sentence');
+});
+
+Deno.test('v18: applyForget clears the right slice', () => {
+  const p = { name: 'Dian', birthday: { month: 3, day: 12 }, favorites: { color: 'Cyan' }, facts: ['has a dog'] };
+  eq(applyForget(p, { kind: 'field', field: 'birthday' }).profile.birthday, undefined, 'birthday cleared');
+  eq(applyForget(p, { kind: 'favorite', thing: 'color' }).profile.favorites, {}, 'favourite cleared');
+  eq(applyForget(p, { kind: 'all' }).profile, {}, 'all cleared');
+  eq(applyForget(p, { kind: 'fact', text: 'has a dog' }).profile.facts, [], 'fact cleared');
+});
+
+Deno.test('v18: addReturningGreeting only fires after a real gap', () => {
+  const now = Date.parse('2026-07-07T12:00:00Z');
+  const old = { name: 'Dian', lastSeen: '2026-07-06T12:00:00Z' }; // ~24h ago
+  const recent = { name: 'Dian', lastSeen: '2026-07-07T11:00:00Z' }; // 1h ago
+  if (!addReturningGreeting('Here is your answer.', old, now).startsWith('Welcome back, Dian.')) throw new Error('should greet after gap');
+  eq(addReturningGreeting('Here is your answer.', recent, now), 'Here is your answer.', 'no greeting within the window');
+  eq(addReturningGreeting('Here is your answer.', {}, now), 'Here is your answer.', 'no stored memory, no greeting');
+});
+
+Deno.test('v18: returning greeting checks in on a low mood, never on crisis', () => {
+  const now = Date.parse('2026-07-07T12:00:00Z');
+  const low = { name: 'Dian', lastSeen: '2026-07-06T00:00:00Z', lastMood: 'low' };
+  if (!addReturningGreeting('You can do this.', low, now).toLowerCase().includes('how are you holding up')) throw new Error('low check-in');
+  const crisis = addReturningGreeting('Please call SADAG on 0800 567 567.', low, now);
+  if (crisis.toLowerCase().includes('welcome back') || crisis.toLowerCase().includes('holding up')) throw new Error('must not wrap crisis reply');
 });
 
 // ── v16 conversational context (pronoun follow-ups) ─────────────────────────

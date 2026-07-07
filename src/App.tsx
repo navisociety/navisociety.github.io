@@ -22,12 +22,13 @@ type Status = 'booting' | 'ready' | 'thinking';
 // header — the Supabase gateway rejects the publishable key as an invalid JWT.
 const NAVI_API = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/navi-chat`;
 
-async function naviRespond(message: string, history: NaviMessage[]): Promise<string> {
+async function naviRespond(message: string, history: NaviMessage[], email?: string): Promise<string> {
   try {
     const res = await fetch(NAVI_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history }),
+      // email (when signed in) unlocks NAVI's permanent, cross-chat memory.
+      body: JSON.stringify({ message, history, email }),
     });
     if (!res.ok) throw new Error(`NAVI API ${res.status}`);
     const data = await res.json();
@@ -322,7 +323,7 @@ export default function App() {
         setSubscribeMode(mode);
         setMode('free');
         setShowSubscribe(true);
-        stream(await naviRespond(text, fullHistory), naviId);
+        stream(await naviRespond(text, fullHistory, naviSession?.email), naviId);
         return;
       }
       if (result.code === 'limit_reached') {
@@ -330,12 +331,12 @@ export default function App() {
         return;
       }
       // Any other error → fall back to free NAVI.
-      stream(await naviRespond(text, fullHistory), naviId);
+      stream(await naviRespond(text, fullHistory, naviSession?.email), naviId);
       return;
     }
 
     // Free tier: ask NAVI on Supabase (falls back to client-side inference on failure).
-    const response = await naviRespond(text, fullHistory);
+    const response = await naviRespond(text, fullHistory, naviSession?.email);
     if (naviSession) {
       let sid = currentSessionId;
       if (!sid) {

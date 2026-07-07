@@ -1,12 +1,19 @@
 // supabase/functions/navi-chat/memory.ts
 //
-// NAVI in-conversation personal memory (v15, expanded in v16). Deterministically
-// extracts the user's name, age, place, birthday, favourites, and explicit
-// "remember that ..." facts from the conversation history on every request
-// (stateless — nothing is stored server-side), and answers questions like
-// "what's my name?" or "what do you know about me?" directly instead of
-// letting them fall into the knowledge nodes. Later statements override
-// earlier ones.
+// NAVI personal memory. Deterministically extracts the user's name, age, place,
+// birthday, favourites, goals, work, key people, and explicit "remember that…"
+// facts from what they say, and answers questions like "what's my name?" or
+// "what do you know about me?" directly instead of letting them fall into the
+// knowledge nodes.
+//
+// v15/v16 built this from the conversation history on every request (stateless).
+// v18 makes it PERMANENT: the navi-chat edge function loads a saved profile from
+// the navi_memory table (store.ts), merges it with what's said this turn
+// (mergeProfiles), and saves it back — so a signed-in user's memory survives
+// across chats, sessions, and devices. v18 also adds memory control ("forget
+// my birthday", "forget everything about me"), mood continuity (detectMood +
+// a gentle check-in when a low user returns), and returning-user greetings.
+// Later statements always override earlier ones.
 
 import { todayInTZ } from './skills.ts';
 
@@ -17,6 +24,13 @@ export type Profile = {
   birthday?: { month: number; day: number };
   favorites?: Record<string, string>;
   facts?: string[];
+  // v18: richer schema.
+  goals?: string[];               // "my goal is…", "i'm working on…", "i want to…"
+  work?: string;                  // "i work as…", "my job is…"
+  people?: Record<string, string>; // relation → name, e.g. { brother: 'Sipho' }
+  // v18: persistence + continuity metadata (stored in their own DB columns).
+  lastSeen?: string;              // ISO timestamp of the previous message
+  lastMood?: string;              // last detected mood label ('low' | 'stressed' | …)
 };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
@@ -31,6 +45,29 @@ const NOT_NAMES = new Set([
 ]);
 
 const MAX_FACTS = 8;
+const MAX_GOALS = 5;
+
+// v18: relationships NAVI can hold onto. Canonicalised so "mum"/"mom"/"mother"
+// all key on "mother". Order doesn't matter; the map is keyed by spoken form.
+const RELATION_ALIASES: Record<string, string> = {
+  mom: 'mother', mum: 'mother', mommy: 'mother', mother: 'mother', ma: 'mother',
+  dad: 'father', daddy: 'father', father: 'father', pa: 'father',
+  bro: 'brother', brother: 'brother', sis: 'sister', sister: 'sister',
+  son: 'son', daughter: 'daughter', kid: 'child', child: 'child',
+  wife: 'wife', husband: 'husband', partner: 'partner',
+  girlfriend: 'girlfriend', gf: 'girlfriend', boyfriend: 'boyfriend', bf: 'boyfriend',
+  fiance: 'fiancé', fiancee: 'fiancée',
+  friend: 'friend', bestie: 'best friend', boss: 'boss', mentor: 'mentor',
+  pastor: 'pastor', dog: 'dog', cat: 'cat', pet: 'pet',
+};
+const RELATION_KEYS = Object.keys(RELATION_ALIASES).sort((a, b) => b.length - a.length).join('|');
+
+// Words that are never a real person's name after "is called / is named / is".
+const NOT_PERSON_NAMES = new Set([
+  'a', 'an', 'the', 'my', 'so', 'very', 'really', 'just', 'not', 'here', 'there',
+  'good', 'great', 'fine', 'okay', 'ok', 'cool', 'amazing', 'the best', 'coming',
+  'gone', 'away', 'sick', 'ill', 'older', 'younger', 'tall', 'short', 'named',
+]);
 
 function titleCase(s: string): string {
   return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -106,6 +143,48 @@ function extractFrom(text: string, profile: Profile): void {
     }
   }
 
+  // v18: goals — "my goal is to launch my app", "i'm working on my album",
+  // "i want to move to Cape Town", "i'm trying to save money". Kept short.
+  const goalRx = /\b(?:my goal is|my dream is|i(?:'m| am) working on|i(?:'m| am) trying to|i want to|i(?:'m| am) building)\s+(.{3,80}?)(?=[.,!?;]|$)/g;
+  let gm: RegExpExecArray | null;
+  while ((gm = goalRx.exec(t)) !== null) {
+    const goal = gm[1].trim().replace(/\s+/g, ' ');
+    if (goal.length >= 3) {
+      profile.goals ??= [];
+      if (!profile.goals.some(g => g.toLowerCase() === goal.toLowerCase())) {
+        profile.goals.push(goal);
+        if (profile.goals.length > MAX_GOALS) profile.goals.shift();
+      }
+    }
+  }
+
+  // v18: work — "i work as a nurse", "my job is teaching", "i'm a designer".
+  // "i'm a" is greedy, so only accept a short noun-ish phrase, not a sentence.
+  const work =
+    t.match(/\bi work as\s+(?:an?\s+)?([a-z][a-z ]{2,28}?)(?=\s+(?:and|but|so|because|at|for|in)\b|[.,!?;]|$)/)?.[1] ??
+    t.match(/\bmy job is\s+(?:being\s+)?(?:an?\s+)?([a-z][a-z ]{2,28}?)(?=\s+(?:and|but|so|because|at|for|in)\b|[.,!?;]|$)/)?.[1] ??
+    t.match(/\bi(?:'m| am) a\s+([a-z]{3,20}(?:\s+[a-z]{3,20})?)\s+(?:by profession|for a living|for work)\b/)?.[1];
+  if (work) {
+    const w = work.trim().split(/\s+/).slice(0, 3).join(' ');
+    if (w.length >= 3) profile.work = w;
+  }
+
+  // v18: people — "my brother is called Sipho", "my mom's name is Grace",
+  // "my boss is John". Capture the relation and the name.
+  const relRx = new RegExp(
+    `\\bmy\\s+(${RELATION_KEYS})(?:'s)?\\s+(?:name\\s+is|is\\s+(?:called|named)|is)\\s+([a-z][a-z'-]{1,20})\\b`,
+    'g',
+  );
+  let pm: RegExpExecArray | null;
+  while ((pm = relRx.exec(t)) !== null) {
+    const relation = RELATION_ALIASES[pm[1]] ?? pm[1];
+    const person = pm[2];
+    if (person && !NOT_PERSON_NAMES.has(person)) {
+      profile.people ??= {};
+      profile.people[relation] = titleCase(person);
+    }
+  }
+
   // v16: explicit "remember that ..." facts.
   const rm = text.trim().match(REMEMBER_RX);
   if (rm) {
@@ -124,6 +203,184 @@ export function extractProfile(history: Msg[], current: string): Profile {
   for (const m of history) if (m.role === 'user') extractFrom(m.content, profile);
   extractFrom(current, profile);
   return profile;
+}
+
+/**
+ * v18: fold a freshly-learned profile (`overlay`, usually from just this turn)
+ * onto the saved one (`base`). Scalars overlay-win when present; facts/goals
+ * union (capped, base first); favourites/people merge per key (overlay wins).
+ * This is how the durable memory absorbs each new thing the user says without
+ * losing what it already knew.
+ */
+export function mergeProfiles(base: Profile, overlay: Profile): Profile {
+  const out: Profile = { ...base };
+
+  if (overlay.name) out.name = overlay.name;
+  if (overlay.age !== undefined) out.age = overlay.age;
+  if (overlay.place) out.place = overlay.place;
+  if (overlay.birthday) out.birthday = overlay.birthday;
+  if (overlay.work) out.work = overlay.work;
+  if (overlay.lastSeen) out.lastSeen = overlay.lastSeen;
+  if (overlay.lastMood) out.lastMood = overlay.lastMood;
+
+  if (overlay.favorites) out.favorites = { ...(base.favorites ?? {}), ...overlay.favorites };
+  if (overlay.people) out.people = { ...(base.people ?? {}), ...overlay.people };
+
+  if (overlay.facts?.length) {
+    const seen = new Set((base.facts ?? []).map(f => f.toLowerCase()));
+    const merged = [...(base.facts ?? [])];
+    for (const f of overlay.facts) if (!seen.has(f.toLowerCase())) merged.push(f);
+    out.facts = merged.slice(-MAX_FACTS);
+  }
+  if (overlay.goals?.length) {
+    const seen = new Set((base.goals ?? []).map(g => g.toLowerCase()));
+    const merged = [...(base.goals ?? [])];
+    for (const g of overlay.goals) if (!seen.has(g.toLowerCase())) merged.push(g);
+    out.goals = merged.slice(-MAX_GOALS);
+  }
+
+  return out;
+}
+
+// ── v18: mood continuity ──────────────────────────────────────────────────────
+
+// Canonical mood → the first-person cues that signal it. Order matters: the
+// first match wins, so heavier states are listed before lighter ones.
+const MOOD_CUES: Array<{ mood: string; rx: RegExp }> = [
+  { mood: 'low', rx: /\bi(?:'m| am)?\s*(?:feeling\s+)?(?:so\s+|really\s+|very\s+)?(?:depressed|hopeless|empty|worthless|numb|broken|miserable|heartbroken)\b|\bi feel\s+(?:so\s+|really\s+)?(?:down|low|empty|hopeless|worthless|lost)\b|\bi(?:'m| am)\s+(?:so\s+|really\s+)?(?:sad|down|unhappy)\b/ },
+  { mood: 'stressed', rx: /\bi(?:'m| am)?\s*(?:feeling\s+)?(?:so\s+|really\s+|very\s+)?(?:stressed|overwhelmed|anxious|panicking|burnt out|burned out|under pressure|exhausted|drained)\b|\bi feel\s+(?:so\s+|really\s+)?(?:stressed|anxious|overwhelmed|tense)\b/ },
+  { mood: 'tired', rx: /\bi(?:'m| am)?\s*(?:feeling\s+)?(?:so\s+|really\s+)?(?:tired|worn out|sleepy|shattered|knackered)\b/ },
+  { mood: 'angry', rx: /\bi(?:'m| am)?\s*(?:feeling\s+)?(?:so\s+|really\s+)?(?:angry|furious|frustrated|pissed off|fed up|irritated)\b/ },
+  { mood: 'good', rx: /\bi(?:'m| am)?\s*(?:feeling\s+)?(?:so\s+|really\s+|very\s+)?(?:great|amazing|happy|excited|blessed|grateful|good|wonderful|fantastic|on top of the world)\b|\bi feel\s+(?:so\s+|really\s+)?(?:great|happy|good|amazing|alive)\b/ },
+];
+
+/** Detect the user's mood from a message, or null when there's no clear signal. */
+export function detectMood(message: string): string | null {
+  const t = message.toLowerCase();
+  for (const { mood, rx } of MOOD_CUES) if (rx.test(t)) return mood;
+  return null;
+}
+
+// ── v18: memory control ("forget …") ─────────────────────────────────────────
+
+export type Forget =
+  | { kind: 'all' }
+  | { kind: 'field'; field: 'name' | 'age' | 'place' | 'birthday' | 'work' }
+  | { kind: 'favorite'; thing: string }
+  | { kind: 'person'; relation: string }
+  | { kind: 'fact'; text: string };
+
+const FORGET_LEAD = /^(?:hey\s+navi[,:\s]+|navi[,:\s]+)?(?:please\s+)?(?:forget|delete|erase|wipe|clear)\s+/i;
+
+/**
+ * Detect a request to make NAVI forget something. Anchored to the start of the
+ * message so "I can never forget her" isn't treated as a command.
+ */
+export function detectForget(message: string): Forget | null {
+  const trimmed = message.trim();
+  if (!FORGET_LEAD.test(trimmed)) return null;
+  const rest = trimmed.replace(FORGET_LEAD, '').replace(/[.!?]+$/, '').trim();
+  const r = rest.toLowerCase();
+
+  if (/^(?:everything|all|it all|my (?:memory|data|info|details)|about me|me|everything about me|everything you know)/.test(r)) {
+    return { kind: 'all' };
+  }
+  if (/^(?:my\s+)?name/.test(r)) return { kind: 'field', field: 'name' };
+  if (/^(?:my\s+)?age|^how old i am/.test(r)) return { kind: 'field', field: 'age' };
+  if (/^(?:where i(?:'m| am) from|my (?:place|location|city|town|home))/.test(r)) return { kind: 'field', field: 'place' };
+  if (/^(?:my\s+)?birthday/.test(r)) return { kind: 'field', field: 'birthday' };
+  if (/^(?:my\s+)?(?:job|work|occupation|career)/.test(r)) return { kind: 'field', field: 'work' };
+
+  const fav = r.match(/^(?:my\s+)?favou?rite\s+([a-z ]{2,24})$/);
+  if (fav) return { kind: 'favorite', thing: fav[1].trim().replace(/\bcolour\b/, 'color') };
+
+  const rel = r.match(new RegExp(`^(?:my\\s+)?(${RELATION_KEYS})(?:'s name)?$`));
+  if (rel) return { kind: 'person', relation: RELATION_ALIASES[rel[1]] ?? rel[1] };
+
+  // "forget that I …" / freeform → try to drop a matching stored fact.
+  const fact = rest.replace(/^that\s+/i, '').trim();
+  if (fact.length >= 3) return { kind: 'fact', text: fact };
+  return null;
+}
+
+/** Apply a forget request to the profile, returning the new profile + a reply. */
+export function applyForget(profile: Profile, forget: Forget): { profile: Profile; reply: string } {
+  if (forget.kind === 'all') {
+    return {
+      profile: {},
+      reply: "Done — I've cleared everything I had saved about you. Clean slate. Tell me whatever you'd like me to hold onto from here.",
+    };
+  }
+
+  const next: Profile = { ...profile };
+
+  if (forget.kind === 'field') {
+    if (forget.field === 'birthday') delete next.birthday;
+    else delete next[forget.field];
+    return { profile: next, reply: `Forgotten — I've dropped your ${forget.field === 'place' ? 'location' : forget.field}. It's gone from my memory.` };
+  }
+
+  if (forget.kind === 'favorite') {
+    if (next.favorites) {
+      next.favorites = { ...next.favorites };
+      const key = Object.keys(next.favorites).find(k => k === forget.thing || k.includes(forget.thing) || forget.thing.includes(k));
+      if (key) { delete next.favorites[key]; return { profile: next, reply: `Done — I've forgotten your favourite ${key}.` }; }
+    }
+    return { profile: next, reply: `I didn't have a favourite ${forget.thing} saved, so there's nothing to forget there.` };
+  }
+
+  if (forget.kind === 'person') {
+    if (next.people && next.people[forget.relation]) {
+      next.people = { ...next.people };
+      delete next.people[forget.relation];
+      return { profile: next, reply: `Forgotten — I've cleared what I had about your ${forget.relation}.` };
+    }
+    return { profile: next, reply: `I didn't have anything saved about your ${forget.relation}.` };
+  }
+
+  // fact
+  const target = forget.text.toLowerCase();
+  if (next.facts?.length) {
+    const kept = next.facts.filter(f => {
+      const fl = f.toLowerCase();
+      return !(fl === target || fl.includes(target) || target.includes(fl));
+    });
+    if (kept.length < next.facts.length) {
+      next.facts = kept;
+      return { profile: next, reply: "Done — I've let that go. It's out of my memory." };
+    }
+  }
+  return { profile: next, reply: "I don't have that one saved, so there's nothing to forget — but noted, I won't hold onto it." };
+}
+
+// ── v18: returning-user + mood check-in ──────────────────────────────────────
+
+const RETURN_GAP_MS = 6 * 60 * 60 * 1000; // only re-greet after a real break
+
+/** Responses NAVI must never wrap in a chirpy welcome (crisis handling). */
+function isCrisisReply(response: string): boolean {
+  return /\bSADAG\b|0800\s?567\s?567|lifeline|suicide|crisis line/i.test(response);
+}
+
+/**
+ * When a signed-in user opens a fresh session after a real gap, warm the first
+ * reply with a welcome-back (by name if known) and — if they left on a low or
+ * stressed note — a gentle, non-clinical check-in. Returns the response
+ * unchanged when it isn't appropriate (no gap, crisis reply, empty stored).
+ */
+export function addReturningGreeting(response: string, stored: Profile, nowMs = Date.now()): string {
+  if (!stored.lastSeen || isCrisisReply(response)) return response;
+  const last = Date.parse(stored.lastSeen);
+  if (!Number.isFinite(last) || nowMs - last < RETURN_GAP_MS) return response;
+
+  const who = stored.name ? `, ${stored.name}` : '';
+  let lead = `Welcome back${who}.`;
+  if (stored.lastMood === 'low') {
+    lead = `Good to see you again${who}. Last time you were carrying something heavy — I've been thinking about that. How are you holding up today?`;
+  } else if (stored.lastMood === 'stressed') {
+    lead = `Welcome back${who}. Last time felt like a lot was on you — did you get any breathing room? Either way, I'm here.`;
+  }
+  return `${lead} ${response}`;
 }
 
 const NAVI_TZ = 'Africa/Johannesburg';
@@ -165,6 +422,28 @@ export function memoryAcknowledgement(message: string, profile: Profile): string
     const days = daysUntilBirthday(profile.birthday);
     const when = days === 0 ? "that's TODAY — happy birthday" : days === 1 ? "that's tomorrow" : `${days} days away`;
     return `Got it — your birthday is ${birthdayLabel(profile.birthday)}, ${when}. I won't forget it.`;
+  }
+
+  // v18: confirm a stated goal.
+  if (/^(?:hey\s+navi[,:\s]+|navi[,:\s]+)?(?:my goal is|my dream is|i(?:'m| am) working on|i want to|i(?:'m| am) trying to|i(?:'m| am) building)\b/.test(t) && profile.goals?.length) {
+    const goal = profile.goals[profile.goals.length - 1];
+    return `Locked in — you're working toward: ${goal}. I've got that, and I'll hold you to it. What's the next step?`;
+  }
+
+  // v18: confirm work.
+  if (/^(?:hey\s+navi[,:\s]+|navi[,:\s]+)?(?:i work as|my job is|i(?:'m| am) a )\b/.test(t) && profile.work) {
+    return `Got it — you work as ${profile.work}. I'll keep that in mind.`;
+  }
+
+  // v18: confirm a person.
+  if (/^(?:hey\s+navi[,:\s]+|navi[,:\s]+)?my\s+/.test(t) && profile.people) {
+    const entries = Object.entries(profile.people);
+    if (entries.length) {
+      const [rel, nm] = entries[entries.length - 1];
+      if (t.includes(rel) || Object.keys(RELATION_ALIASES).some(a => t.includes(a) && RELATION_ALIASES[a] === rel)) {
+        return `Noted — your ${rel}, ${nm}. I'll remember them.`;
+      }
+    }
   }
 
   return null;
@@ -212,16 +491,46 @@ export function answerProfileQuestion(message: string, profile: Profile): string
       : `You haven't told me your favourite ${asked} yet. What is it?`;
   }
 
+  // v18: work recall — "what do I do for work?", "what's my job?".
+  if (/\b(?:what s|whats|what is|what do) (?:my job|i do for (?:work|a living)|my work|my occupation)\b/.test(t) || /\bwhere do i work\b/.test(t)) {
+    return profile.work
+      ? `You told me you work as ${profile.work}. I remember what you do.`
+      : "You haven't told me what you do for work yet. What's your line?";
+  }
+
+  // v18: goal recall — "what's my goal?", "what am I working on?".
+  if (/\b(?:what s|whats|what is|what are) my goals?\b/.test(t) || /\bwhat am i working (?:on|towards|toward)\b/.test(t) || /\b(?:what s|whats|what is) my dream\b/.test(t)) {
+    if (!profile.goals?.length) return "You haven't told me a goal yet. What are you working toward?";
+    const list = profile.goals.length === 1 ? profile.goals[0] : `${profile.goals.slice(0, -1).join('; ')}; and ${profile.goals[profile.goals.length - 1]}`;
+    return `You're working toward: ${list}. I'm in your corner on that.`;
+  }
+
+  // v18: person recall — "what's my brother's name?".
+  const personAsk = t.match(new RegExp(`\\b(?:whats|what is|what s|who is|do you (?:know|remember)) my (${RELATION_KEYS})(?:s| s)? (?:name|called)?\\b`)) ??
+                    t.match(new RegExp(`\\bmy (${RELATION_KEYS})(?:'s)? name\\b`));
+  if (personAsk) {
+    const rel = RELATION_ALIASES[personAsk[1]] ?? personAsk[1];
+    const nm = profile.people?.[rel];
+    return nm
+      ? `Your ${rel} is ${nm}. I remember the people who matter to you.`
+      : `You haven't told me your ${rel}'s name yet. What is it?`;
+  }
+
   // v16: full recall — "what do you know/remember about me?".
   if (/\bwhat do you (know|remember) about me\b/.test(t) || /\btell me what you know about me\b/.test(t) || /\bwhat have i told you\b/.test(t)) {
     const bits: string[] = [];
     if (profile.name) bits.push(`your name is ${profile.name}`);
     if (profile.age) bits.push(`you're ${profile.age}`);
     if (profile.place) bits.push(`you're from ${profile.place}`);
+    if (profile.work) bits.push(`you work as ${profile.work}`);
     if (profile.birthday) bits.push(`your birthday is ${birthdayLabel(profile.birthday)}`);
     for (const [thing, value] of Object.entries(profile.favorites ?? {})) {
       bits.push(`your favourite ${thing} is ${value}`);
     }
+    for (const [rel, nm] of Object.entries(profile.people ?? {})) {
+      bits.push(`your ${rel} is ${nm}`);
+    }
+    for (const g of profile.goals ?? []) bits.push(`you're working toward ${g}`);
     for (const f of profile.facts ?? []) bits.push(toSecondPerson(f));
     if (!bits.length) {
       return "Not much yet — this conversation is still young. Tell me your name, or say \"remember that…\" and I'll hold onto whatever matters.";
