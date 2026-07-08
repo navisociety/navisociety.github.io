@@ -43,6 +43,9 @@ import { parseDefineAsk, formatDictionary, type DictEntry } from './define.ts';
 import { parseWhen, tryReminder, addDueReminders, isReminderAsk } from './remind.ts';
 import { votdIndex, isVotdAsk, devotionTopic, formatVotd, formatDevotional, VOTD_ROTATION } from './devotion.ts';
 import { memorizeRef, activeMemoryRef, gradeAttempt, blankOut, startCoaching } from './memorize.ts';
+import { normalizeMessage } from './normalize.ts';
+import { expandFollowUp } from './followup.ts';
+import { splitIntents } from './execute.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -1175,4 +1178,78 @@ Deno.test('v23: passed events get a follow-up and leave the list; day-of gets a 
   const dayOf = addEventFollowUps('Hello.', { events: [{ text: 'exam', date: '2026-07-08' }] }, today);
   if (!dayOf.response.includes('TODAY')) throw new Error(`day-of: ${dayOf.response}`);
   eq(dayOf.events, undefined, 'day-of event stays');
+});
+
+// ── v24: execution upgrades ───────────────────────────────────────────────────
+
+Deno.test('v24: normalizeMessage fixes engine-gating typos', () => {
+  eq(normalizeMessage('remind me to call mom tommorow'), 'remind me to call mom tomorrow', 'tommorow');
+  eq(normalizeMessage('whens my exam'), "when's my exam", 'whens');
+  eq(normalizeMessage('i cant stand traffic'), "i can't stand traffic", 'cant');
+  eq(normalizeMessage('wat is teh capital of france'), 'what is the capital of france', 'wat/teh');
+  eq(normalizeMessage('Dont forget my birthdya'), "Don't forget my birthday", 'capitalisation kept');
+  eq(normalizeMessage('remeber that im 24'), "remember that i'm 24", 'remeber/im');
+  eq(normalizeMessage('u r great'), 'you r great', 'u expanded, bare r untouched');
+});
+
+Deno.test('v24: normalizeMessage never touches real words or clean text', () => {
+  eq(normalizeMessage('i feel ill and its fine'), 'i feel ill and its fine', 'ill/its untouched');
+  eq(normalizeMessage('what is the weather'), 'what is the weather', 'clean text unchanged');
+  eq(normalizeMessage('my name is Tim'), 'my name is Tim', 'names untouched');
+});
+
+Deno.test('v24: expandFollowUp swaps numbers into the previous frame', () => {
+  const h = (q: string) => [{ role: 'user' as const, content: q }];
+  eq(expandFollowUp('and of 500?', h('what is 17% of 240?')), 'what is 17% of 500?', 'prep number swap');
+  eq(expandFollowUp('and 30?', h('what is 25 + 17')), 'what is 25 + 30?', 'bare number swaps last');
+  eq(expandFollowUp('and 500?', h('how are you?')), null, 'no number in frame');
+});
+
+Deno.test('v24: expandFollowUp swaps entities into the previous frame', () => {
+  const h = (q: string) => [{ role: 'user' as const, content: q }];
+  eq(expandFollowUp('what about germany?', h('what is the capital of france?')), 'what is the capital of germany?', 'trailing prep object');
+  eq(expandFollowUp('and in london?', h('what time is it?')), 'what time is it in london?', 'prep phrase appended');
+  eq(expandFollowUp('and desmond tutu?', h('who is nelson mandela?')), 'who is desmond tutu?', 'copula object swap');
+});
+
+Deno.test('v24: expandFollowUp stays out of everything else', () => {
+  const h = (q: string) => [{ role: 'user' as const, content: q }];
+  eq(expandFollowUp('and you?', h('how are you?')), null, 'small talk untouched');
+  eq(expandFollowUp('germany?', h('what is the capital of france?')), null, 'lead word required');
+  eq(expandFollowUp('and my life?', h('what is the capital of france?')), null, 'emotional never rewritten');
+  eq(expandFollowUp('And God said let there be light', [{ role: 'user' as const, content: 'practice' }]), null, 'recitals untouched');
+  eq(expandFollowUp('and what is gravity?', h('what is the capital of france?')), 'what is gravity?', 'standalone remainder freed');
+  eq(expandFollowUp('and of 500?', []), null, 'no history, no frame');
+});
+
+Deno.test('v24: splitIntents divides command+command and command+question', () => {
+  eq(
+    splitIntents('remind me to call mom tomorrow and give me a verse about hope'),
+    ['remind me to call mom tomorrow', 'give me a verse about hope'],
+    'command + command',
+  );
+  eq(
+    splitIntents('what is 2+2 and define hope'),
+    ['what is 2+2', 'define hope'],
+    'question + command',
+  );
+  eq(
+    splitIntents('What is 2+2? Give me a verse about hope.'),
+    ['What is 2+2', 'Give me a verse about hope'],
+    'sentence split',
+  );
+  eq(
+    splitIntents('solve 3x + 5 = 20 and give me a verse about peace and remind me to pray tonight'),
+    ['solve 3x + 5 = 20', 'give me a verse about peace', 'remind me to pray tonight'],
+    'three parts',
+  );
+});
+
+Deno.test('v24: splitIntents never divides what belongs together', () => {
+  eq(splitIntents('remind me to call mom and dad tomorrow'), [], 'compound object');
+  eq(splitIntents('give me a verse about hope and love'), [], 'topic pair');
+  eq(splitIntents("i'm sad and i want to talk"), [], 'emotional stays whole');
+  eq(splitIntents('who is tesla and what did he invent'), [], 'pure factual pair is the reasoning engine lane');
+  eq(splitIntents('what is gravity'), [], 'single ask');
+  eq(splitIntents('i want to die and i need help'), [], 'crisis never split');
 });

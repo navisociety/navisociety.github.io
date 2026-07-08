@@ -32,6 +32,13 @@
 // (devotion.ts): deterministic KJV verse-of-the-day rotation + topical
 // devotionals; (5) Scripture Memory Coach (memorize.ts): recite-and-grade
 // memorization training with fill-in-the-blanks practice.
+// v24: three EXECUTION upgrades — (1) Multi-intent execution (execute.ts +
+// answerIntent): a message carrying several distinct asks is split and every
+// part executed through the engines, not just the first match; (2) Typo-
+// tolerant execution (normalize.ts): unambiguous misspellings and dropped
+// apostrophes are fixed up front so the exact-regex engines fire on what the
+// user meant; (3) Elliptical follow-up execution (followup.ts): "and of
+// 500?" is rebuilt into a complete question from the previous turn's frame.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -70,6 +77,9 @@ import { tryReminder, isReminderAsk, addDueReminders } from './remind.ts';
 import { tryLifeEvent, addEventFollowUps } from './life.ts';
 import { tryDevotion } from './devotion.ts';
 import { tryMemorize } from './memorize.ts';
+import { normalizeMessage } from './normalize.ts';
+import { expandFollowUp } from './followup.ts';
+import { splitIntents } from './execute.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4125,6 +4135,63 @@ async function tryDeepen(message: string, history: NaviMessage[]): Promise<strin
   return chunk ? cleanWebText(chunk) : '';
 }
 
+// v24: answer ONE part of a multi-intent message through the engine pipeline —
+// the same layers the whole-message path runs, in the same order, minus the
+// modal/stateful ones (memorize, quiz, teach) that need conversation state.
+// Returns the reply plus the updated profile when a memory engine changed it;
+// an empty reply means no engine could execute this part confidently.
+const PART_NON_ANSWER = /^(hey\b|hi\b|hello\b|yo\b|i'm navi|navi here|navi online|greetings)/i;
+async function answerIntent(
+  part: string,
+  email: string,
+  profile: Profile,
+): Promise<{ reply: string; profile?: Profile }> {
+  if (email) {
+    const reminder = tryReminder(part, profile);
+    if (reminder) return { reply: reminder.reply, profile: reminder.profile };
+    const forget = detectForget(part);
+    if (forget) {
+      const applied = applyForget(profile, forget);
+      return { reply: applied.reply, profile: applied.profile };
+    }
+    const life = tryLifeEvent(part, profile);
+    if (life) return { reply: life.reply, profile: life.profile };
+    const win = tryGoalDone(part, profile);
+    if (win) return { reply: win.reply, profile: win.profile };
+  } else if (isReminderAsk(part)) {
+    return { reply: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." };
+  }
+
+  const bible = await answerFromBible(part);
+  if (bible) return { reply: bible };
+  const devotion = await tryDevotion(part);
+  if (devotion) return { reply: devotion };
+  const defined = await tryDefine(part);
+  if (defined) return { reply: defined };
+  const composed = tryCompose(part, profile);
+  if (composed) return { reply: composed };
+  const planned = tryPlan(part);
+  if (planned) return { reply: planned };
+
+  const brain = navi.infer(part, [{ role: 'user', content: part }], profile);
+  const fallback = isNaviFallback(brain);
+  const nonAnswer = PART_NON_ANSWER.test(brain.trim());
+  // Deterministic paths (skills, profile answers, memory acks) and strong node
+  // hits report full confidence — deliver them as-is.
+  if (!fallback && !nonAnswer && navi.lastTopScore >= 1) return { reply: brain };
+  if (looksFactual(part) || fallback || nonAnswer) {
+    const known = await recallKnowledge(part);
+    if (known) return { reply: known.answer };
+    const web = await webLookup(part);
+    if (web) {
+      await learnKnowledge(part, web, 'web');
+      return { reply: web };
+    }
+  }
+  if (!fallback && !nonAnswer) return { reply: brain };
+  return { reply: '' };
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   const origin = req.headers.get("origin");
   const cors = corsHeaders(origin);
@@ -4143,7 +4210,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const message: string = typeof body?.message === "string" ? body.message : "";
+    const rawMessage: string = typeof body?.message === "string" ? body.message : "";
     // v18: signed-in users get permanent memory. Anonymous users (no email)
     // keep the old per-conversation behaviour — nothing is stored for them.
     const email: string = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -4157,15 +4224,62 @@ Deno.serve(async (req: Request): Promise<Response> => {
           .map((m: NaviMessage) => ({ role: m.role, content: m.content }))
       : [];
 
-    if (!message.trim()) {
+    if (!rawMessage.trim()) {
       return new Response(JSON.stringify({ error: "message is required" }), {
         status: 400,
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }
 
+    // v24: typo-tolerant execution — fix unambiguous misspellings and dropped
+    // apostrophes ONCE, up front, so every exact-regex engine downstream
+    // (reminders, life events, Bible, dictionary, math…) fires on what the
+    // user meant: "remind me tommorow" keeps its date, "cant stand traffic"
+    // reaches the dislikes list.
+    let message = normalizeMessage(rawMessage);
+
+    // v24: elliptical follow-up execution — "and of 500?" after "what's 17%
+    // of 240?" is rebuilt into the complete question from the previous turn's
+    // frame, so the deterministic engines see a real question instead of a
+    // fragment that falls through to a fallback.
+    message = expandFollowUp(message, history) ?? message;
+
     // v18: load this user's durable memory (empty for anonymous users).
     const stored: Profile = email ? await loadStoredProfile(email) : {};
+
+    // v24: multi-intent execution — a message carrying two or three distinct
+    // asks ("remind me to call mom tomorrow and give me a verse about hope")
+    // is split and EVERY part is executed through the engines, not just the
+    // first match. Purely factual question+question compounds still belong to
+    // the reasoning engine further down. Commits (reply + any profile change)
+    // only when at least two parts produced real answers; otherwise the whole
+    // message falls through to the normal single-ask pipeline untouched.
+    {
+      const intents = splitIntents(message);
+      if (intents.length >= 2) {
+        let prof = stored;
+        const replies: string[] = [];
+        for (const part of intents) {
+          const out = await answerIntent(part, email, prof);
+          if (out.profile) prof = out.profile;
+          if (out.reply) replies.push(out.reply);
+        }
+        if (replies.length >= 2) {
+          if (email) {
+            const merged = mergeProfiles(prof, extractProfile([], message));
+            merged.lastSeen = new Date().toISOString();
+            const mood = detectMood(message);
+            if (mood) merged.lastMood = mood;
+            merged.lastTopics = updateTopics(prof.lastTopics, message);
+            await saveStoredProfile(email, merged);
+          }
+          return new Response(JSON.stringify({ response: replies.join('\n\n') }), {
+            status: 200,
+            headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
 
     // v22: reminders are memory operations like forget/teach — handled up
     // front and persisted immediately. Before the forget layer, so "clear my
