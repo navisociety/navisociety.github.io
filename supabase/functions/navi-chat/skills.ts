@@ -120,6 +120,63 @@ export function tryMath(message: string): string | null {
   return `${display} = ${fmtNum(v)}`;
 }
 
+// ── Linear equations (v22) ───────────────────────────────────────────────────
+// "solve 3x + 5 = 20", "solve 5x + 2 = 3x + 10", "what is x if 2x - 4 = 10".
+// One variable, linear terms only — anything richer falls through to the
+// normal pipeline instead of guessing.
+
+/** Parse one side of a linear equation into a·v + b, or null if not linear in v. */
+function parseLinearSide(side: string, v: string): { a: number; b: number } | null {
+  const s = side.replace(/\s+/g, '');
+  if (!s) return null;
+  const parts = s.match(/[+-]?[^+-]+/g);
+  if (!parts) return null;
+  let a = 0, b = 0;
+  for (const part of parts) {
+    const varTerm = part.match(new RegExp(`^([+-]?)(\\d+(?:\\.\\d+)?)?\\*?${v}$`));
+    if (varTerm) {
+      const coef = varTerm[2] ? parseFloat(varTerm[2]) : 1;
+      a += varTerm[1] === '-' ? -coef : coef;
+      continue;
+    }
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(part)) { b += parseFloat(part); continue; }
+    return null;
+  }
+  return { a, b };
+}
+
+export function tryEquation(message: string): string | null {
+  const t = message.toLowerCase().trim().replace(/[?!.]+\s*$/, '');
+  const m =
+    t.match(/\bsolve(?:\s+for\s+[a-z])?[:\s]+(.+)$/) ??
+    t.match(/\bwhat\s+is\s+[a-z]\s+(?:if|when)[:\s]+(.+)$/) ??
+    t.match(/\bfind\s+[a-z]\s+(?:if|when|in)[:\s]+(.+)$/);
+  if (!m) return null;
+
+  const eq = m[1].replace(/,/g, '').trim();
+  const sides = eq.split('=');
+  if (sides.length !== 2) return null;
+
+  // Exactly one distinct letter, and nothing but linear-equation characters.
+  if (!/^[\d\sa-z+\-*=.]+$/.test(eq)) return null;
+  const letters = [...new Set(eq.match(/[a-z]/g) ?? [])];
+  if (letters.length !== 1) return null;
+  const v = letters[0];
+
+  const L = parseLinearSide(sides[0], v);
+  const R = parseLinearSide(sides[1], v);
+  if (!L || !R) return null;
+
+  const a = L.a - R.a, b = R.b - L.b;
+  if (a === 0) {
+    return b === 0
+      ? `That equation is true for every ${v} — both sides are always equal.`
+      : `That equation has no solution — the ${v} terms cancel and the numbers don't match.`;
+  }
+  const x = Number((b / a).toFixed(6));
+  return `${v} = ${fmtNum(x)}`;
+}
+
 type Unit = { rx: RegExp; kind: string; factor: number; label: string };
 
 const UNITS: Unit[] = [
@@ -225,7 +282,7 @@ export function tryPercentOps(message: string): string | null {
 
 /** Average / sum / max / min over a spoken list: "average of 4, 8 and 15". */
 export function tryListStats(message: string): string | null {
-  const m = message.toLowerCase().match(/\b(average|mean|sum|total|max(?:imum)?|min(?:imum)?)\s+of\s+([\d\s.,]+(?:and\s+[\d.]+)?)/);
+  const m = message.toLowerCase().match(/\b(average|mean|median|range|sum|total|max(?:imum)?|min(?:imum)?)\s+of\s+([\d\s.,]+(?:and\s+[\d.]+)?)/);
   if (!m) return null;
   const nums = (m[2].match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
   if (nums.length < 2) return null;
@@ -238,6 +295,15 @@ export function tryListStats(message: string): string | null {
   }
   if (op === 'sum' || op === 'total') {
     return `The sum of ${list} is ${fmtNum(nums.reduce((a, b) => a + b, 0))}.`;
+  }
+  if (op === 'median') {
+    const sorted = [...nums].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const med = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    return `The median of ${list} is ${fmtNum(Number(med.toFixed(6)))}.`;
+  }
+  if (op === 'range') {
+    return `The range of ${list} is ${fmtNum(Math.max(...nums) - Math.min(...nums))} (from ${fmtNum(Math.min(...nums))} to ${fmtNum(Math.max(...nums))}).`;
   }
   if (op.startsWith('max')) return `The biggest of ${list} is ${fmtNum(Math.max(...nums))}.`;
   return `The smallest of ${list} is ${fmtNum(Math.min(...nums))}.`;
@@ -433,7 +499,7 @@ export function tryWordTools(message: string): string | null {
 
 /** All deterministic skills in priority order. Returns null when none apply. */
 export function trySkills(message: string): string | null {
-  return tryMath(message) ?? tryPercentOps(message) ?? tryListStats(message) ??
+  return tryEquation(message) ?? tryMath(message) ?? tryPercentOps(message) ?? tryListStats(message) ??
     tryDaysUntil(message) ?? tryUnits(message) ?? tryDayOfWeek(message) ??
     tryWorldTime(message) ?? tryDateTime(message) ?? tryBornYear(message) ??
     tryWordTools(message) ?? tryRandom(message);

@@ -24,6 +24,14 @@
 // hype, compress long answers for terse quick-chat; (3) Curiosity Engine
 // (curiosity.ts): substantive answers get one entity-aware forward follow-up.
 // All three skip crisis/sensitive replies (navi.lastWasSensitive) and Bible.
+// v22: five capability engines — (1) Vocabulary (define.ts): real dictionary
+// definitions/synonyms/antonyms/usage via the free dictionary API; (2) Algebra
+// (skills.ts tryEquation): linear equation solving + median/range stats;
+// (3) Reminders (remind.ts): "remind me to…" held in permanent memory and
+// surfaced when due at the start of the next session; (4) Devotionals
+// (devotion.ts): deterministic KJV verse-of-the-day rotation + topical
+// devotionals; (5) Scripture Memory Coach (memorize.ts): recite-and-grade
+// memorization training with fill-in-the-blanks practice.
 //
 // Contract:
 //   POST  body: { message: string, history: Array<{role:'user'|'assistant', content:string}> }
@@ -56,6 +64,10 @@ import { tryCompose } from './compose.ts';
 import { tryPlan } from './plan.ts';
 import { tryEpisodic, updateTopics } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
+import { tryDefine } from './define.ts';
+import { tryReminder, isReminderAsk, addDueReminders } from './remind.ts';
+import { tryDevotion } from './devotion.ts';
+import { tryMemorize } from './memorize.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4177,9 +4189,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
-    // Bible first: verse references and explicit scripture asks are answered
+    // v22: reminders are memory operations like forget/teach — handled up
+    // front and persisted immediately. Signed-in only; an anonymous visitor
+    // asking for one gets pointed at sign-in instead of a silent no-op.
+    if (email) {
+      const reminderTurn = tryReminder(message, stored);
+      if (reminderTurn) {
+        if (reminderTurn.profile) await saveStoredProfile(email, reminderTurn.profile);
+        return new Response(JSON.stringify({ response: reminderTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    } else if (isReminderAsk(message)) {
+      return new Response(JSON.stringify({ response: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
+        status: 200,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // v22: the Scripture Memory Coach runs before the Bible pipeline — a
+    // "memorize John 3:16" ask contains a verse reference, and coach mode
+    // (not plain verse delivery) must own it. Recitals mid-session are
+    // recovered from history the same way quiz answers are.
+    let response = await tryMemorize(message, history);
+
+    // Bible next: verse references and explicit scripture asks are answered
     // from the full KJV in navi_bible_verses (31,102 verses), not the nodes.
-    let response = await answerFromBible(message) ?? "";
+    if (!response) response = await answerFromBible(message) ?? "";
     // v20: only the conversational (node/knowledge/web/reasoning) path is
     // reshaped by the tone + curiosity layers. Bible verses, deepen slices, and
     // memory confirmations are delivered verbatim.
@@ -4191,6 +4228,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // or a rewritten answer must not be reshaped by the tone/curiosity layers.
     if (!response) response = trySummarize(message) || tryRewrite(message, history);
     if (!response) response = tryQuiz(message, history);
+    // v22: devotionals (verse of the day / "devotional about hope") come from
+    // the KJV table; the vocabulary engine answers define/synonym/usage asks
+    // from a real dictionary. Both verbatim, like everything in this block.
+    if (!response) response = await tryDevotion(message);
+    if (!response) response = await tryDefine(message);
     if (!response) {
       const topic = lessonTopic(message);
       if (topic) {
@@ -4285,6 +4327,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // a signed-in user who's been away gets a welcome-back (and a gentle
     // check-in if they last left on a low note). Never wraps crisis replies.
     if (email && history.length === 0) {
+      // v22: due (or undated) reminders open the first reply of a session
+      // (under the welcome-back line), and stay listed until ticked off.
+      response = addDueReminders(response, stored);
       response = addReturningGreeting(response, stored);
     }
 

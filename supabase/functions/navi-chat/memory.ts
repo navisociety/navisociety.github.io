@@ -34,7 +34,13 @@ export type Profile = {
   // v21: episodic memory — the topics recently explored, newest first, so
   // "what did we talk about last time?" works across chats and devices.
   lastTopics?: string[];
+  // v22: cross-session reminders ("remind me to…"), managed by remind.ts.
+  reminders?: Reminder[];
 };
+
+// v22: one held reminder. `due` is an ISO date (yyyy-mm-dd) in SA time;
+// omitted means "surface on the very next session".
+export type Reminder = { text: string; created: string; due?: string };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 

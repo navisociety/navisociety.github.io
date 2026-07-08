@@ -36,6 +36,12 @@ import { parseCompose, tryCompose } from './compose.ts';
 import { parsePlanGoal, tryPlan } from './plan.ts';
 import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
+import { tryEquation } from './skills.ts';
+import { parseDefineAsk, formatDictionary, type DictEntry } from './define.ts';
+import { parseWhen, tryReminder, addDueReminders, isReminderAsk } from './remind.ts';
+import { votdIndex, isVotdAsk, devotionTopic, formatVotd, formatDevotional, VOTD_ROTATION } from './devotion.ts';
+import { memorizeRef, activeMemoryRef, gradeAttempt, blankOut, startCoaching } from './memorize.ts';
+import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -822,6 +828,187 @@ Deno.test('tryQuiz starts a quiz and grades answers with fuzzy matching', () => 
   if (!stop.includes('quiz mode closed')) throw new Error(`stop: ${stop}`);
   eq(tryQuiz('what is the capital of france?', hist), '', 'subject change falls through');
   eq(tryQuiz('noah', []), '', 'no pending quiz');
+});
+
+// ── v22: linear equations + richer stats ─────────────────────────────────────
+
+Deno.test('tryEquation solves linear equations in one variable', () => {
+  eq(tryEquation('solve 3x + 5 = 20'), 'x = 5', 'basic');
+  eq(tryEquation('solve 5x + 2 = 3x + 10'), 'x = 4', 'variable on both sides');
+  eq(tryEquation('what is x if 2x - 4 = 10?'), 'x = 7', 'what-is-x form');
+  eq(tryEquation('solve for y: 2y = 9'), 'y = 4.5', 'solve-for + decimal result');
+  eq(tryEquation('solve 10 - x = 4'), 'x = 6', 'negative coefficient');
+  const none = tryEquation('solve 2x + 1 = 2x + 5');
+  if (!none || !none.includes('no solution')) throw new Error(`no-solution: ${none}`);
+  const all = tryEquation('solve x + 1 = x + 1');
+  if (!all || !all.includes('every x')) throw new Error(`identity: ${all}`);
+  eq(tryEquation('solve my problem = life'), null, 'words rejected');
+  eq(tryEquation('solve 2x + 3y = 6'), null, 'two variables rejected');
+  eq(tryEquation('how do i solve conflict at work'), null, 'no equation at all');
+});
+
+Deno.test('tryListStats handles median and range', () => {
+  eq(tryListStats('median of 3, 9, 5'), 'The median of 3, 9 and 5 is 5.', 'odd median');
+  eq(tryListStats('median of 1, 2, 3, 4'), 'The median of 1, 2, 3 and 4 is 2.5.', 'even median');
+  eq(tryListStats('range of 4, 19, 7'), 'The range of 4, 19 and 7 is 15 (from 4 to 19).', 'range');
+});
+
+// ── v22: vocabulary engine ────────────────────────────────────────────────────
+
+Deno.test('parseDefineAsk reads every ask shape and guards reserved words', () => {
+  eq(parseDefineAsk('define eloquent')?.word, 'eloquent', 'define');
+  eq(parseDefineAsk('what does serendipity mean?')?.word, 'serendipity', 'what-does-mean');
+  eq(parseDefineAsk('meaning of "grace"')?.kind, 'define', 'quoted meaning-of');
+  eq(parseDefineAsk('synonyms for happy')?.kind, 'synonyms', 'synonyms');
+  eq(parseDefineAsk('another word for angry')?.kind, 'synonyms', 'another word');
+  eq(parseDefineAsk('opposite of brave')?.kind, 'antonyms', 'opposite');
+  eq(parseDefineAsk('use resilient in a sentence')?.kind, 'sentence', 'sentence');
+  eq(parseDefineAsk('navi, define perseverance')?.word, 'perseverance', 'navi prefix');
+  eq(parseDefineAsk('what does navi mean'), null, 'reserved word');
+  eq(parseDefineAsk('what does the bible say about hope mean'), null, 'phrase rejected');
+  eq(parseDefineAsk('define the terms of the contract'), null, 'multi-word rejected');
+});
+
+const DICT_FIXTURE: DictEntry = {
+  word: 'eloquent',
+  meanings: [
+    {
+      partOfSpeech: 'adjective',
+      definitions: [
+        { definition: 'Fluent, persuasive and articulate in speech.', example: 'She gave an eloquent speech.', synonyms: ['articulate'] },
+      ],
+      synonyms: ['fluent', 'expressive'],
+      antonyms: ['inarticulate'],
+    },
+  ],
+};
+
+Deno.test('formatDictionary renders define, synonyms, antonyms and sentence shapes', () => {
+  const def = formatDictionary({ word: 'eloquent', kind: 'define' }, DICT_FIXTURE);
+  if (!def.includes('(adjective) Fluent, persuasive')) throw new Error(`define: ${def}`);
+  if (!def.includes('Example: "She gave an eloquent speech."')) throw new Error(`example: ${def}`);
+  if (!def.includes('Close words: fluent, expressive, articulate')) throw new Error(`close: ${def}`);
+  const syn = formatDictionary({ word: 'eloquent', kind: 'synonyms' }, DICT_FIXTURE);
+  eq(syn, 'Words close to "eloquent": fluent, expressive, articulate.', 'synonyms');
+  const ant = formatDictionary({ word: 'eloquent', kind: 'antonyms' }, DICT_FIXTURE);
+  eq(ant, 'Opposites of "eloquent": inarticulate.', 'antonyms');
+  const sen = formatDictionary({ word: 'eloquent', kind: 'sentence' }, DICT_FIXTURE);
+  eq(sen, 'Here\'s "eloquent" in a sentence: "She gave an eloquent speech."', 'sentence');
+});
+
+// ── v22: reminders ────────────────────────────────────────────────────────────
+
+const T0 = { y: 2026, m: 7, d: 8 }; // a Wednesday
+
+Deno.test('parseWhen reads date phrases in SA time and strips them from the text', () => {
+  eq(parseWhen('call mom tomorrow', T0).due, '2026-07-09', 'tomorrow');
+  eq(parseWhen('call mom tomorrow', T0).text, 'call mom', 'phrase stripped');
+  eq(parseWhen('submit the mix in 3 days', T0).due, '2026-07-11', 'in N days');
+  eq(parseWhen('pray for the team on friday', T0).due, '2026-07-10', 'weekday ahead');
+  eq(parseWhen('rest next week', T0).due, '2026-07-15', 'next week');
+  eq(parseWhen('buy gifts on 25 december', T0).due, '2026-12-25', 'day month');
+  eq(parseWhen('renew the domain on january 2', T0).due, '2027-01-02', 'passed date rolls to next year');
+  eq(parseWhen('drink water', T0).due, '', 'no date');
+});
+
+Deno.test('tryReminder adds, lists, ticks off and clears', () => {
+  const added = tryReminder('remind me to call mom tomorrow', {}, T0);
+  if (!added?.profile?.reminders?.length) throw new Error('add failed');
+  eq(added.profile.reminders[0].text, 'call mom', 'text');
+  eq(added.profile.reminders[0].due, '2026-07-09', 'due');
+  if (!added.reply.includes('tomorrow')) throw new Error(`reply: ${added.reply}`);
+
+  const stored: Profile = added.profile;
+  const listed = tryReminder('what are my reminders?', stored, T0);
+  if (!listed?.reply.includes('1. call mom')) throw new Error(`list: ${listed?.reply}`);
+
+  const done = tryReminder('done with reminder 1', stored, T0);
+  eq(done?.profile?.reminders?.length, 0, 'ticked off');
+
+  const cleared = tryReminder('clear my reminders', stored, T0);
+  eq(cleared?.profile?.reminders?.length, 0, 'cleared');
+
+  eq(tryReminder('what should i do today', {}, T0), null, 'not a reminder ask');
+  if (!isReminderAsk('remind me to stretch')) throw new Error('isReminderAsk');
+});
+
+Deno.test('addDueReminders surfaces due and undated ones, holds future ones', () => {
+  const stored: Profile = { reminders: [
+    { text: 'call mom', created: '2026-07-07', due: '2026-07-08' },
+    { text: 'drink water', created: '2026-07-07' },
+    { text: 'renew domain', created: '2026-07-07', due: '2026-12-25' },
+  ] };
+  const out = addDueReminders('Hey.', stored, T0);
+  if (!out.includes('call mom (today)')) throw new Error(`due today: ${out}`);
+  if (!out.includes('drink water')) throw new Error(`undated: ${out}`);
+  if (out.includes('renew domain')) throw new Error(`future leaked: ${out}`);
+  eq(addDueReminders('Hey.', { reminders: [{ text: 'renew domain', created: 'x', due: '2026-12-25' }] }, T0), 'Hey.', 'nothing due → untouched');
+});
+
+// ── v22: devotionals ──────────────────────────────────────────────────────────
+
+Deno.test('verse of the day: ask detection and deterministic rotation', () => {
+  if (!isVotdAsk('verse of the day')) throw new Error('bare ask');
+  if (!isVotdAsk('Navi, what is the verse for the day?')) throw new Error('question ask');
+  if (!isVotdAsk('give me the daily verse')) throw new Error('daily verse');
+  if (isVotdAsk('my verse of the day is john 3:16 what do you think')) throw new Error('sentence must not match');
+  const i = votdIndex(T0), j = votdIndex(T0);
+  eq(i, j, 'same day same slot');
+  if (i < 0 || i >= VOTD_ROTATION.length) throw new Error(`index range: ${i}`);
+  if (votdIndex({ y: 2026, m: 7, d: 9 }) === i && votdIndex({ y: 2026, m: 7, d: 10 }) === i) {
+    throw new Error('rotation never advances');
+  }
+  const out = formatVotd({ book: 'John', chapter: 3, verse: 16, text: 'For God so loved the world…' }, 'You are loved first.');
+  if (!out.startsWith('Your verse for today:')) throw new Error(`votd format: ${out}`);
+  if (!out.includes('John 3:16 (KJV)')) throw new Error(`votd ref: ${out}`);
+});
+
+Deno.test('devotionTopic parses the ask; formatDevotional structures scripture + reflection + prayer', () => {
+  eq(devotionTopic('devotional about hope'), 'hope', 'topic');
+  eq(devotionTopic('write me a devotional on forgiveness'), 'forgiveness', 'write-me form');
+  eq(devotionTopic('devotional'), '', 'general devotional');
+  eq(devotionTopic('i read a devotional about hope yesterday'), null, 'mention in passing');
+  eq(devotionTopic('tell me about hope'), null, 'not a devotional ask');
+  const out = formatDevotional('hope', [{ book: 'Romans', chapter: 15, verse: 13, text: 'Now the God of hope fill you…' }]);
+  if (!out.includes('Romans 15:13 (KJV)')) throw new Error(`scripture: ${out}`);
+  if (!out.includes('hope')) throw new Error(`reflection topic: ${out}`);
+  if (!out.includes('Pray this:')) throw new Error(`prayer close: ${out}`);
+  eq(formatDevotional('hope', []), '', 'no verses → no devotional');
+});
+
+// ── v22: scripture memory coach ───────────────────────────────────────────────
+
+const VERSE = { book: 'John', chapter: 3, verse: 16, text: 'For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.' };
+
+Deno.test('memorizeRef reads the ask; activeMemoryRef recovers the verse from history', () => {
+  const ref = memorizeRef('help me memorize John 3:16');
+  eq(ref?.book, 'John', 'book');
+  eq(ref?.verseStart, 16, 'verse');
+  eq(memorizeRef('memorise psalm 23:1')?.book, 'Psalms', 'uk spelling + psalm');
+  eq(memorizeRef('memorize John 3:16-18')?.verseEnd, 16, 'range collapses to one verse');
+  eq(memorizeRef('i want to memorize my lines for the play'), null, 'not scripture');
+  const hist = [
+    { role: 'user' as const, content: 'memorize john 3:16' },
+    { role: 'assistant' as const, content: startCoaching(VERSE) },
+  ];
+  const active = activeMemoryRef(hist);
+  eq(active?.book, 'John', 'recovered book');
+  eq(active?.verseStart, 16, 'recovered verse');
+  eq(activeMemoryRef([{ role: 'assistant', content: 'Hey. What is on your mind?' }]), null, 'no marker → no mode');
+});
+
+Deno.test('gradeAttempt scores recall fuzzily and names missed words; blankOut keeps anchors', () => {
+  const perfect = gradeAttempt(VERSE.text, VERSE.text);
+  if (perfect.score < 0.99) throw new Error(`perfect: ${perfect.score}`);
+  const partial = gradeAttempt(VERSE.text, 'For God so loved the world that he gave his only Son');
+  if (partial.score <= 0.4 || partial.score >= 0.95) throw new Error(`partial: ${partial.score}`);
+  if (!partial.missed.includes('begotten')) throw new Error(`missed: ${partial.missed.join(',')}`);
+  const typo = gradeAttempt('the Lord is my shepherd', 'the lord is my sheperd');
+  if (typo.score < 0.99) throw new Error(`typo tolerated: ${typo.score}`);
+  const blanked = blankOut(VERSE.text);
+  if (!blanked.startsWith('For')) throw new Error('first word kept');
+  if (!blanked.includes('_')) throw new Error('has blanks');
+  if (blanked.split(/\s+/).length !== VERSE.text.split(/\s+/).length) throw new Error('word count preserved');
 });
 
 // ── Live integration (skipped without credentials) ──────────────────────────
