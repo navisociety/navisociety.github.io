@@ -18,7 +18,9 @@ import { stem, withinOneEdit, wordsMatch } from './match.ts';
 import {
   extractProfile, answerProfileQuestion, memoryAcknowledgement, toSecondPerson,
   mergeProfiles, detectMood, detectForget, applyForget, addReturningGreeting,
+  captureAck, newProfileBits, tryGoalDone,
 } from './memory.ts';
+import { parseLifeEvent, tryLifeEvent, addEventFollowUps } from './life.ts';
 import { extractTopicEntity, resolveReference } from './context.ts';
 import { tryAcknowledgment } from './acts.ts';
 import { tryRepair } from './repair.ts';
@@ -1049,3 +1051,128 @@ Deno.test({ name: 'live: an unanswered question is logged as a gap', ignore: !LI
   const out = await recallKnowledge(q); // gaps are not answers
   eq(out, null, 'gap-not-recalled');
 }});
+
+// ── v23: memory & understanding ──────────────────────────────────────────────
+
+Deno.test('v23: likes and dislikes extraction is negation-aware', () => {
+  const p = extractProfile([], "i love jazz and i don't like mushrooms");
+  eq(p.likes, ['jazz'], 'likes');
+  eq(p.dislikes, ['mushrooms'], 'dislikes');
+});
+
+Deno.test('v23: pronoun objects and heavy states are never tastes', () => {
+  eq(extractProfile([], 'i love you navi').likes, undefined, 'i love you');
+  eq(extractProfile([], 'i hate my life').dislikes, undefined, 'i hate my life');
+});
+
+Deno.test('v23: a new love evicts an old dislike (and across merges)', () => {
+  const p = extractProfile([{ role: 'user', content: 'i hate coffee' }], 'i love coffee now');
+  eq(p.likes, ['coffee'], 'moved to likes');
+  eq(p.dislikes, [], 'left dislikes');
+  const merged = mergeProfiles({ dislikes: ['coffee'] }, { likes: ['coffee'] });
+  eq(merged.likes, ['coffee'], 'merge likes');
+  eq(merged.dislikes, [], 'merge evicts dislike');
+});
+
+Deno.test('v23: questions never assert a taste', () => {
+  eq(extractProfile([], 'do i like mushrooms?').likes, undefined, 'question polluting likes');
+  const p = extractProfile([{ role: 'user', content: "i don't like mushrooms" }], 'do i like mushrooms?');
+  eq(p.dislikes, ['mushrooms'], 'stored dislike survives the question');
+  eq(p.likes, undefined, 'no phantom like');
+});
+
+Deno.test('v23: negated statements are not captured', () => {
+  eq(extractProfile([], 'my name is not dian').name, undefined, 'negated name');
+  eq(extractProfile([], 'my name is actually dian').name, 'Dian', 'adverb name');
+  eq(extractProfile([], 'my favourite colour is not blue').favorites, undefined, 'negated favourite');
+});
+
+Deno.test('v23: crisis language never becomes a goal or an acknowledgement', () => {
+  eq(extractProfile([], 'i want to die').goals, undefined, 'die not a goal');
+  eq(extractProfile([], 'i want to give up').goals, undefined, 'give up not a goal');
+  eq(memoryAcknowledgement('i want to die', { goals: ['launch my app'] }), null, 'no ack on crisis');
+  eq(memoryAcknowledgement('i want to give up', { goals: ['launch my app'] }), null, 'no stale-goal ack');
+});
+
+Deno.test('v23: mid-sentence age with comma is captured, distances are not', () => {
+  eq(extractProfile([], "i'm 24, and life is busy").age, 24, 'comma age');
+  eq(extractProfile([], "i'm 30 minutes away").age, undefined, 'not a distance');
+});
+
+Deno.test('v23: captureAck confirms multi-fact turns, stays quiet otherwise', () => {
+  const ack = captureAck("my name is dian, i'm 24, and i'm from pretoria", {});
+  if (!ack || !ack.includes('Dian') || !ack.includes('24') || !ack.includes('Pretoria')) {
+    throw new Error(`multi-fact ack incomplete: ${ack}`);
+  }
+  eq(captureAck('i love jazz', {}), null, 'single fact stays with its own ack');
+  eq(captureAck("what's my name?", { name: 'Dian' }), null, 'questions never ack');
+});
+
+Deno.test('v23: newProfileBits reports only what is new', () => {
+  const bits = newProfileBits({ name: 'Dian' }, { name: 'Dian', age: 24, likes: ['jazz'] });
+  eq(bits, ["you're 24", 'you love jazz'], 'only the new bits');
+});
+
+Deno.test('v23: goal completion moves the goal to wins', () => {
+  const p = { goals: ['launch my app'] };
+  const win = tryGoalDone('i finally launched my app!', p);
+  if (!win) throw new Error('no win detected');
+  eq(win.profile.goals, [], 'goal cleared');
+  eq(win.profile.wins, ['launch my app'], 'win recorded');
+  const itWin = tryGoalDone('i did it!', p);
+  if (!itWin) throw new Error('"i did it" should complete the latest goal');
+  eq(tryGoalDone('i finished my homework', p), null, 'unrelated completion ignored');
+  eq(tryGoalDone('did i finish my app?', p), null, 'questions ignored');
+});
+
+Deno.test('v23: tastes and wins are recallable', () => {
+  const p = { likes: ['jazz', 'coffee'], dislikes: ['mondays'], wins: ['launch my app'] };
+  const likes = answerProfileQuestion('what do i like?', p);
+  if (!likes?.includes('jazz and coffee')) throw new Error(`likes recall: ${likes}`);
+  const dl = answerProfileQuestion('do i like mondays?', p);
+  if (!dl?.includes("can't stand mondays")) throw new Error(`dislike check: ${dl}`);
+  const wins = answerProfileQuestion('what have i achieved?', p);
+  if (!wins?.includes('launch my app')) throw new Error(`wins recall: ${wins}`);
+  const who = answerProfileQuestion('who am i?', { name: 'Dian', work: 'producer' });
+  if (!who?.includes('Dian')) throw new Error(`who am i: ${who}`);
+});
+
+Deno.test('v23: tastes can be forgotten', () => {
+  const forget = detectForget('forget that i like coffee');
+  eq(forget, { kind: 'fact', text: 'i like coffee' }, 'forget shape');
+  const { profile, reply } = applyForget({ likes: ['coffee', 'jazz'] }, forget!);
+  eq(profile.likes, ['jazz'], 'coffee dropped');
+  if (!reply.includes('coffee')) throw new Error(`forget reply: ${reply}`);
+});
+
+Deno.test('v23: life events parse date and subject', () => {
+  const today = { y: 2026, m: 7, d: 8 }; // a Wednesday
+  eq(parseLifeEvent('i have an exam on friday', today), { text: 'exam', date: '2026-07-10' }, 'exam friday');
+  eq(parseLifeEvent('my interview is tomorrow', today), { text: 'interview', date: '2026-07-09' }, 'interview tomorrow');
+  eq(parseLifeEvent('do i have an exam on friday?', today), null, 'questions ignored');
+  eq(parseLifeEvent('my birthday is 12 march', today), null, 'birthday belongs to memory');
+  eq(parseLifeEvent('i am tired tonight', today), null, 'moods are not events');
+});
+
+Deno.test('v23: life events are captured, listed, and dated on ask', () => {
+  const today = { y: 2026, m: 7, d: 8 };
+  const turn = tryLifeEvent('i have an exam on friday', {}, today);
+  if (!turn?.profile?.events) throw new Error('event not captured');
+  eq(turn.profile.events, [{ text: 'exam', date: '2026-07-10' }], 'event stored');
+  const stored = turn.profile;
+  const up = tryLifeEvent("what's coming up?", stored, today);
+  if (!up?.reply.includes('exam')) throw new Error(`upcoming: ${up?.reply}`);
+  const when = tryLifeEvent('when is my exam?', stored, today);
+  if (!when?.reply.includes('in 2 days')) throw new Error(`when ask: ${when?.reply}`);
+  eq(tryLifeEvent('when is my birthday?', stored, today), null, 'birthday falls through');
+});
+
+Deno.test('v23: passed events get a follow-up and leave the list; day-of gets a heads-up', () => {
+  const today = { y: 2026, m: 7, d: 8 };
+  const past = addEventFollowUps('Hello.', { events: [{ text: 'exam', date: '2026-07-06' }] }, today);
+  if (!past.response.includes('how did your exam go?')) throw new Error(`follow-up: ${past.response}`);
+  eq(past.events, [], 'past event released');
+  const dayOf = addEventFollowUps('Hello.', { events: [{ text: 'exam', date: '2026-07-08' }] }, today);
+  if (!dayOf.response.includes('TODAY')) throw new Error(`day-of: ${dayOf.response}`);
+  eq(dayOf.events, undefined, 'day-of event stays');
+});

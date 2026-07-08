@@ -44,6 +44,7 @@ import { wordsMatch } from './match.ts';
 import {
   extractProfile, answerProfileQuestion, memoryAcknowledgement,
   mergeProfiles, detectMood, detectForget, applyForget, addReturningGreeting,
+  captureAck, tryGoalDone,
   type Profile,
 } from './memory.ts';
 import { loadStoredProfile, saveStoredProfile } from './store.ts';
@@ -66,6 +67,7 @@ import { tryEpisodic, updateTopics } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 import { tryDefine } from './define.ts';
 import { tryReminder, isReminderAsk, addDueReminders } from './remind.ts';
+import { tryLifeEvent, addEventFollowUps } from './life.ts';
 import { tryDevotion } from './devotion.ts';
 import { tryMemorize } from './memorize.ts';
 
@@ -3730,6 +3732,22 @@ class NaviModel {
     const memoryAck = memoryAcknowledgement(message, profile);
     if (memoryAck) return memoryAck;
 
+    // v23: whole-turn understanding — a message carrying SEVERAL new facts
+    // ("I'm Dian, I'm 24 and I'm from Pretoria") gets every one of them
+    // confirmed in a single reply, so the user knows nothing was dropped.
+    // Single-fact statements were already handled by the acks above.
+    {
+      const priorHistory =
+        history.length && history[history.length - 1].content === message
+          ? history.slice(0, -1)
+          : history;
+      const before = stored
+        ? mergeProfiles(stored, extractProfile(priorHistory, ''))
+        : extractProfile(priorHistory, '');
+      const multiAck = captureAck(message, before);
+      if (multiAck) return multiAck;
+    }
+
     // v17: conversation recall — "what were we talking about?", "recap",
     // "where were we?" — reconstruct the thread from history instead of
     // guessing at a knowledge node.
@@ -4209,6 +4227,32 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
+    // v23: life events — "my exam is on friday" is captured with its date,
+    // "what's coming up?" lists the calendar, and the follow-through (asking
+    // how it went) happens on the first reply of a later session. Signed-in
+    // only, like reminders: events live in the permanent memory row.
+    if (email) {
+      const lifeTurn = tryLifeEvent(message, stored);
+      if (lifeTurn) {
+        if (lifeTurn.profile) await saveStoredProfile(email, lifeTurn.profile);
+        return new Response(JSON.stringify({ response: lifeTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+
+      // v23: goal completion — "i launched my app!" against a stored goal is
+      // celebrated and moved to the permanent wins list.
+      const win = tryGoalDone(message, stored);
+      if (win) {
+        await saveStoredProfile(email, win.profile);
+        return new Response(JSON.stringify({ response: win.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // v22: the Scripture Memory Coach runs before the Bible pipeline — a
     // "memorize John 3:16" ask contains a verse reference, and coach mode
     // (not plain verse delivery) must own it. Recitals mid-session are
@@ -4328,6 +4372,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // a signed-in user who's been away gets a welcome-back (and a gentle
     // check-in if they last left on a low note). Never wraps crisis replies.
     if (email && history.length === 0) {
+      // v23: life-event follow-through — a passed event gets a real "how did
+      // it go?" (then leaves the list), and a day-of event gets a heads-up.
+      const followUps = addEventFollowUps(response, stored);
+      response = followUps.response;
+      // The trimmed event list rides into the end-of-request save via stored.
+      if (followUps.events) stored.events = followUps.events;
       // v22: due (or undated) reminders open the first reply of a session
       // (under the welcome-back line), and stay listed until ticked off.
       response = addDueReminders(response, stored);

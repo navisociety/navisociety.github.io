@@ -36,7 +36,19 @@ export type Profile = {
   lastTopics?: string[];
   // v22: cross-session reminders ("remind me to…"), managed by remind.ts.
   reminders?: Reminder[];
+  // v23: tastes — things the user loves and can't stand ("i love jazz",
+  // "i don't like mushrooms"). Negation-aware; a thing moves between lists.
+  likes?: string[];
+  dislikes?: string[];
+  // v23: completed goals ("i launched my app!") — celebrated and kept.
+  wins?: string[];
+  // v23: dated life events ("my exam is on friday"), managed by life.ts.
+  // NAVI asks how it went once the date has passed.
+  events?: LifeEvent[];
 };
+
+// v23: one life event. `date` is an ISO date (yyyy-mm-dd) in SA time.
+export type LifeEvent = { text: string; date: string };
 
 // v22: one held reminder. `due` is an ISO date (yyyy-mm-dd) in SA time;
 // omitted means "surface on the very next session".
@@ -55,6 +67,13 @@ const NOT_NAMES = new Set([
 
 const MAX_FACTS = 8;
 const MAX_GOALS = 5;
+const MAX_PREFS = 8;
+const MAX_WINS = 10;
+
+// v23: language that must never be handled by the memory layer — a message
+// like "i want to die" is a crisis signal, not a goal to lock in. The crisis
+// nodes own these; memory extraction and acknowledgements step aside.
+const CRISIS_RX = /\b(die|dying|death|kill|suicide|suicidal|hurt (?:myself|me)|harm (?:myself|me)|self.?harm|end (?:it all|my life)|give up on (?:life|living)|not (?:want|worth) (?:to live|living)|disappear forever)\b/i;
 
 // v18: relationships NAVI can hold onto. Canonicalised so "mum"/"mom"/"mother"
 // all key on "mother". Order doesn't matter; the map is keyed by spoken form.
@@ -109,20 +128,53 @@ function birthdayFrom(t: string): { month: number; day: number } | null {
 
 const REMEMBER_RX = /^(?:hey\s+navi[,:\s]+|navi[,:\s]+)?(?:please\s+)?remember(?:\s+that|:)?\s+(.{3,140}?)[.!?]*$/i;
 
+// ── v23: likes & dislikes ─────────────────────────────────────────────────────
+
+const LIKE_RX =
+  /\bi\s+(?:really\s+|absolutely\s+|just\s+|truly\s+)?(?:love|like|enjoy|adore)\s+([a-z][a-z0-9' -]{1,40}?)(?=\s+(?:and|but|so|because|though|when|more|most|the most|now|again|lately|these days)\b|[.,!?;]|$)/;
+const DISLIKE_RX =
+  /\bi\s+(?:really\s+|absolutely\s+|just\s+|truly\s+)?(?:hate|dislike|can(?:no|')t stand|do(?:n'| no)t\s+(?:really\s+)?(?:like|enjoy))\s+([a-z][a-z0-9' -]{1,40}?)(?=\s+(?:and|but|so|because|though|when|now|again|lately|these days|anymore|any more)\b|[.,!?;]|$)/;
+
+// Objects that aren't a taste: pure pronouns, NAVI itself, and heavy states
+// ("i hate my life") that belong to the crisis/emotional layer.
+const PREF_BAN =
+  /^(?:you|u|it|that|this|these|those|him|her|them|navi|me|myself|everything|everyone|everybody|life|my life|living|being)\b/;
+
+/** Normalise a liked/disliked thing, or null when it isn't a real taste. */
+function prefObject(raw: string): string | null {
+  const v = raw.trim().replace(/^(?:the|a|an)\s+/, '').replace(/\s+/g, ' ').trim();
+  if (v.length < 2 || v.length > 40) return null;
+  if (v.split(/\s+/).length > 5) return null;
+  if (PREF_BAN.test(v) || CRISIS_RX.test(v)) return null;
+  return v;
+}
+
+/** Append a taste, dedup'd, newest kept, capped. */
+function addPref(list: string[], thing: string): void {
+  const i = list.findIndex(x => x === thing);
+  if (i !== -1) list.splice(i, 1);
+  list.push(thing);
+  if (list.length > MAX_PREFS) list.shift();
+}
+
 function extractFrom(text: string, profile: Profile): void {
   const t = text.toLowerCase();
 
-  const name =
-    t.match(/\bmy name(?:'s| is)\s+([a-z][a-z'-]{1,20})\b/)?.[1] ??
-    t.match(/\bcall me\s+([a-z][a-z'-]{1,20})\b/)?.[1] ??
-    t.match(/\bi go by\s+([a-z][a-z'-]{1,20})\b/)?.[1];
+  // v23: negation-aware — "my name is not dian" states what ISN'T true, so
+  // nothing is captured; filler adverbs ("actually", "still") are skipped.
+  const nameM =
+    t.match(/\bmy name(?:'s| is)\s+(not\s+)?(?:actually\s+|really\s+|still\s+|now\s+|officially\s+)?([a-z][a-z'-]{1,20})\b/) ??
+    t.match(/\bcall me\s+(not\s+)?([a-z][a-z'-]{1,20})\b/) ??
+    t.match(/\bi go by\s+(not\s+)?([a-z][a-z'-]{1,20})\b/);
+  const name = nameM && !nameM[1] ? nameM[2] : undefined;
   if (name && !NOT_NAMES.has(name)) profile.name = titleCase(name);
 
   // Age: "i'm 19 years old" anywhere, or a bare "i am 19" only at the end of
-  // the message ("i am 30 minutes away" must not count).
+  // the message or a clause ("i'm 24, and…") — "i am 30 minutes away" must
+  // not count, so nothing but punctuation may follow the number.
   const age =
     t.match(/\bi(?:'m| am)\s+(\d{1,2})\s+(?:years?|yrs?)\s+old\b/)?.[1] ??
-    t.match(/\bi(?:'m| am)\s+(\d{1,2})\s*[.!?]*$/)?.[1];
+    t.match(/\bi(?:'m| am)\s+(\d{1,2})\s*(?=[,.!?;]|$)/)?.[1];
   if (age) {
     const n = parseInt(age, 10);
     if (n >= 5 && n <= 99) profile.age = n;
@@ -146,6 +198,8 @@ function extractFrom(text: string, profile: Profile): void {
   while ((fm = favRx.exec(t)) !== null) {
     const thing = fm[1].trim().replace(/\bcolour\b/, 'color');
     const value = fm[2].trim();
+    // v23: "my favourite colour is not blue" tells us what it isn't — skip.
+    if (/^not\b/.test(value) || /\bnot\b\s*$/.test(thing)) continue;
     if (thing && value) {
       profile.favorites ??= {};
       profile.favorites[thing] = titleCase(value);
@@ -158,6 +212,10 @@ function extractFrom(text: string, profile: Profile): void {
   let gm: RegExpExecArray | null;
   while ((gm = goalRx.exec(t)) !== null) {
     const goal = gm[1].trim().replace(/\s+/g, ' ');
+    // v23: crisis and despair language is never a "goal" — "i want to die" /
+    // "i want to give up" belong to the crisis and encouragement nodes, and
+    // locking them in as ambitions would be monstrous.
+    if (CRISIS_RX.test(goal) || /\b(give up|quit|be dead|be gone|stop existing)\b/.test(goal) || /^not\b/.test(goal)) continue;
     if (goal.length >= 3) {
       profile.goals ??= [];
       if (!profile.goals.some(g => g.toLowerCase() === goal.toLowerCase())) {
@@ -175,7 +233,34 @@ function extractFrom(text: string, profile: Profile): void {
     t.match(/\bi(?:'m| am) a\s+([a-z]{3,20}(?:\s+[a-z]{3,20})?)\s+(?:by profession|for a living|for work)\b/)?.[1];
   if (work) {
     const w = work.trim().split(/\s+/).slice(0, 3).join(' ');
-    if (w.length >= 3) profile.work = w;
+    if (w.length >= 3 && !/^not\b/.test(w)) profile.work = w;
+  }
+
+  // v23: likes & dislikes — "i love jazz", "i can't stand traffic". Negation
+  // aware by construction: "i don't like X" only ever lands in dislikes.
+  // Naming a thing you now love pulls it off the dislikes list (and vice
+  // versa), so the newest word always wins. Questions never state a taste —
+  // "do i like mushrooms?" contains "i like mushrooms" but asserts nothing.
+  const isQuestion = /\?\s*$/.test(text.trim()) ||
+    /^(?:do|does|did|what|why|how|when|where|who|which|am|is|are|can|could|will|would|should)\b/.test(t);
+  if (!isQuestion) {
+    let lm: RegExpExecArray | null;
+    const likeRx = new RegExp(LIKE_RX.source, 'g');
+    while ((lm = likeRx.exec(t)) !== null) {
+      const thing = prefObject(lm[1]);
+      if (!thing) continue;
+      profile.likes ??= [];
+      addPref(profile.likes, thing);
+      if (profile.dislikes) profile.dislikes = profile.dislikes.filter(d => d !== thing);
+    }
+    const dislikeRx = new RegExp(DISLIKE_RX.source, 'g');
+    while ((lm = dislikeRx.exec(t)) !== null) {
+      const thing = prefObject(lm[1]);
+      if (!thing) continue;
+      profile.dislikes ??= [];
+      addPref(profile.dislikes, thing);
+      if (profile.likes) profile.likes = profile.likes.filter(d => d !== thing);
+    }
   }
 
   // v18: people — "my brother is called Sipho", "my mom's name is Grace",
@@ -246,6 +331,27 @@ export function mergeProfiles(base: Profile, overlay: Profile): Profile {
     const merged = [...(base.goals ?? [])];
     for (const g of overlay.goals) if (!seen.has(g.toLowerCase())) merged.push(g);
     out.goals = merged.slice(-MAX_GOALS);
+  }
+
+  // v23: tastes union in, and each side of the overlay evicts its opposite —
+  // saying "i love coffee" today removes coffee from yesterday's dislikes.
+  if (overlay.likes?.length) {
+    const merged = [...(out.likes ?? [])];
+    for (const l of overlay.likes) addPref(merged, l);
+    out.likes = merged;
+    if (out.dislikes) out.dislikes = out.dislikes.filter(d => !overlay.likes!.includes(d));
+  }
+  if (overlay.dislikes?.length) {
+    const merged = [...(out.dislikes ?? [])];
+    for (const d of overlay.dislikes) addPref(merged, d);
+    out.dislikes = merged;
+    if (out.likes) out.likes = out.likes.filter(l => !overlay.dislikes!.includes(l));
+  }
+  if (overlay.wins?.length) {
+    const seen = new Set((base.wins ?? []).map(w => w.toLowerCase()));
+    const merged = [...(base.wins ?? [])];
+    for (const w of overlay.wins) if (!seen.has(w.toLowerCase())) merged.push(w);
+    out.wins = merged.slice(-MAX_WINS);
   }
 
   return out;
@@ -349,6 +455,22 @@ export function applyForget(profile: Profile, forget: Forget): { profile: Profil
 
   // fact
   const target = forget.text.toLowerCase();
+  // v23: "forget that i like coffee" / "forget that i hate mondays" — tastes
+  // are forgettable the same way facts are.
+  const tasteM = target.match(/^(?:that\s+)?i\s+(?:like|love|enjoy|hate|dislike|can'?t stand|don'?t like)\s+(.{2,40})$/);
+  if (tasteM) {
+    const thing = tasteM[1].trim().replace(/^(?:the|a|an)\s+/, '');
+    const inLikes = next.likes?.some(l => l === thing || l.includes(thing) || thing.includes(l));
+    const inDislikes = next.dislikes?.some(d => d === thing || d.includes(thing) || thing.includes(d));
+    if (inLikes) {
+      next.likes = next.likes!.filter(l => !(l === thing || l.includes(thing) || thing.includes(l)));
+      return { profile: next, reply: `Done — I've forgotten that you love ${thing}.` };
+    }
+    if (inDislikes) {
+      next.dislikes = next.dislikes!.filter(d => !(d === thing || d.includes(thing) || thing.includes(d)));
+      return { profile: next, reply: `Done — I've forgotten how you felt about ${thing}.` };
+    }
+  }
   if (next.facts?.length) {
     const kept = next.facts.filter(f => {
       const fl = f.toLowerCase();
@@ -420,6 +542,10 @@ function birthdayLabel(bd: { month: number; day: number }): string {
 export function memoryAcknowledgement(message: string, profile: Profile): string | null {
   const trimmed = message.trim();
 
+  // v23: crisis language is never acknowledged as a memory item — those
+  // messages belong to the crisis nodes, whole and untouched.
+  if (CRISIS_RX.test(trimmed)) return null;
+
   const rm = trimmed.match(REMEMBER_RX);
   if (rm) {
     return `Locked in — I'll remember that ${toSecondPerson(rm[1].trim().replace(/[.!?]+$/, ''))}. Ask me anytime.`;
@@ -438,10 +564,31 @@ export function memoryAcknowledgement(message: string, profile: Profile): string
     return `Got it — your birthday is ${birthdayLabel(profile.birthday)}, ${when}. I won't forget it.`;
   }
 
-  // v18: confirm a stated goal.
+  // v18: confirm a stated goal. v23: only when the latest stored goal really
+  // came from THIS message — "i want to give up" must never be answered with
+  // an old goal's confirmation.
   if (/^(?:hey\s+navi[,:\s]+|navi[,:\s]+)?(?:my goal is|my dream is|i(?:'m| am) working on|i want to|i(?:'m| am) trying to|i(?:'m| am) building)\b/.test(t) && profile.goals?.length) {
     const goal = profile.goals[profile.goals.length - 1];
-    return `Locked in — you're working toward: ${goal}. I've got that, and I'll hold you to it. What's the next step?`;
+    if (t.includes(goal.toLowerCase())) {
+      return `Locked in — you're working toward: ${goal}. I've got that, and I'll hold you to it. What's the next step?`;
+    }
+  }
+
+  // v23: confirm a taste — "i love jazz" / "i can't stand traffic" as the
+  // whole message gets a direct note instead of a retrieval guess.
+  const likeM = t.match(new RegExp(`^(?:hey\\s+navi[,:\\s]+|navi[,:\\s]+)?${LIKE_RX.source}[.!?]*$`));
+  if (likeM) {
+    const thing = prefObject(likeM[1]);
+    if (thing && profile.likes?.includes(thing)) {
+      return `Noted — you love ${thing}. That's part of your picture now.`;
+    }
+  }
+  const dislikeM = t.match(new RegExp(`^(?:hey\\s+navi[,:\\s]+|navi[,:\\s]+)?${DISLIKE_RX.source}[.!?]*$`));
+  if (dislikeM) {
+    const thing = prefObject(dislikeM[1]);
+    if (thing && profile.dislikes?.includes(thing)) {
+      return `Noted — ${thing} is not your thing. I'll remember that.`;
+    }
   }
 
   // v18: confirm work.
@@ -463,6 +610,108 @@ export function memoryAcknowledgement(message: string, profile: Profile): string
   return null;
 }
 
+// ── v23: whole-turn understanding ─────────────────────────────────────────────
+
+/** Human phrases for everything `after` knows that `before` didn't. */
+export function newProfileBits(before: Profile, after: Profile): string[] {
+  const bits: string[] = [];
+  if (after.name && after.name !== before.name) bits.push(`your name is ${after.name}`);
+  if (after.age !== undefined && after.age !== before.age) bits.push(`you're ${after.age}`);
+  if (after.place && after.place !== before.place) bits.push(`you're from ${after.place}`);
+  if (after.work && after.work !== before.work) bits.push(`you work as ${after.work}`);
+  if (after.birthday && (before.birthday?.month !== after.birthday.month || before.birthday?.day !== after.birthday.day)) {
+    bits.push(`your birthday is ${birthdayLabel(after.birthday)}`);
+  }
+  for (const [k, v] of Object.entries(after.favorites ?? {})) {
+    if (before.favorites?.[k] !== v) bits.push(`your favourite ${k} is ${v}`);
+  }
+  for (const [k, v] of Object.entries(after.people ?? {})) {
+    if (before.people?.[k] !== v) bits.push(`your ${k} is ${v}`);
+  }
+  const had = (xs?: string[]) => new Set((xs ?? []).map(x => x.toLowerCase()));
+  const goalsHad = had(before.goals);
+  for (const g of after.goals ?? []) if (!goalsHad.has(g.toLowerCase())) bits.push(`you're working toward ${g}`);
+  const likesHad = had(before.likes);
+  for (const l of after.likes ?? []) if (!likesHad.has(l.toLowerCase())) bits.push(`you love ${l}`);
+  const dislikesHad = had(before.dislikes);
+  for (const d of after.dislikes ?? []) if (!dislikesHad.has(d.toLowerCase())) bits.push(`you're not a fan of ${d}`);
+  const factsHad = had(before.facts);
+  for (const f of after.facts ?? []) if (!factsHad.has(f.toLowerCase())) bits.push(toSecondPerson(f));
+  return bits;
+}
+
+/**
+ * v23: when ONE message carries several new facts ("I'm Dian, I'm 24 and I'm
+ * from Pretoria"), confirm all of them together — proof NAVI understood the
+ * whole sentence, not just the first clause. Single-fact statements keep
+ * their dedicated acknowledgements; questions and crisis messages never land
+ * here. Returns null when fewer than two new things were captured.
+ */
+export function captureAck(message: string, before: Profile): string | null {
+  const t = message.trim();
+  if (!t || t.length > 400) return null;
+  if (/\?\s*$/.test(t)) return null;
+  if (CRISIS_RX.test(t)) return null;
+  const after = mergeProfiles(before, extractProfile([], t));
+  const bits = newProfileBits(before, after);
+  if (bits.length < 2) return null;
+  const list = bits.slice(0, 6).join('; ');
+  return `All locked in: ${list}. I've kept every piece of that.`;
+}
+
+// ── v23: goal completion → wins ───────────────────────────────────────────────
+
+const DONE_RX =
+  /\bi\s+(?:finally\s+|just\s+)?(?:finished|completed|achieved|accomplished|launched|reached|pulled off|did)\s+(it|that|my goal|the goal|.{2,60}?)\s*(?:[.!?,;]|$)/;
+
+const GOAL_STOP = new Set(['the', 'a', 'an', 'my', 'to', 'for', 'and', 'of', 'on', 'in', 'with']);
+
+function goalWords(s: string): Set<string> {
+  return new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !GOAL_STOP.has(w)));
+}
+
+/**
+ * v23: "i finished my app!" / "i did it!" — when it matches a stored goal,
+ * celebrate it, move the goal to the wins list, and persist. Returns null
+ * when the message isn't a completion, or no stored goal matches.
+ */
+export function tryGoalDone(message: string, profile: Profile): { reply: string; profile: Profile } | null {
+  const goals = profile.goals ?? [];
+  if (!goals.length) return null;
+  const t = message.toLowerCase().trim();
+  if (/\?\s*$/.test(t)) return null;
+  const m = t.match(DONE_RX);
+  if (!m) return null;
+
+  const said = m[1].trim();
+  let idx = -1;
+  if (/^(it|that|my goal|the goal)$/.test(said)) {
+    idx = goals.length - 1; // "i did it" → the most recent goal
+  } else {
+    const saidWords = goalWords(said);
+    let best = 0;
+    goals.forEach((g, i) => {
+      const gw = goalWords(g);
+      let overlap = 0;
+      for (const w of saidWords) if (gw.has(w)) overlap++;
+      const score = overlap / Math.max(1, Math.min(saidWords.size, gw.size));
+      if (overlap > 0 && score >= 0.5 && score > best) { best = score; idx = i; }
+    });
+  }
+  if (idx < 0) return null;
+
+  const goal = goals[idx];
+  const next: Profile = { ...profile, goals: goals.filter((_, i) => i !== idx) };
+  next.wins = [...(profile.wins ?? [])];
+  if (!next.wins.some(w => w.toLowerCase() === goal.toLowerCase())) next.wins.push(goal);
+  if (next.wins.length > MAX_WINS) next.wins.shift();
+
+  return {
+    reply: `THAT'S A WIN. You told me you were working toward ${goal} — and you actually did it. I'm moving it to your wins list, because this deserves to be remembered. What's the next mountain?`,
+    profile: next,
+  };
+}
+
 /** Answer profile questions ("what's my name", "what do you know about me") from the profile. */
 export function answerProfileQuestion(message: string, profile: Profile): string | null {
   const t = message.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -471,6 +720,16 @@ export function answerProfileQuestion(message: string, profile: Profile): string
     return profile.name
       ? `You're ${profile.name}. I don't forget the people I talk to.`
       : "You haven't told me your name yet. What should I call you?";
+  }
+
+  // v23: "who am i?" — answered from the whole picture, not just the name.
+  if (/^(?:hey navi |navi )?who am i(?: to you| again)?$/.test(t)) {
+    if (!profile.name) return "You haven't told me your name yet — but I'm listening. Who are you?";
+    const extras: string[] = [];
+    if (profile.work) extras.push(`a ${profile.work}`);
+    if (profile.place) extras.push(`from ${profile.place}`);
+    const tail = extras.length ? ` — ${extras.join(', ')}` : '';
+    return `You're ${profile.name}${tail}. And you're someone I keep a real picture of, not just a chat window.`;
   }
 
   if (/\bhow old am i\b/.test(t) || /\b(whats|what is) my age\b/.test(t)) {
@@ -530,6 +789,37 @@ export function answerProfileQuestion(message: string, profile: Profile): string
       : `You haven't told me your ${rel}'s name yet. What is it?`;
   }
 
+  // v23: tastes recall — "what do i like?", "what do i hate?", "do i like X?".
+  const tasteAsk = t.match(/^(?:hey navi |navi )?do i (?:like|love|enjoy|hate|dislike) (.{2,30}?)(?: again)?$/);
+  if (tasteAsk) {
+    const asked = tasteAsk[1].trim().replace(/^(?:the|a|an)\s+/, '');
+    const inLikes = (profile.likes ?? []).find(l => l === asked || l.includes(asked) || asked.includes(l));
+    const inDislikes = (profile.dislikes ?? []).find(d => d === asked || d.includes(asked) || asked.includes(d));
+    if (inLikes) return `Yes — you told me you love ${inLikes}. I keep track of what lights you up.`;
+    if (inDislikes) return `The opposite — you told me you can't stand ${inDislikes}.`;
+    return `You haven't told me how you feel about ${asked} yet. Love it or leave it?`;
+  }
+  if (/\bwhat (?:do|things do) i (?:like|love|enjoy)\b/.test(t) || /\bwhat are my likes\b/.test(t)) {
+    const likes = profile.likes ?? [];
+    if (!likes.length) return "You haven't told me what you love yet. Give me a few — I'll keep them.";
+    const list = likes.length === 1 ? likes[0] : `${likes.slice(0, -1).join(', ')} and ${likes[likes.length - 1]}`;
+    return `From what you've told me, you love ${list}. I keep track of what lights you up.`;
+  }
+  if (/\bwhat (?:do|things do) i (?:hate|dislike)\b/.test(t) || /\bwhat can t i stand\b/.test(t) || /\bwhat don t i like\b/.test(t)) {
+    const dislikes = profile.dislikes ?? [];
+    if (!dislikes.length) return "You haven't told me anything you can't stand yet. What gets under your skin?";
+    const list = dislikes.length === 1 ? dislikes[0] : `${dislikes.slice(0, -1).join(', ')} and ${dislikes[dislikes.length - 1]}`;
+    return `You've told me you can't stand ${list}. Noted and remembered.`;
+  }
+
+  // v23: wins recall — "what have i achieved?", "what are my wins?".
+  if (/\bwhat (?:are my wins|have i (?:achieved|accomplished|finished|completed))\b/.test(t) || /\bmy (?:wins|achievements)\b/.test(t)) {
+    const wins = profile.wins ?? [];
+    if (!wins.length) return "No wins on the board yet — but the board is waiting. Tell me a goal, then go beat it.";
+    const list = wins.length === 1 ? wins[0] : `${wins.slice(0, -1).join('; ')}; and ${wins[wins.length - 1]}`;
+    return `Look at this list: ${list}. You DID those. Every one is proof you finish what you start.`;
+  }
+
   // v16: full recall — "what do you know/remember about me?".
   if (/\bwhat do you (know|remember) about me\b/.test(t) || /\btell me what you know about me\b/.test(t) || /\bwhat have i told you\b/.test(t)) {
     const bits: string[] = [];
@@ -545,6 +835,9 @@ export function answerProfileQuestion(message: string, profile: Profile): string
       bits.push(`your ${rel} is ${nm}`);
     }
     for (const g of profile.goals ?? []) bits.push(`you're working toward ${g}`);
+    if (profile.likes?.length) bits.push(`you love ${profile.likes.join(', ')}`);
+    if (profile.dislikes?.length) bits.push(`you can't stand ${profile.dislikes.join(', ')}`);
+    if (profile.wins?.length) bits.push(`you've already won at ${profile.wins.join('; ')}`);
     for (const f of profile.facts ?? []) bits.push(toSecondPerson(f));
     if (!bits.length) {
       return "Not much yet — this conversation is still young. Tell me your name, or say \"remember that…\" and I'll hold onto whatever matters.";
