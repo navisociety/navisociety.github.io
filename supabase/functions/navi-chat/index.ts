@@ -4149,6 +4149,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // v18: load this user's durable memory (empty for anonymous users).
     const stored: Profile = email ? await loadStoredProfile(email) : {};
 
+    // v22: reminders are memory operations like forget/teach — handled up
+    // front and persisted immediately. Before the forget layer, so "clear my
+    // reminders" is a reminder command, not a memory-forget ask. Signed-in
+    // only; an anonymous visitor asking gets pointed at sign-in.
+    if (email) {
+      const reminderTurn = tryReminder(message, stored);
+      if (reminderTurn) {
+        if (reminderTurn.profile) await saveStoredProfile(email, reminderTurn.profile);
+        return new Response(JSON.stringify({ response: reminderTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    } else if (isReminderAsk(message)) {
+      return new Response(JSON.stringify({ response: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
+        status: 200,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
     // v18: memory control — "forget my birthday" / "forget everything about me"
     // is honoured before anything else, and persisted immediately.
     const forget = detectForget(message);
@@ -4187,25 +4207,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const prevQ = previousUserQuestion(history);
         if (prevQ) await applyFeedback(prevQ, verdict);
       }
-    }
-
-    // v22: reminders are memory operations like forget/teach — handled up
-    // front and persisted immediately. Signed-in only; an anonymous visitor
-    // asking for one gets pointed at sign-in instead of a silent no-op.
-    if (email) {
-      const reminderTurn = tryReminder(message, stored);
-      if (reminderTurn) {
-        if (reminderTurn.profile) await saveStoredProfile(email, reminderTurn.profile);
-        return new Response(JSON.stringify({ response: reminderTurn.reply }), {
-          status: 200,
-          headers: { ...cors, "Content-Type": "application/json" },
-        });
-      }
-    } else if (isReminderAsk(message)) {
-      return new Response(JSON.stringify({ response: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
-        status: 200,
-        headers: { ...cors, "Content-Type": "application/json" },
-      });
     }
 
     // v22: the Scripture Memory Coach runs before the Bible pipeline — a

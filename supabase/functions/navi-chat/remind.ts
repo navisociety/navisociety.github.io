@@ -78,7 +78,7 @@ export function parseWhen(text: string, today = todayInTZ(NAVI_TZ)): { text: str
 
 const ADD_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+|can you\s+|could you\s+)?remind me\s+(?:to\s+|about\s+|that\s+)?(.+)$/i;
 const LIST_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:what are my|show (?:me )?my|list my|do i have any)\s+reminders?[?!.]*$/i;
-const CLEAR_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:clear|delete|remove)\s+(?:all\s+)?(?:of\s+)?my\s+reminders[?!.]*$/i;
+const CLEAR_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:clear|delete|remove|forget)\s+(?:all\s+)?(?:of\s+)?my\s+reminders[?!.]*$/i;
 const DONE_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:done with|i did|remove|delete|clear)\s+(?:the\s+)?reminder\s*(?:#|number\s*)?(\d{1,2})[?!.]*$/i;
 
 /** True when the message is any reminder-flavoured ask (used to nudge anonymous users to sign in). */
