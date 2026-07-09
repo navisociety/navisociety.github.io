@@ -63,6 +63,7 @@ import { wantsMore, wikiFullExtract, nextChunk } from './deepen.ts';
 import {
   detectTeach, teachKnowledge, detectFeedback, applyFeedback,
   previousUserQuestion, recallKnowledge, learnKnowledge, logGap,
+  tryGapsReport,
 } from './learn.ts';
 import { tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
@@ -73,7 +74,7 @@ import { tryPlan } from './plan.ts';
 import { tryEpisodic, updateTopics } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 import { tryDefine } from './define.ts';
-import { tryReminder, isReminderAsk, addDueReminders } from './remind.ts';
+import { tryReminder, isReminderAsk, addDueReminders, tryEscalate, reminderEscalation } from './remind.ts';
 import { tryLifeEvent, addEventFollowUps } from './life.ts';
 import { tryDevotion } from './devotion.ts';
 import { tryMemorize } from './memorize.ts';
@@ -84,6 +85,7 @@ import { tryAgent, runDailyWorkflows, missionNudge } from './agent.ts';
 import { tryHabit, isHabitAsk } from './habit.ts';
 import { tryBriefing } from './brief.ts';
 import { tryReview, reviewOffer } from './review.ts';
+import { tryVision } from './vision.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4153,6 +4155,9 @@ async function answerIntent(
   if (email) {
     const reminder = tryReminder(part, profile);
     if (reminder) return { reply: reminder.reply, profile: reminder.profile };
+    // v30: reminder escalation — "make that reminder a habit / a mission step".
+    const esc = tryEscalate(part, profile);
+    if (esc) return { reply: esc.reply, profile: esc.profile };
     const habit = tryHabit(part, profile);
     if (habit) return { reply: habit.reply, profile: habit.profile };
     const forget = detectForget(part);
@@ -4167,6 +4172,12 @@ async function answerIntent(
   } else if (isReminderAsk(part)) {
     return { reply: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." };
   }
+
+  // v30: the Vision Board bridge — "add * to my vision board" works as a
+  // workflow step (and any multi-intent part), acting on the board's own
+  // table. Handles the anonymous sign-in prompt itself.
+  const vision = await tryVision(part, email, profile);
+  if (vision) return { reply: vision.reply };
 
   const bible = await answerFromBible(part);
   if (bible) return { reply: bible };
@@ -4350,6 +4361,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
           headers: { ...cors, "Content-Type": "application/json" },
         });
       }
+      // v30: reminder escalation — a promoted reminder becomes a habit or a
+      // mission step and leaves the list. Persisted immediately.
+      const escTurn = tryEscalate(message, stored);
+      if (escTurn) {
+        if (escTurn.profile) await saveStoredProfile(email, escTurn.profile);
+        return new Response(JSON.stringify({ response: escTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
     } else if (isReminderAsk(message)) {
       return new Response(JSON.stringify({ response: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
         status: 200,
@@ -4376,6 +4397,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
+    // v30: the Vision Board bridge — NAVI executes on the Vision Board tool's
+    // own table from chat: "add … to my vision board", "what's on my vision
+    // board", "remove … from my vision board". The board lives outside the
+    // profile, so there's never a profile to save here.
+    {
+      const visionTurn = await tryVision(message, email, stored);
+      if (visionTurn) {
+        return new Response(JSON.stringify({ response: visionTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // v18: memory control — "forget my birthday" / "forget everything about me"
     // is honoured before anything else, and persisted immediately.
     const forget = detectForget(message);
@@ -4386,6 +4421,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
         status: 200,
         headers: { ...cors, "Content-Type": "application/json" },
       });
+    }
+
+    // v30: the self-improvement loop — "what should you learn?" reads NAVI's
+    // own gaps backlog (owner-only detail handled inside; everyone else gets
+    // a friendly line, deterministically).
+    {
+      const gaps = await tryGapsReport(message, email);
+      if (gaps) {
+        return new Response(JSON.stringify({ response: gaps }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
     }
 
     // v19: a signed-in user can TEACH NAVI directly ("learn that…"). The fact
@@ -4591,6 +4639,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         if (nudge) {
           response = `${response}\n\n${nudge.note}`;
           Object.assign(stored, nudge.profile);
+        }
+
+        // v30: a reminder that's waited 3+ days gets ONE offer, ever, to be
+        // promoted into a habit or a mission step — nudge-style, at most one
+        // per session start.
+        const esc = reminderEscalation(stored, todayISO);
+        if (esc) {
+          response = `${response}\n\n${esc.note}`;
+          Object.assign(stored, esc.profile);
         }
 
         // v28: once the last weekly review (or the first week of tracked

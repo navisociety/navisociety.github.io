@@ -2,7 +2,7 @@
 //
 // NAVI's learning system (v19). This is what lets NAVI genuinely LEARN and keep
 // what it learns — permanently, and shared across every user — with zero
-// external model. Five abilities, all backed by navi_knowledge / navi_gaps:
+// external model. Six abilities, all backed by navi_knowledge / navi_gaps:
 //
 //   1. Web-fact learning   — every good web answer NAVI produces is saved
 //                            (learnKnowledge, source 'web') and served from the
@@ -19,6 +19,10 @@
 //   5. Learning its gaps    — a question NAVI's own brain AND the web both miss
 //                            is logged (logGap) so its most-asked blind spots
 //                            become a self-improvement backlog.
+//   6. Reading them back    — v30: "what should you learn?" (owner-only)
+//                            reports the top unresolved gaps with the teach
+//                            syntax, closing the self-improvement loop
+//                            (isGapsAsk / tryGapsReport).
 //
 // Server-side only, exactly like store.ts / bible.ts: uses the injected
 // service-role key, browser never touches these tables (RLS on, no policies).
@@ -364,4 +368,65 @@ export async function logGap(query: string): Promise<void> {
       query_text: query.trim().slice(0, 300),
     }], 'resolution=merge-duplicates');
   }
+}
+
+// ── 6. v30: the self-improvement loop — reading its own gaps back ────────────
+// Agency applied to NAVI itself: "what should you learn?" reads the navi_gaps
+// backlog (the questions NAVI couldn't answer, ranked by how often they were
+// asked) and asks to be taught. Owner-only — the learning list is Prophet
+// Dian's to manage; anyone else gets an honest, friendly line instead of the
+// backlog. Read-only over the table; teaching still happens through the
+// ordinary "learn: question :: answer" path, which resolves the gap.
+
+const OWNER_EMAIL = 'prophetdian@gmail.com';
+
+const GAPS_RX =
+  /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:what should (?:you|navi) learn(?: next)?|what do you (?:need|want) to learn|what don'?t you know(?: yet)?|what are your (?:top )?(?:gaps|blind spots)|show (?:me )?your (?:gaps|blind spots|learning list)|what'?s on your learning list)[?!.]*$/i;
+
+/** True when the message asks about NAVI's learning backlog. */
+export function isGapsAsk(message: string): boolean {
+  return GAPS_RX.test(message.trim());
+}
+
+/** Best-effort GET many rows from a table. Returns [] when unreachable. */
+async function getRows(table: string, query: string): Promise<Record<string, unknown>[] | null> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return Array.isArray(rows) ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Answer "what should you learn?" — the top unresolved gaps, most-asked first,
+ * with the teach syntax so the ask turns straight into action. Returns null
+ * when the message isn't a gaps ask.
+ */
+export async function tryGapsReport(message: string, email: string): Promise<string | null> {
+  if (!isGapsAsk(message)) return null;
+  if (email !== OWNER_EMAIL) {
+    return 'I keep a private list of every question I couldn\'t answer, and I go over it with Prophet Dian so I keep getting sharper. Ask me anything — if I miss, it goes on the list.';
+  }
+  const rows = await getRows(
+    'navi_gaps',
+    'resolved=not.is.true&order=hits.desc.nullslast,last_asked.desc.nullslast&limit=5&select=query_text,hits',
+  );
+  if (rows === null) {
+    return 'I couldn\'t reach my learning list just now — try me again in a moment.';
+  }
+  if (!rows.length) {
+    return 'My learning list is CLEAR — every question that stumped me has been taught or resolved. Keep asking hard things; whatever I miss goes straight back on the list.';
+  }
+  const lines = rows.map((r, i) => {
+    const hits = Number(r.hits ?? 1);
+    return `${i + 1}. "${String(r.query_text ?? '').trim()}"${hits > 1 ? ` — asked ${hits}×` : ''}`;
+  }).join('\n');
+  return `Here's what I couldn't answer — my top blind spots, most-asked first:\n${lines}\n\nTeach me any of them and I'll hold it forever, for everyone:\nlearn: <question> :: <answer>`;
 }

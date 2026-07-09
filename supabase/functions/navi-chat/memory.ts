@@ -105,7 +105,9 @@ export type LifeEvent = { text: string; date: string };
 
 // v22: one held reminder. `due` is an ISO date (yyyy-mm-dd) in SA time;
 // omitted means "surface on the very next session".
-export type Reminder = { text: string; created: string; due?: string };
+// v30: `offered` stamps the day NAVI offered to escalate a long-waiting
+// reminder into a habit or mission step — one offer per reminder, ever.
+export type Reminder = { text: string; created: string; due?: string; offered?: string };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 

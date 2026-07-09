@@ -1,6 +1,17 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30 below)
+//
+// v30 additions (the cross-platform round):
+//   - CONDITION VOCABULARY 2.0 — negations ("no reminders are due", "my mood
+//     isn't low", "i have no mission") and habit-streak thresholds ("my prayer
+//     streak is under 3" / "at least 7" / "over 7"), all in evalCondition.
+//   - QUEUE EDITING — "move X to the front of the queue" reorders;
+//     "start the queued mission X now" (or bare "start the queued mission")
+//     pulls it forward, swapping the active mission back to the front of the
+//     queue with an honest note that its steps restart on return.
+//   (The Vision Board bridge and reminder escalation live in vision.ts and
+//    remind.ts — see those headers.)
 //
 // v29 additions (the executive round):
 //   - CONDITIONAL STEPS — a step may open with "when <condition>:" and only
@@ -202,7 +213,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "my mood is low/stressed/good", "my mission is idle", "i have a mission"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -217,6 +228,16 @@ function habitLoggedToday(profile: Profile, spoken: string, today: string): bool
     (x) => x.name === s || x.name.includes(s) || s.includes(x.name),
   );
   return !!h && h.lastDone === today;
+}
+
+// v30: a habit's current streak for threshold conditions. A habit that isn't
+// tracked has, honestly, a streak of 0 — "under 3" holds, "at least 3" doesn't.
+function streakOf(profile: Profile, spoken: string): number {
+  const s = spoken.toLowerCase().trim();
+  const h = (profile.habits ?? []).find(
+    (x) => x.name === s || x.name.includes(s) || s.includes(x.name),
+  );
+  return h?.streak ?? 0;
 }
 
 /**
@@ -236,8 +257,24 @@ export function evalCondition(
   if (/^(?:a reminder is due|reminders are due|i have (?:a )?reminders? due)$/.test(cond)) {
     return (profile.reminders ?? []).some((r) => !r.due || r.due <= todayISO);
   }
+  // v30: the negation — "when no reminders are due: …" for the clear-desk days.
+  if (/^(?:no reminders? (?:is|are) due|nothing(?:'s| is) due|i have no reminders? due)$/.test(cond)) {
+    return !(profile.reminders ?? []).some((r) => !r.due || r.due <= todayISO);
+  }
   m = cond.match(/^(?:my mood is|i'?m feeling|i feel) (\w+)$/);
   if (m && MOOD_ALIASES[m[1]]) return (profile.lastMood ?? '') === MOOD_ALIASES[m[1]];
+  // v30: mood negation — "when my mood isn't low: …". Unknown moods still
+  // return null (skip and teach), never a guess.
+  m = cond.match(/^(?:my mood (?:isn'?t|is not)|i'?m not feeling|i don'?t feel) (\w+)$/);
+  if (m && MOOD_ALIASES[m[1]]) return (profile.lastMood ?? '') !== MOOD_ALIASES[m[1]];
+  // v30: habit streak thresholds — "my prayer streak is under 3" / "at least 7".
+  m = cond.match(/^my (.+?) streak is (?:under|below|less than) (\d{1,3})$/);
+  if (m) return streakOf(profile, m[1]) < parseInt(m[2], 10);
+  m = cond.match(/^my (.+?) streak is at least (\d{1,3})$/) ??
+    cond.match(/^my (.+?) streak is (\d{1,3}) or more$/);
+  if (m) return streakOf(profile, m[1]) >= parseInt(m[2], 10);
+  m = cond.match(/^my (.+?) streak is (?:over|above|more than) (\d{1,3})$/);
+  if (m) return streakOf(profile, m[1]) > parseInt(m[2], 10);
   if (/^my mission (?:is idle|hasn'?t moved)$/.test(cond)) {
     const mi = profile.mission;
     if (!mi) return false;
@@ -247,6 +284,8 @@ export function evalCondition(
     return Number.isFinite(idle) && idle >= 3;
   }
   if (/^i have (?:a|an)(?: active)? mission$/.test(cond)) return !!profile.mission;
+  // v30: the mission negation — "when i have no mission: …" nudges the restart.
+  if (/^i (?:don'?t have a|have no)(?: active)? mission$/.test(cond)) return !profile.mission;
   return null;
 }
 
@@ -343,6 +382,23 @@ const QUEUE_CLEAR_RX = /^(?:please )?clear (?:my |the )?mission queue$/;
 const QUEUE_REMOVE_RX =
   /^(?:please )?(?:remove|unqueue|drop|delete) (?:the )?queued mission(?: ?[:—-] ?| to | for )(.+)$/;
 
+// v30: queue editing — reorder, and pull a queued mission forward NOW.
+const QUEUE_FRONT_RX =
+  /^(?:please )?move (?:the )?(?:queued mission )?["']?(.{1,80}?)["']? to the (?:front|top) of (?:my |the )?(?:mission )?queue$/;
+
+const QUEUE_START_RX =
+  /^(?:please )?(?:start|promote|activate|begin) (?:the )?queued mission(?: ?[:—-] ?| to | for | )["']?(.{1,80}?)["']?(?: now)?$/;
+const QUEUE_START_BARE_RX =
+  /^(?:please )?(?:start|promote|activate|begin) (?:the |my )?(?:next |first )?queued mission(?: now)?$/;
+
+// Fuzzy goal lookup shared by remove / move / start-now: exact, then contains.
+function findQueued(queue: string[], spoken: string): number {
+  const s = spoken.toLowerCase().trim();
+  return queue.findIndex(
+    (g) => g.toLowerCase() === s || g.toLowerCase().includes(s) || s.includes(g.toLowerCase()),
+  );
+}
+
 /** The goal from a "queue a mission to X" ask, or null. Crisis-guarded. */
 export function parseMissionQueue(message: string): string | null {
   const t = tidy(message);
@@ -388,8 +444,9 @@ WORKFLOWS — saved routines I run on command:
 - put a * in a step (create a workflow called study: a verse about *, then define *) and run it on any topic: run my study workflow on grace
 - when I say good morning, run my morning workflow (sets a trigger phrase)
 - end the trigger with * (when I say study *, run my study workflow on it) and whatever follows the phrase becomes the topic
-- start a step with a condition and it only runs when it's true: when i haven't logged my prayer habit: remind me to pray
+- start a step with a condition and it only runs when it's true: when i haven't logged my prayer habit: remind me to pray — negations work too (when no reminders are due / when my mood isn't low / when my prayer streak is under 3)
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
+- steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
 - run my morning workflow every day (auto-runs on your first chat of the day)
 - list my workflows / delete my morning workflow
 
@@ -398,7 +455,12 @@ MISSIONS — a goal I break into steps and walk you through:
 - what's next? / done / mission status / abandon mission
 - skip (drops the step in front of you) / add a step to my mission: …
 - queue a mission to X (up to 3 wait behind the active one and auto-start when it completes) / show my mission queue
+- move X to the front of the queue / start the queued mission X now (the active one steps back into the queue)
 - if a mission sits still for 3+ days, I'll bring it up when you come back
+
+BEYOND THE CHAT — I execute on your other tools too:
+- add … to my vision board / what's on my vision board / remove … from my vision board (put my mission on my vision board pins the active goal)
+- a reminder that's waited 3+ days gets offered a promotion: "make that reminder a habit" or "make that reminder a mission step"
 
 And anytime you want the full picture — mission, habits, reminders, mood — just say "brief me".
 
@@ -422,7 +484,11 @@ export function isAgentAsk(message: string): boolean {
     MISSION_STATUS_RX.test(t) ||
     MISSION_ABANDON_RX.test(t) ||
     QUEUE_SHOW_RX.test(t) ||
-    QUEUE_CLEAR_RX.test(t)
+    QUEUE_CLEAR_RX.test(t) ||
+    QUEUE_REMOVE_RX.test(t) ||
+    QUEUE_FRONT_RX.test(t) ||
+    QUEUE_START_BARE_RX.test(t) ||
+    QUEUE_START_RX.test(t)
   );
 }
 
@@ -689,10 +755,62 @@ export async function tryAgent(
     delete next.missionQueue;
     return { reply: `Queue cleared — ${queue.length} mission${queue.length === 1 ? '' : 's'} dropped. ${profile.mission ? `"${profile.mission.goal}" stays active.` : ''}`.trim(), profile: next };
   }
+  // v30: queue editing — "move X to the front of the queue" reorders, and
+  // "start the queued mission X now" pulls it forward immediately (the active
+  // mission, if any, steps back to the FRONT of the queue — its steps restart
+  // when it returns, and NAVI says so; no silent loss of progress).
+  const fronted = t.match(QUEUE_FRONT_RX);
+  if (fronted) {
+    const idx = findQueued(queue, fronted[1]);
+    if (idx < 0) {
+      return { reply: queue.length
+        ? `Nothing queued matches "${fronted[1].trim()}". The queue holds:\n${queueLines(queue)}`
+        : 'The mission queue is empty — nothing to move.' };
+    }
+    if (idx === 0) {
+      return { reply: `"${queue[0]}" is already at the front of the queue — it's next the moment ${profile.mission ? `"${profile.mission.goal}" completes` : 'you start it'}.` };
+    }
+    const next = [queue[idx], ...queue.filter((_, i) => i !== idx)];
+    return {
+      reply: `Moved up — "${queue[idx]}" is now first in the queue:\n${queueLines(next)}`,
+      profile: { ...profile, missionQueue: next },
+    };
+  }
+  const startBare = QUEUE_START_BARE_RX.test(t);
+  const startNow = startBare ? null : t.match(QUEUE_START_RX);
+  if (startBare || startNow) {
+    const idx = startBare ? (queue.length ? 0 : -1) : findQueued(queue, startNow![1]);
+    if (idx < 0) {
+      return { reply: !startBare && queue.length
+        ? `Nothing queued matches "${startNow![1].trim()}". The queue holds:\n${queueLines(queue)}`
+        : 'The mission queue is empty — say "start a mission to…" and I\'ll break it down fresh.' };
+    }
+    const goal = queue[idx];
+    const rest = queue.filter((_, i) => i !== idx);
+    if (!profile.mission) {
+      const base: Profile = { ...profile };
+      if (rest.length) base.missionQueue = rest;
+      else delete base.missionQueue;
+      const started = startMission(goal, base);
+      return { reply: `Pulling "${goal}" out of the queue.\n\n${started.reply}`, profile: started.profile };
+    }
+    // Swap: the active goal steps back to the front of the queue — honestly.
+    const swappedOut = profile.mission.goal;
+    const progress = profile.mission.done;
+    const base: Profile = { ...profile, missionQueue: [swappedOut, ...rest] };
+    delete base.mission;
+    const started = startMission(goal, base);
+    const note = progress
+      ? ` Heads up: its ${progress} finished step${progress === 1 ? '' : 's'} won't be re-counted — it starts with a fresh plan when it comes back.`
+      : '';
+    return {
+      reply: `Swap made — "${swappedOut}" steps back to the front of the queue and "${goal}" takes the floor.${note}\n\n${started.reply}`,
+      profile: started.profile,
+    };
+  }
   const unqueued = t.match(QUEUE_REMOVE_RX);
   if (unqueued) {
-    const target = unqueued[1].trim().toLowerCase();
-    const idx = queue.findIndex((g) => g.toLowerCase() === target || g.toLowerCase().includes(target) || target.includes(g.toLowerCase()));
+    const idx = findQueued(queue, unqueued[1]);
     if (idx < 0) {
       return { reply: queue.length
         ? `Nothing queued matches "${unqueued[1].trim()}". The queue holds:\n${queueLines(queue)}`

@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-09, at **v29** (the executive round), live and verified.
+Last updated: 2026-07-09, at **v30** (the cross-platform round), live and verified.
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -41,10 +41,16 @@ rawMessage
                                a crisis reply): event follow-ups → due
                                reminders → returning greeting → daily
                                workflows (runDailyWorkflows) → mission nudge
-                               (missionNudge) → weekly-review offer
-                               (reviewOffer)                    ← v27/v28
+                               (missionNudge) → reminder escalation offer
+                               (reminderEscalation, v30) → weekly-review offer
+                               (reviewOffer)                    ← v27/v28/v30
   → end-of-request save       mergeProfiles + mood journal + topics → upsert
 ```
+
+v30 additions to the single-ask path (and answerIntent, so workflow steps get
+them too): tryEscalate right after tryReminder; tryVision right after the
+habit block (main path) / after the signed-in memory block (answerIntent);
+tryGapsReport before detectTeach (main path only, owner-gated inside).
 
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
@@ -56,7 +62,45 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v29)
+### agent.ts — workflows & missions (v25→v30)
+
+**v30 — the cross-platform round** (NAVI executes beyond the chat):
+- **Vision Board bridge** (vision.ts, NEW): "add … to my vision board" /
+  "what's on my vision board" / "remove … from my vision board" act directly
+  on `navi_vision_items` — the same table the Vision Board tool renders —
+  via PostgREST with the service key (store.ts pattern). "put my mission on
+  my vision board" pins the active mission's goal. Wired into BOTH the main
+  pipeline (after habits) and answerIntent, so a workflow step like
+  "add * to my vision board" pins the topic of the day. Chat only removes
+  TEXT items (photos carry storage files the tool cleans up); the tool's
+  60-item cap is respected; unreachable DB gets an HONEST "couldn't reach"
+  reply, never a silent shrug. tryVision handles the anonymous sign-in
+  prompt itself.
+- **Condition vocabulary 2.0** (agent.ts evalCondition): negations
+  ("no reminders are due", "my mood isn't low", "i have no mission") and
+  habit-streak thresholds ("my prayer streak is under 3" / "at least 7" /
+  "over 7"; an untracked habit honestly has streak 0). Unknown conditions
+  still skip and teach.
+- **Queue editing** (agent.ts): "move X to the front of the queue" reorders;
+  "start the queued mission X now" (or bare "start the queued mission")
+  pulls it forward — the active mission's goal steps back to the FRONT of
+  the queue with an explicit note that its finished steps won't be
+  re-counted. findQueued is the shared fuzzy lookup (exact → contains).
+- **Reminder escalation** (remind.ts): a reminder 3+ days old earns ONE
+  session-start offer ever (`Reminder.offered` stamp, memory.ts) — appended
+  after missionNudge. "make that reminder a habit" converts it into a
+  habit.ts-shaped habit (cap 6, dedupe clears the redundant reminder);
+  "make that reminder a mission step" / "add reminder 2 to my mission"
+  appends to the active mission (cap 10). Numbered picks win, then the
+  last-offered, then the longest-waiting. Wired next to tryReminder in both
+  the main path and answerIntent; escalation asks count as isReminderAsk
+  for the anonymous sign-in prompt.
+- **Self-improvement loop** (learn.ts): "what should you learn?" /
+  "what are your blind spots" (tryGapsReport) — OWNER-ONLY
+  (prophetdian@gmail.com) read of the top 5 unresolved `navi_gaps` rows,
+  most-asked first, with the `learn: <question> :: <answer>` teach syntax.
+  Everyone else gets a friendly deterministic line. Wired before
+  detectTeach in the main path.
 
 **v29 — the executive round** (all in agent.ts unless noted):
 - **Conditional steps**: a step may open `when <condition>: <step>`; the
@@ -213,20 +257,28 @@ determinism or safety.** Next natural rungs, roughly in order of value:
    "my next mission step" literal).
 5. ~~**Multiple queued missions**~~ — SHIPPED in v29 (missionQueue, cap 3,
    auto-promote on completion/skip-wrap; abandon leaves the queue waiting).
-6. **Reminder → workflow escalation** — a reminder that survives 3+ sessions
-   gets offered: "want me to make this a mission step or a daily habit?"
-   (Detection is trivial: reminders carry `created`.)
-7. **Self-improvement loop on gaps** — `navi_gaps` already logs what NAVI
-   couldn't answer. A "what should I learn?" ask (Dian-only) that reads the
-   top gaps is agency applied to NAVI itself.
+6. ~~**Reminder → workflow escalation**~~ — SHIPPED in v30 (reminderEscalation
+   offer + tryEscalate in remind.ts; `Reminder.offered` stamp).
+7. ~~**Self-improvement loop on gaps**~~ — SHIPPED in v30 (tryGapsReport in
+   learn.ts, owner-only).
 8. ~~**Progress analytics in the briefing**~~ — SHIPPED in v29 (habit
    sparklines via streakLine, everywhere habits render).
-9. **Conditional NEGATIONS & richer vocabulary** — "when no reminders are
-   due", "when my mood isn't low", habit-streak thresholds ("when my streak
-   is under 3"). The evalCondition seam makes these one-liners.
-10. **Queue editing** — reorder ("move X to the front of the queue"),
-    peek-promote ("start the queued mission X now", swapping the active one
-    back into the queue).
+9. ~~**Conditional NEGATIONS & richer vocabulary**~~ — SHIPPED in v30
+   (negations + streak thresholds in evalCondition).
+10. ~~**Queue editing**~~ — SHIPPED in v30 (move-to-front, start-queued-now
+    with the honest swap).
+
+With the v29/v30 backlog cleared, the next rungs for the execution line:
+
+11. **More cross-platform bridges** — the Vision Board pattern (direct table
+    ops + honest failure replies + answerIntent wiring) generalizes: chat
+    sessions ("clean up my old chats"), Create-tool creations, Share drafts.
+    Each new bridge is a vision.ts sibling; keep photos/files tool-managed.
+12. **Board-aware conditions** — "when my vision board is empty: …" needs an
+    async evalCondition seam (today it's sync); only worth it with a second
+    async condition source.
+13. **Owner analytics on gaps** — resolve/dismiss commands for the gaps list
+    ("forget gap 2"), closing the loop tryGapsReport opened.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -241,8 +293,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v26 | `b3ee78f` | habit streaks, daily auto-run workflows, mood journal |
 | v27 | `7df4bd8` | topic * slots, mission skip/add + idle nudge, daily briefing |
 | v28 | `9568807` | weekly review: deltas vs. snapshot + 7-day session-start offer |
-| v29 | (see git) | executive round: conditional steps, open topic triggers, read-only mission step, mission queue, habit sparklines |
+| v29 | `d9e159a` | executive round: conditional steps, open topic triggers, read-only mission step, mission queue, habit sparklines |
+| v30 | (see git) | cross-platform round: Vision Board bridge (vision.ts), condition negations + streak thresholds, queue editing, reminder escalation, self-improvement gaps report |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → **161**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → **170**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

@@ -11,11 +11,24 @@
 // and "clear my reminders" manage the list. Signed-in users only — there is
 // nowhere to keep a reminder for an anonymous visitor.
 
-import type { Profile, Reminder } from './memory.ts';
+// v30 — Reminder ESCALATION (the cross-platform round): a reminder that has
+// waited 3+ days is probably not a one-off — it's a habit or a mission step
+// wearing a reminder's clothes. reminderEscalation() offers the promotion once
+// per reminder (session-start, nudge-style); tryEscalate() executes it:
+// "make that reminder a habit" converts it into a tracked habit (habit.ts
+// shape, same cap), "make that reminder a mission step" appends it to the
+// active mission's plan. Either way the reminder leaves the list — promoted,
+// not abandoned.
+
+import type { Habit, Profile, Reminder } from './memory.ts';
 import { todayInTZ } from './skills.ts';
 
 const NAVI_TZ = 'Africa/Johannesburg';
 const MAX_REMINDERS = 12;
+// Mirrors habit.ts / agent.ts — every list keeps its own cap.
+const MAX_HABITS = 6;
+const MAX_MISSION_STEPS = 10;
+const ESCALATE_AFTER_DAYS = 3;
 
 export interface ReminderTurn { reply: string; profile?: Profile }
 
@@ -81,10 +94,19 @@ const LIST_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:what are my|show (?:me )?m
 const CLEAR_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:clear|delete|remove|forget)\s+(?:all\s+)?(?:of\s+)?my\s+reminders[?!.]*$/i;
 const DONE_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:done with|i did|remove|delete|clear)\s+(?:the\s+)?reminder\s*(?:#|number\s*)?(\d{1,2})[?!.]*$/i;
 
+// v30: escalation commands. Anchored like everything else; "reminder 2" picks
+// by list position, bare "that reminder" picks the one NAVI last offered on
+// (else the longest-waiting one).
+const ESC_HABIT_RX =
+  /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+)?(?:make|turn) (?:that |this |the last |the )?reminder(?: #?(\d{1,2}))?(?: into)? a (?:daily )?habit$/i;
+const ESC_MISSION_RX =
+  /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+)?(?:(?:make|turn) (?:that |this |the last |the )?reminder(?: #?(\d{1,2}))?(?: into)? a mission step|add (?:that |this |the last |the )?reminder(?: #?(\d{1,2}))? to (?:my |the )?mission)$/i;
+
 /** True when the message is any reminder-flavoured ask (used to nudge anonymous users to sign in). */
 export function isReminderAsk(message: string): boolean {
-  const m = message.trim();
-  return ADD_RX.test(m) || LIST_RX.test(m) || CLEAR_RX.test(m) || DONE_RX.test(m);
+  const m = message.trim().replace(/[.!?]+\s*$/, '');
+  return ADD_RX.test(m) || LIST_RX.test(m) || CLEAR_RX.test(m) || DONE_RX.test(m) ||
+    ESC_HABIT_RX.test(m) || ESC_MISSION_RX.test(m);
 }
 
 function describe(r: Reminder, todayISO: string): string {
@@ -165,4 +187,123 @@ export function addDueReminders(response: string, stored: Profile, today = today
   const lines = due.map(r => `• ${describe(r, todayISO)}`).join('\n');
   const lead = due.length === 1 ? 'One thing you asked me to hold:' : `${due.length} things you asked me to hold:`;
   return `${lead}\n${lines}\n(Say "done with reminder 1" to tick one off.)\n\n${response}`;
+}
+
+// ── v30: escalation — a reminder that keeps waiting gets promoted ────────────
+
+function daysBetween(fromISO: string, toISO: string): number {
+  const d = Math.round((Date.parse(toISO) - Date.parse(fromISO.slice(0, 10))) / 86400000);
+  return Number.isFinite(d) ? d : 0;
+}
+
+/**
+ * One session-start note (nudge-style) when a reminder has waited 3+ days
+ * without being ticked off: offer to make it a habit or a mission step. One
+ * offer per reminder EVER (the `offered` stamp persists), oldest first, and
+ * at most one offer per session — gentle, never a nag wall. Returns null when
+ * there's nothing to offer.
+ */
+export function reminderEscalation(
+  profile: Profile,
+  todayISO: string,
+): { note: string; profile: Profile } | null {
+  const list = profile.reminders ?? [];
+  const idx = list.findIndex(
+    (r) => !r.offered && daysBetween(r.created, todayISO) >= ESCALATE_AFTER_DAYS,
+  );
+  if (idx < 0) return null;
+  const r = list[idx];
+  const days = daysBetween(r.created, todayISO);
+  const note =
+    `Your reminder "${r.text}" has been waiting ${days} days now. Things that keep waiting usually aren't one-offs — want me to promote it? Say "make that reminder a habit" and I'll track the streak, or "make that reminder a mission step" and it joins the plan. (Or "done with reminder ${idx + 1}" if it's already handled.)`;
+  const reminders = list.map((x, i) => (i === idx ? { ...x, offered: todayISO } : x));
+  return { note, profile: { ...profile, reminders } };
+}
+
+// The reminder an escalation command points at: an explicit number wins, then
+// the one NAVI most recently offered on, then the longest-waiting.
+function pickReminder(list: Reminder[], numbered?: string): number {
+  if (numbered) {
+    const i = parseInt(numbered, 10) - 1;
+    return i >= 0 && i < list.length ? i : -1;
+  }
+  let best = -1;
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (r.offered && (best < 0 || !list[best].offered || r.offered > list[best].offered!)) best = i;
+  }
+  if (best >= 0) return best;
+  let oldest = 0;
+  for (let i = 1; i < list.length; i++) if (list[i].created < list[oldest].created) oldest = i;
+  return list.length ? oldest : -1;
+}
+
+/**
+ * Execute an escalation: "make that reminder a habit" / "make reminder 2 a
+ * mission step". The reminder converts and leaves the list. Returns null when
+ * the message isn't an escalation ask. Same contract as tryReminder.
+ */
+export function tryEscalate(
+  message: string,
+  profile: Profile,
+  today = todayInTZ(NAVI_TZ),
+): ReminderTurn | null {
+  const m = message.trim().replace(/[.!?]+\s*$/, '');
+  const todayISO = isoFromYMD(today.y, today.m, today.d);
+  const list = profile.reminders ?? [];
+
+  const habitAsk = m.match(ESC_HABIT_RX);
+  const missionAsk = habitAsk ? null : m.match(ESC_MISSION_RX);
+  if (!habitAsk && !missionAsk) return null;
+
+  if (!list.length) {
+    return { reply: 'There are no reminders on your list to promote. Say "remind me to…" first, and if it keeps waiting I\'ll offer this myself.' };
+  }
+  const numbered = habitAsk ? habitAsk[1] : (missionAsk![1] ?? missionAsk![2]);
+  const idx = pickReminder(list, numbered);
+  if (idx < 0) {
+    return { reply: `I only have ${list.length} reminder${list.length > 1 ? 's' : ''} — say "what are my reminders" to see them, then "make reminder 1 a habit".` };
+  }
+  const r = list[idx];
+  const rest = list.filter((_, i) => i !== idx);
+
+  if (habitAsk) {
+    const habits = profile.habits ?? [];
+    const name = r.text.toLowerCase().trim().slice(0, 50);
+    const existing = habits.find(
+      (h) => h.name === name || h.name.includes(name) || name.includes(h.name),
+    );
+    if (existing) {
+      return {
+        reply: `You're already tracking "${existing.name}" — so the reminder's job is done. I've taken it off the list; log the habit with "i did my ${existing.name} habit".`,
+        profile: { ...profile, reminders: rest },
+      };
+    }
+    if (habits.length >= MAX_HABITS) {
+      return { reply: `You're tracking ${MAX_HABITS} habits already — that's the honest maximum anyone keeps. Drop one first ("drop my … habit") and I'll promote this reminder.` };
+    }
+    const habit: Habit = { name, created: todayISO, streak: 0, best: 0, total: 0 };
+    return {
+      reply: `Promoted: "${r.text}" is a tracked habit now, off the reminder list and onto the streak board. Every day you keep it, say "i did my ${name} habit" — day one starts the moment you do it.`,
+      profile: { ...profile, reminders: rest, habits: [...habits, habit] },
+    };
+  }
+
+  // Mission step.
+  const mission = profile.mission;
+  if (!mission) {
+    return { reply: `There's no active mission to attach "${r.text}" to. Start one ("start a mission to…") and ask me again — or say "make that reminder a habit" instead.` };
+  }
+  if (mission.steps.length >= MAX_MISSION_STEPS) {
+    return { reply: `The mission already has ${MAX_MISSION_STEPS} steps — that's a plan, not a backlog. Finish or skip a few, then I'll promote the reminder.` };
+  }
+  const steps = [...mission.steps, r.text];
+  return {
+    reply: `Promoted: "${r.text}" is now step ${steps.length} of your mission "${mission.goal}" — off the reminder list and into the plan. You're still on step ${mission.done + 1}:\n${steps[mission.done]}`,
+    profile: {
+      ...profile,
+      reminders: rest,
+      mission: { ...mission, steps, touched: new Date().toISOString() },
+    },
+  };
 }

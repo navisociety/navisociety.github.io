@@ -28,7 +28,7 @@ import { tryRecall } from './recall.ts';
 import { wantsMore, nextChunk } from './deepen.ts';
 import {
   normalizeKey, detectTeach, detectFeedback, previousUserQuestion,
-  recallKnowledge, learnKnowledge, logGap,
+  recallKnowledge, learnKnowledge, logGap, isGapsAsk, tryGapsReport,
 } from './learn.ts';
 import { detectComparison, splitCompound, tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
@@ -40,7 +40,7 @@ import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 import { tryEquation } from './skills.ts';
 import { parseDefineAsk, formatDictionary, type DictEntry } from './define.ts';
-import { parseWhen, tryReminder, addDueReminders, isReminderAsk } from './remind.ts';
+import { parseWhen, tryReminder, addDueReminders, isReminderAsk, tryEscalate, reminderEscalation } from './remind.ts';
 import { votdIndex, isVotdAsk, devotionTopic, formatVotd, formatDevotional, VOTD_ROTATION } from './devotion.ts';
 import { memorizeRef, activeMemoryRef, gradeAttempt, blankOut, startCoaching } from './memorize.ts';
 import { normalizeMessage } from './normalize.ts';
@@ -54,6 +54,7 @@ import {
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
+import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -1923,4 +1924,159 @@ Deno.test('v28: reviewOffer fires after 7 days, once per day, and stays quiet wi
   if (!first || !first.note.includes('week of history')) throw new Error('a week of history must earn the first offer');
   eq(reviewOffer(fresh, '2026-07-05'), null, 'too little history stays quiet');
   eq(reviewOffer({}, '2026-07-09'), null, 'nothing tracked, nothing offered');
+});
+
+// ── v30: the cross-platform round ─────────────────────────────────────────────
+
+Deno.test('v30: vision board parsers — add/pin/colon/remove forms, guarded', () => {
+  eq(parseVisionAdd('add finish my album to my vision board'), 'finish my album', 'plain add');
+  eq(parseVisionAdd('Hey Navi, pin "world tour" onto my vision board!'), 'world tour', 'pin + quotes + address');
+  eq(parseVisionAdd('add to my vision board: buy the studio'), 'buy the studio', 'colon form');
+  eq(parseVisionAdd('put my mission on my vision board'), 'my mission', 'the mission pin parses');
+  eq(parseVisionAdd('add i want to die to my vision board'), null, 'crisis is never a goal to pin');
+  eq(parseVisionAdd('what should i add to my vision board'), null, 'a question is not a command');
+  eq(parseVisionRemove('remove finish my album from my vision board'), 'finish my album', 'remove');
+  eq(parseVisionRemove('take world tour off my vision board'), 'world tour', 'take … off');
+  eq(isVisionListAsk("what's on my vision board?"), true, 'list ask');
+  eq(isVisionListAsk('show my vision board'), true, 'show ask');
+  eq(isVisionListAsk('i love my vision board'), false, 'talk about the board is not a command');
+});
+
+Deno.test('v30: tryVision — sign-in gate, mission pin needs a mission, chatter untouched', async () => {
+  const anon = await tryVision('add win a grammy to my vision board', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous must be pointed at sign-in: ' + anon?.reply);
+  const noMission = await tryVision('put my mission on my vision board', EMAIL, {});
+  if (!noMission?.reply.includes('no active mission')) throw new Error('mission pin without a mission must explain: ' + noMission?.reply);
+  eq(await tryVision('i love my vision board', EMAIL, {}), null, 'ordinary talk is not board business');
+  eq(await tryVision('give me a verse about hope', EMAIL, {}), null, 'unrelated asks fall through');
+  if (!Deno.env.get('SUPABASE_URL')) {
+    const out = await tryVision('add win a grammy to my vision board', EMAIL, {});
+    if (!out?.reply.includes("couldn't reach")) throw new Error('an unreachable board must be reported honestly: ' + out?.reply);
+  }
+});
+
+Deno.test('v30: evalCondition — negations and streak thresholds join the vocabulary', () => {
+  const t = '2026-07-09';
+  eq(evalCondition('no reminders are due', {}, t), true, 'no reminders at all');
+  eq(evalCondition('no reminders are due', { reminders: [{ text: 'x', created: t }] }, t), false, 'an undated reminder is due');
+  eq(evalCondition("my mood isn't low", { lastMood: 'good' }, t), true, 'mood negation holds');
+  eq(evalCondition('my mood is not low', { lastMood: 'low' }, t), false, 'mood negation fails on a low day');
+  eq(evalCondition("my mood isn't wobbly", {}, t), null, 'unknown mood words still teach, never guess');
+  eq(evalCondition('i have no mission', {}, t), true, 'no mission');
+  eq(evalCondition("i don't have a mission", { mission: { goal: 'g', steps: ['s'], done: 0, created: t } }, t), false, 'mission negation with one active');
+  const streaky: Profile = { habits: [{ name: 'prayer', created: '2026-07-01', streak: 5, best: 5, total: 5 }] };
+  eq(evalCondition('my prayer streak is under 3', streaky, t), false, '5 is not under 3');
+  eq(evalCondition('my prayer streak is under 3', {}, t), true, 'an untracked habit has a streak of 0');
+  eq(evalCondition('my prayer streak is at least 5', streaky, t), true, 'at least = inclusive');
+  eq(evalCondition('my prayer streak is over 5', streaky, t), false, 'over = strict');
+  eq(evalCondition('my prayer streak is over 4', streaky, t), true, 'over holds above the bar');
+  eq(evalCondition('the sky is blue', {}, t), null, 'the vocabulary stays closed');
+});
+
+Deno.test('v30: queue editing — move to front reorders, honestly', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    mission: { goal: 'get fit', steps: ['s1', 's2'], done: 0, created: 'now' },
+    missionQueue: ['a', 'b', 'c'],
+  };
+  const moved = await tryAgent('move c to the front of the queue', EMAIL, profile, run);
+  eq(moved?.profile?.missionQueue, ['c', 'a', 'b'], 'reordered to the front');
+  const already = await tryAgent('move a to the front of the queue', EMAIL, profile, run);
+  if (!already?.reply.includes('already at the front')) throw new Error('front stays front: ' + already?.reply);
+  eq(already?.profile, undefined, 'no profile change when already first');
+  const empty = await tryAgent('move x to the front of the queue', EMAIL, {}, run);
+  if (!empty?.reply.includes('empty')) throw new Error('empty queue named: ' + empty?.reply);
+  eq(await tryAgent('move the sofa to the front of the room', EMAIL, profile, run), null, 'furniture stays conversation');
+});
+
+Deno.test('v30: queue editing — start the queued mission now swaps the active one back', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    mission: { goal: 'get fit', steps: ['s1', 's2'], done: 1, created: 'now' },
+    missionQueue: ['learn piano', 'write a book'],
+  };
+  const swapped = await tryAgent('start the queued mission learn piano now', EMAIL, profile, run);
+  eq(swapped?.profile?.mission?.goal, 'learn piano', 'queued goal takes the floor');
+  eq(swapped?.profile?.missionQueue, ['get fit', 'write a book'], 'active goal steps back to the FRONT');
+  if (!swapped?.reply.includes("won't be re-counted")) throw new Error('lost progress must be said out loud: ' + swapped?.reply);
+
+  const bare = await tryAgent('start the queued mission', EMAIL, { missionQueue: ['learn piano'] }, run);
+  eq(bare?.profile?.mission?.goal, 'learn piano', 'bare form promotes the first queued goal');
+  eq(bare?.profile?.missionQueue, undefined, 'queue emptied by the promotion');
+
+  const none = await tryAgent('start the queued mission now', EMAIL, {}, run);
+  if (!none?.reply.includes('empty')) throw new Error('nothing queued must be named: ' + none?.reply);
+});
+
+Deno.test('v30: reminderEscalation offers once per reminder, and only after 3 days', () => {
+  const waiting: Profile = { reminders: [{ text: 'call the lawyer', created: '2026-07-01' }] };
+  const offer = reminderEscalation(waiting, '2026-07-09');
+  if (!offer || !offer.note.includes('call the lawyer') || !offer.note.includes('make that reminder a habit')) {
+    throw new Error('a 8-day reminder must earn the offer: ' + offer?.note);
+  }
+  eq(offer.profile.reminders?.[0].offered, '2026-07-09', 'offer stamped on the reminder');
+  eq(reminderEscalation(offer.profile, '2026-07-15'), null, 'one offer per reminder, ever');
+  eq(reminderEscalation({ reminders: [{ text: 'young', created: '2026-07-08' }] }, '2026-07-09'), null, 'young reminders wait');
+  eq(reminderEscalation({}, '2026-07-09'), null, 'no reminders, no offer');
+});
+
+Deno.test('v30: tryEscalate — a reminder promotes into a tracked habit', () => {
+  const today = { y: 2026, m: 7, d: 9 };
+  const profile: Profile = { reminders: [{ text: 'Pray for the team', created: '2026-07-01' }] };
+  const out = tryEscalate('make that reminder a habit', profile, today);
+  eq(out?.profile?.habits?.[0].name, 'pray for the team', 'habit created from the reminder text');
+  eq(out?.profile?.reminders, [], 'the reminder leaves the list — promoted, not abandoned');
+
+  const dup = tryEscalate('make that reminder a habit', { ...profile, habits: [{ name: 'pray for the team', created: '2026-07-01', streak: 2, best: 2, total: 2 }] }, today);
+  if (!dup?.reply.includes('already tracking')) throw new Error('an existing habit is named, not duplicated: ' + dup?.reply);
+  eq(dup?.profile?.reminders, [], 'the redundant reminder still clears');
+
+  const six = Array.from({ length: 6 }, (_, i) => ({ name: `h${i}`, created: '2026-07-01', streak: 0, best: 0, total: 0 }));
+  const full = tryEscalate('make that reminder a habit', { ...profile, habits: six }, today);
+  if (!full?.reply.includes('6 habits')) throw new Error('the habit cap holds: ' + full?.reply);
+  eq(full?.profile, undefined, 'nothing changes when the cap refuses');
+
+  const none = tryEscalate('make that reminder a habit', {}, today);
+  if (!none?.reply.includes('no reminders')) throw new Error('nothing to promote must be said: ' + none?.reply);
+  eq(tryEscalate('make a habit of running', {}, today), null, 'ordinary habit talk is not an escalation');
+});
+
+Deno.test('v30: tryEscalate — a reminder promotes into a mission step, by number too', () => {
+  const today = { y: 2026, m: 7, d: 9 };
+  const profile: Profile = {
+    mission: { goal: 'launch my ep', steps: ['s1', 's2'], done: 0, created: 'now' },
+    reminders: [
+      { text: 'book studio time', created: '2026-07-01' },
+      { text: 'email the label', created: '2026-07-05' },
+    ],
+  };
+  const out = tryEscalate('make reminder 2 a mission step', profile, today);
+  eq(out?.profile?.mission?.steps, ['s1', 's2', 'email the label'], 'numbered pick appends to the plan');
+  eq(out?.profile?.reminders?.map((r) => r.text), ['book studio time'], 'only the promoted reminder leaves');
+
+  const alt = tryEscalate('add that reminder to my mission', profile, today);
+  eq(alt?.profile?.mission?.steps, ['s1', 's2', 'book studio time'], 'bare "that" picks the longest-waiting');
+
+  const noMission = tryEscalate('make that reminder a mission step', { reminders: profile.reminders }, today);
+  if (!noMission?.reply.includes('no active mission')) throw new Error('no mission must be explained: ' + noMission?.reply);
+  eq(noMission?.profile, undefined, 'the reminder stays when there is nowhere to send it');
+
+  const ten = Array.from({ length: 10 }, (_, i) => `step ${i}`);
+  const full = tryEscalate('make that reminder a mission step', { ...profile, mission: { ...profile.mission!, steps: ten } }, today);
+  if (!full?.reply.includes('10 steps')) throw new Error('the mission-step cap holds: ' + full?.reply);
+});
+
+Deno.test('v30: the self-improvement loop — gaps ask detection and the non-owner line', async () => {
+  eq(isGapsAsk('what should you learn?'), true, 'the core ask');
+  eq(isGapsAsk('What are your blind spots'), true, 'blind spots');
+  eq(isGapsAsk('show me your learning list'), true, 'learning list');
+  eq(isGapsAsk('what should i learn about prayer'), false, 'the user learning is not NAVI learning');
+  eq(isGapsAsk('tell me about gaps in the market'), false, 'market gaps stay conversation');
+  const outsider = await tryGapsReport('what should you learn', EMAIL);
+  if (!outsider?.includes('private list')) throw new Error('non-owner gets the friendly line: ' + outsider);
+  eq(await tryGapsReport('give me a verse about hope', 'prophetdian@gmail.com'), null, 'unrelated asks fall through');
+  if (!Deno.env.get('SUPABASE_URL')) {
+    const owner = await tryGapsReport('what should you learn', 'prophetdian@gmail.com');
+    if (!owner?.includes("couldn't reach")) throw new Error('an unreachable list is reported honestly: ' + owner);
+  }
 });
