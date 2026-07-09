@@ -51,6 +51,9 @@ export type Profile = {
   // v25: the active mission — one goal decomposed into steps that NAVI walks
   // the user through across sessions. Managed by agent.ts.
   mission?: Mission;
+  // v29: queued mission goals (cap 3) — auto-promoted to the active mission
+  // the moment the current one completes. Managed by agent.ts.
+  missionQueue?: string[];
   // v26: tracked habits with streaks ("track my habit: pray"). Managed by habit.ts.
   habits?: Habit[];
   // v26: mood journal — one entry per SA day (last signal of the day wins),
@@ -69,7 +72,9 @@ export type Workflow = { name: string; steps: string[]; trigger?: string; create
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.
-export type Habit = { name: string; created: string; lastDone?: string; streak: number; best: number; total: number };
+// v29: `recent` keeps the last 14 logged dates (newest last) so sparklines can
+// paint days the current streak can no longer see (pre-break logs).
+export type Habit = { name: string; created: string; lastDone?: string; streak: number; best: number; total: number; recent?: string[] };
 
 // v26: one mood journal entry — a canonical detectMood label on an SA date.
 export type MoodEntry = { mood: string; date: string };

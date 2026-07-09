@@ -120,14 +120,30 @@ function findHabit(habits: Habit[], spoken: string): number {
 
 // ── Formatting ──────────────────────────────────────────────────────────────
 
+// v29: the last 7 days as a tiny text chart — ✓ for a logged day, · for a
+// miss. Days inside the current streak window are logged by definition;
+// `recent` paints the days a broken streak can no longer see. Oldest → newest.
+export function sparkline(h: Habit, today: string): string {
+  let out = '';
+  for (let i = 6; i >= 0; i--) {
+    const day = new Date(Date.parse(today) - i * 86400000);
+    const iso = isoFromYMD(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate());
+    const inStreak = !!h.lastDone && iso <= h.lastDone &&
+      (Date.parse(h.lastDone) - Date.parse(iso)) / 86400000 < h.streak;
+    out += (inStreak || h.recent?.includes(iso)) ? '✓' : '·';
+  }
+  return out;
+}
+
 // v27: exported so brief.ts renders habits in the daily briefing identically.
+// v29: carries the 7-day sparkline at the end of the line.
 export function streakLine(h: Habit, today: string): string {
   const state =
     h.lastDone === today ? 'done today'
     : h.lastDone === yesterdayOf(today) ? 'on track — not logged today yet'
     : h.lastDone ? `last done ${h.lastDone}`
     : 'not logged yet';
-  return `- ${h.name}: ${h.streak}-day streak (best ${h.best}, ${h.total} total) — ${state}`;
+  return `- ${h.name}: ${h.streak}-day streak (best ${h.best}, ${h.total} total) — ${state} ${sparkline(h, today)}`;
 }
 
 function milestone(streak: number): string {
@@ -197,6 +213,8 @@ export function tryHabit(
     const broke = h.lastDone && streak === 1 && h.streak > 1;
     const next: Habit = {
       ...h, lastDone: today, streak, best: Math.max(h.best, streak), total: h.total + 1,
+      // v29: keep the logged date so sparklines can paint pre-break days.
+      recent: [...(h.recent ?? []), today].slice(-14),
     };
     const lead = broke
       ? `Back on the horse — that's what matters. The old streak was ${h.streak}, the new one starts today.`

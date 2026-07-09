@@ -17,7 +17,7 @@
 // Deterministic; returns null when the message isn't a review ask.
 
 import type { Habit, Profile, ReviewSnapshot } from './memory.ts';
-import { streakLine } from './habit.ts';
+import { sparkline, streakLine } from './habit.ts';
 import { todayInTZ } from './skills.ts';
 
 const NAVI_TZ = 'Africa/Johannesburg';
@@ -98,10 +98,10 @@ function habitLines(habits: Habit[], snap: ReviewSnapshot | undefined, today: st
     const before = snap?.habitTotals?.[h.name];
     if (!baseline) return streakLine(h, today);
     if (before === undefined) {
-      return `- ${h.name}: new since last review — ${h.streak}-day streak (${h.total} total)`;
+      return `- ${h.name}: new since last review — ${h.streak}-day streak (${h.total} total) ${sparkline(h, today)}`;
     }
     const kept = Math.max(0, h.total - before);
-    return `- ${h.name}: kept ${kept} day${kept === 1 ? '' : 's'} since last review — ${h.streak}-day streak now (best ${h.best})`;
+    return `- ${h.name}: kept ${kept} day${kept === 1 ? '' : 's'} since last review — ${h.streak}-day streak now (best ${h.best}) ${sparkline(h, today)}`;
   });
   const current = new Set(habits.map((h) => h.name));
   const dropped = Object.keys(snap?.habitTotals ?? {}).filter((n) => !current.has(n));

@@ -49,9 +49,9 @@ import { splitIntents } from './execute.ts';
 import {
   parseWorkflowCreate, parseWorkflowRun, parseWorkflowDelete,
   parseTriggerSet, parseMissionStart, parseDailySet, tryAgent, runDailyWorkflows,
-  missionNudge,
+  missionNudge, evalCondition, parseConditionStep, parseMissionQueue,
 } from './agent.ts';
-import { tryHabit } from './habit.ts';
+import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import type { Profile } from './memory.ts';
@@ -1747,6 +1747,164 @@ Deno.test('v28: tryReview signs in the anonymous and leaves ordinary chat alone'
   const out = tryReview('review my week', EMAIL, {});
   if (!out?.reply.includes('first weekly review')) throw new Error('empty profile still gets an honest first review');
   eq(out.profile?.review?.date !== undefined, true, 'even the empty review stamps the snapshot');
+});
+
+// ── v29: the executive round — conditions, topic triggers, mission-aware
+// steps, mission queue, sparklines ───────────────────────────────────────────
+
+Deno.test('v29: evalCondition covers the closed vocabulary and refuses the rest', () => {
+  const today = '2026-07-09';
+  const p: Profile = {
+    habits: [{ name: 'pray', created: '2026-07-01', lastDone: today, streak: 3, best: 3, total: 3 }],
+    reminders: [{ text: 'call mom', created: 'now' }],
+    lastMood: 'low',
+    mission: { goal: 'get fit', steps: ['s1'], done: 0, created: '2026-07-01T08:00:00Z', touched: '2026-07-02T08:00:00Z' },
+  };
+  eq(evalCondition("i haven't logged my pray habit", p, today), false, 'logged today, so not-logged is false');
+  eq(evalCondition('i logged my pray habit', p, today), true, 'positive form');
+  eq(evalCondition("i haven't logged my run habit", p, today), true, 'untracked habit counts as not logged');
+  eq(evalCondition('a reminder is due', p, today), true, 'undated reminder is due');
+  eq(evalCondition('a reminder is due', {}, today), false, 'no reminders, nothing due');
+  eq(evalCondition('my mood is down', p, today), true, 'mood aliases map (down → low)');
+  eq(evalCondition('my mood is good', p, today), false, 'mood mismatch');
+  eq(evalCondition('my mission is idle', p, today), true, 'untouched 7 days is idle');
+  eq(evalCondition('i have a mission', p, today), true, 'mission existence');
+  eq(evalCondition('i have a mission', {}, today), false, 'no mission');
+  eq(evalCondition('mercury is in retrograde', p, today), null, 'unknown conditions stay unknown');
+  eq(parseConditionStep('when my mood is low: encourage me'), { cond: 'my mood is low', body: 'encourage me' }, 'condition step splits at the colon');
+  eq(parseConditionStep('a verse about hope'), null, 'ordinary steps are not conditions');
+});
+
+Deno.test('v29: conditional workflow steps run when true and skip when false', async () => {
+  const { ran, run } = stubRunner();
+  const today = todayISOForTest();
+  const profile: Profile = {
+    habits: [{ name: 'pray', created: today, streak: 0, best: 0, total: 0 }], // NOT logged today
+    workflows: [{
+      name: 'check',
+      steps: ["when i haven't logged my pray habit: encourage me", 'when my mood is good: a verse about joy'],
+      created: 'now',
+    }],
+  };
+  const out = await tryAgent('run my check workflow', EMAIL, profile, run);
+  eq(ran, ['encourage me'], 'met condition runs its step, unmet skips');
+  if (!out?.reply.includes(`("when my mood is good" isn't the case`)) throw new Error('skip must name its condition: ' + out?.reply);
+  if (!out?.reply.includes('all 1 step executed (1 skipped')) throw new Error('summary counts conditionals honestly: ' + out?.reply);
+});
+
+Deno.test('v29: unknown conditions skip safely and teach the vocabulary', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'odd', steps: ['when the moon is full: encourage me'], created: 'now' }] };
+  const out = await tryAgent('run my odd workflow', EMAIL, profile, run);
+  eq(ran, [], 'unknown condition never executes its step');
+  if (!out?.reply.includes(`don't know the condition "the moon is full"`)) throw new Error('must name the unknown condition: ' + out?.reply);
+  if (!out?.reply.includes("i haven't logged my <habit> habit")) throw new Error('must teach the vocabulary: ' + out?.reply);
+});
+
+Deno.test('v29: "my next mission step" in a workflow reads the mission, read-only', async () => {
+  const { ran, run } = stubRunner();
+  const workflows = [{ name: 'morning', steps: ['encourage me', 'my next mission step'], created: 'now' }];
+  const withMission: Profile = {
+    mission: { goal: 'get fit', steps: ['s1', 's2'], done: 1, created: 'now' },
+    workflows,
+  };
+  const out = await tryAgent('run my morning workflow', EMAIL, withMission, run);
+  eq(ran, ['encourage me'], 'the mission step is read directly, never sent through the engines');
+  if (!out?.reply.includes('s2')) throw new Error('current mission step must surface: ' + out?.reply);
+  eq(out?.profile, undefined, 'read-only — no profile change');
+
+  const noMission = await tryAgent('run my morning workflow', EMAIL, { workflows }, run);
+  if (!noMission?.reply.includes('No active mission')) throw new Error('honest when nothing is active: ' + noMission?.reply);
+
+  const created = await tryAgent('create a workflow called morning2: encourage me, then my next mission step', EMAIL, {}, run);
+  if (!created?.profile?.workflows?.length) throw new Error('the read-only mission step must be allowed at creation');
+  const refused = await tryAgent('create a workflow called bad: abandon my mission', EMAIL, {}, run);
+  if (refused?.profile) throw new Error('other mission phrasing is still refused in steps');
+});
+
+Deno.test('v29: open triggers — "study *" fires on "study grace" and fills the slot', async () => {
+  const { ran, run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+
+  const set = await tryAgent('when i say study *, run my study workflow on it', EMAIL, profile, run);
+  eq(set?.profile?.workflows?.[0].trigger, 'study *', 'open trigger stored normalized');
+  profile = set!.profile!;
+
+  const fired = await tryAgent('study grace', EMAIL, profile, run);
+  eq(ran, ['a verse about grace'], 'the remainder fills the * slot');
+  if (!fired?.reply.includes('"grace"')) throw new Error('run header names the topic: ' + fired?.reply);
+
+  eq(await tryAgent('study', EMAIL, profile, run), null, 'the bare prefix without a topic stays conversation');
+  eq(await tryAgent('studying hard today', EMAIL, profile, run), null, 'prefix matches on the word boundary only');
+  eq(parseTriggerSet('when i say study <topic>, run my study workflow'), { trigger: 'study *', name: 'study' }, '<topic> normalizes to *');
+});
+
+Deno.test('v29: mission queue — queue, dedupe, cap, status, auto-promotion on completion', async () => {
+  const { run } = stubRunner();
+  let profile: Profile = { mission: { goal: 'get fit', steps: ['s1'], done: 0, created: 'now' } };
+
+  const q1 = await tryAgent('queue a mission to learn piano', EMAIL, profile, run);
+  eq(q1?.profile?.missionQueue, ['learn piano'], 'queued behind the active mission');
+  profile = q1!.profile!;
+
+  const dup = await tryAgent('queue a mission to learn piano', EMAIL, profile, run);
+  if (!dup?.reply.includes('already')) throw new Error('duplicate queueing refused: ' + dup?.reply);
+  eq(dup?.profile, undefined, 'no profile change on a duplicate');
+
+  const full = await tryAgent('queue a mission to one more', EMAIL, { ...profile, missionQueue: ['a', 'b', 'c'] }, run);
+  if (!full?.reply.includes('full')) throw new Error('cap of 3 enforced: ' + full?.reply);
+
+  const status = await tryAgent('mission status', EMAIL, profile, run);
+  if (!status?.reply.includes('learn piano')) throw new Error('status shows the queue: ' + status?.reply);
+
+  const finished = await tryAgent('done', EMAIL, profile, run);
+  if (!finished?.reply.includes('MISSION COMPLETE')) throw new Error('completion celebrated first: ' + finished?.reply);
+  eq(finished?.profile?.mission?.goal, 'learn piano', 'queued mission auto-promoted to active');
+  eq(finished?.profile?.missionQueue, undefined, 'queue emptied by the promotion');
+  eq(finished?.profile?.wins, ['get fit'], 'the finished goal still lands on wins');
+
+  const startNow = await tryAgent('queue a mission to get strong', EMAIL, {}, run);
+  eq(startNow?.profile?.mission?.goal, 'get strong', 'queueing with nothing active starts immediately');
+
+  eq(parseMissionQueue('queue a mission to end my life'), null, 'crisis is never a queued mission');
+  eq(parseMissionQueue('the queue at the bank'), null, 'queue talk is not a command');
+});
+
+Deno.test('v29: abandoning keeps the queue waiting; ordinary queue talk untouched', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    mission: { goal: 'get fit', steps: ['s1'], done: 0, created: 'now' },
+    missionQueue: ['learn piano'],
+  };
+  const out = await tryAgent('abandon mission', EMAIL, profile, run);
+  if (!out?.reply.includes('learn piano')) throw new Error('abandon must name what still waits: ' + out?.reply);
+  eq(out?.profile?.mission, undefined, 'mission dropped');
+  eq(out?.profile?.missionQueue, ['learn piano'], 'the queue survives an abandonment, un-started');
+
+  const removed = await tryAgent('remove the queued mission: learn piano', EMAIL, { ...profile }, run);
+  eq(removed?.profile?.missionQueue, undefined, 'unqueue empties the queue');
+
+  eq(await tryAgent('the queue at the bank was long', EMAIL, {}, run), null, 'talk about queues stays conversation');
+});
+
+Deno.test('v29: sparkline paints the last 7 days from the streak and recent logs', () => {
+  const today = '2026-07-09';
+  eq(
+    sparkline({ name: 'pray', created: '2026-07-01', lastDone: today, streak: 3, best: 3, total: 3 }, today),
+    '····✓✓✓',
+    'the streak window fills the tail',
+  );
+  eq(
+    sparkline({ name: 'run', created: '2026-07-01', lastDone: today, streak: 1, best: 3, total: 4, recent: ['2026-07-03', '2026-07-04', '2026-07-09'] }, today),
+    '✓✓····✓',
+    'recent logs paint the days a broken streak forgot',
+  );
+  eq(sparkline({ name: 'new', created: today, streak: 0, best: 0, total: 0 }, today), '·······', 'nothing logged, nothing painted');
+  const line = streakLine({ name: 'pray', created: '2026-07-01', lastDone: today, streak: 3, best: 3, total: 3 }, today);
+  if (!line.includes('····✓✓✓')) throw new Error('streakLine must carry the sparkline: ' + line);
+  // logging a habit records the date for future sparklines
+  const logged = tryHabit('i did my pray habit', { habits: [{ name: 'pray', created: today, streak: 0, best: 0, total: 0 }] }, today);
+  eq(logged?.profile?.habits?.[0].recent, [today], 'each log records its date');
 });
 
 Deno.test('v28: reviewOffer fires after 7 days, once per day, and stays quiet with nothing to review', () => {

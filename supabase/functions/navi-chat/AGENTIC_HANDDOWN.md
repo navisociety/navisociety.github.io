@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-09, at **v28** (weekly review), live and verified.
+Last updated: 2026-07-09, at **v29** (the executive round), live and verified.
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -56,7 +56,38 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v27)
+### agent.ts — workflows & missions (v25→v29)
+
+**v29 — the executive round** (all in agent.ts unless noted):
+- **Conditional steps**: a step may open `when <condition>: <step>`; the
+  condition is evaluated (`evalCondition`) against the live profile mid-run.
+  CLOSED vocabulary: habit logged / not logged today, a reminder is due,
+  my mood is <x> (aliases map to the journal's canonical labels), my mission
+  is idle (3+ days), i have a mission. Unknown conditions SKIP the step and
+  teach the vocabulary — never guess. Skipped steps are excluded from the
+  "N of M executed" summary (reported as "skipped by its condition").
+- **Open triggers**: a trigger stored ending in ` *` ("study *", set via
+  "when i say study *, run my study workflow on it"; `<topic>` normalizes to
+  `*`) fires on any message starting with the prefix — the remainder becomes
+  the topic that fills every * slot. Exact triggers are checked first; the
+  remainder is length-capped and crisis-guarded.
+- **Mission-aware step**: the literal step "my next mission step" surfaces
+  the active mission's current step READ-ONLY (never through the engines,
+  never advancing). The only mission phrase allowed inside workflow steps —
+  the creation guard reads through `when …:` conditions for this check.
+- **Mission queue**: `missionQueue?: string[]` on the profile (cap 3).
+  "queue a mission to X" (crisis-guarded); with nothing active it starts
+  immediately instead. Deduped against the active goal + queue. Completing
+  OR skip-wrapping the mission auto-promotes queue[0] into a full new
+  mission (promoteQueued); ABANDONING does not — the queue is named but
+  waits. "show my mission queue" / "clear my mission queue" / "remove the
+  queued mission: X"; mission status shows the queue.
+- **Sparklines** (habit.ts): `sparkline(h, today)` = the last 7 days as
+  `···✓✓✓✓` from the current streak window plus `Habit.recent` (last 14
+  logged dates, stamped on every log — pre-break days stay visible).
+  Appended to `streakLine`, so the briefing, habit status, and weekly review
+  all carry it automatically.
+
 - **Workflows**: named saved routines, ≤8 workflows × ≤5 steps. Each step is an
   ordinary ask executed through `answerIntent` (the injected `AgentRunner`), so
   a step runs EXACTLY what the same message would run on its own, with profile
@@ -174,28 +205,28 @@ determinism or safety.** Next natural rungs, roughly in order of value:
 1. ~~**Weekly review**~~ — SHIPPED in v28 (review.ts). Week-over-week habit
    deltas, mood shift, wins earned, mission velocity, reminders cleared, plus
    the 7-day session-start offer.
-2. **Conditional workflow steps** — "if I haven't logged my prayer habit,
-   remind me" → a small `when <condition>:` step prefix evaluated against the
-   profile before running the step. Keep conditions to a closed vocabulary
-   (habit logged / reminder due / mood is X / mission idle).
-3. **Trigger phrases with topics** — "when I say study <topic>, run my study
-   workflow on <topic>" (trigger prefix match capturing the remainder as the
-   slot fill). The v27 slot machinery already does the hard part.
-4. **Mission-aware workflow steps** — allow the literal step "my next mission
-   step" inside a workflow to surface the current step (read-only), so a
-   morning routine can include the mission. Requires relaxing the "workflows
-   can't reference missions" guard for this one safe, read-only phrase.
-5. **Multiple queued missions** — keep ONE active, but allow "queue a mission
-   to X" (a backlog list, cap ~3) that auto-promotes on completion. Preserves
-   the focus philosophy while capturing ambition.
+2. ~~**Conditional workflow steps**~~ — SHIPPED in v29 (`when <condition>:`
+   prefix, closed vocabulary, evalCondition in agent.ts).
+3. ~~**Trigger phrases with topics**~~ — SHIPPED in v29 (open triggers ending
+   in ` *`; remainder fills the slots).
+4. ~~**Mission-aware workflow steps**~~ — SHIPPED in v29 (the read-only
+   "my next mission step" literal).
+5. ~~**Multiple queued missions**~~ — SHIPPED in v29 (missionQueue, cap 3,
+   auto-promote on completion/skip-wrap; abandon leaves the queue waiting).
 6. **Reminder → workflow escalation** — a reminder that survives 3+ sessions
    gets offered: "want me to make this a mission step or a daily habit?"
    (Detection is trivial: reminders carry `created`.)
 7. **Self-improvement loop on gaps** — `navi_gaps` already logs what NAVI
    couldn't answer. A "what should I learn?" ask (Dian-only) that reads the
    top gaps is agency applied to NAVI itself.
-8. **Progress analytics in the briefing** — tiny sparkline-style text (e.g.
-   habit: `✓✓·✓✓✓·`) once weekly review exists. Text only; no UI changes.
+8. ~~**Progress analytics in the briefing**~~ — SHIPPED in v29 (habit
+   sparklines via streakLine, everywhere habits render).
+9. **Conditional NEGATIONS & richer vocabulary** — "when no reminders are
+   due", "when my mood isn't low", habit-streak thresholds ("when my streak
+   is under 3"). The evalCondition seam makes these one-liners.
+10. **Queue editing** — reorder ("move X to the front of the queue"),
+    peek-promote ("start the queued mission X now", swapping the active one
+    back into the queue).
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -209,8 +240,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v25 | `371f930` | workflows (create/run/list/delete/triggers), missions |
 | v26 | `b3ee78f` | habit streaks, daily auto-run workflows, mood journal |
 | v27 | `7df4bd8` | topic * slots, mission skip/add + idle nudge, daily briefing |
-| v28 | (see git) | weekly review: deltas vs. snapshot + 7-day session-start offer |
+| v28 | `9568807` | weekly review: deltas vs. snapshot + 7-day session-start offer |
+| v29 | (see git) | executive round: conditional steps, open topic triggers, read-only mission step, mission queue, habit sparklines |
 
-Test counts: 121 → 132 → 139 → 147 → **153**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → **161**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
