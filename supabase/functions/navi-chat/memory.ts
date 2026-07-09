@@ -51,11 +51,25 @@ export type Profile = {
   // v25: the active mission — one goal decomposed into steps that NAVI walks
   // the user through across sessions. Managed by agent.ts.
   mission?: Mission;
+  // v26: tracked habits with streaks ("track my habit: pray"). Managed by habit.ts.
+  habits?: Habit[];
+  // v26: mood journal — one entry per SA day (last signal of the day wins),
+  // newest last, capped, so "how have i been feeling lately?" has real data.
+  moods?: MoodEntry[];
 };
 
 // v25: one saved workflow. `steps` are ordinary asks run through the full
 // engine pipeline in order; `trigger` is an exact phrase that auto-runs it.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string };
+// v26: `daily` workflows auto-run on the first session of each new SA day;
+// `lastRun` (yyyy-mm-dd) stops a second run the same day.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; lastRun?: string };
+
+// v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
+// a log the day after lastDone extends the streak, any later day restarts it.
+export type Habit = { name: string; created: string; lastDone?: string; streak: number; best: number; total: number };
+
+// v26: one mood journal entry — a canonical detectMood label on an SA date.
+export type MoodEntry = { mood: string; date: string };
 
 // v25: the active mission. `done` counts completed steps, so the current step
 // is steps[done]. Completing the last step moves `goal` to the wins list.
@@ -390,6 +404,70 @@ export function detectMood(message: string): string | null {
   return null;
 }
 
+const MAX_MOODS = 30;
+
+/**
+ * v26: roll a detected mood into the journal. One entry per day — a later
+ * signal the same day replaces the earlier one (how you end the day is the
+ * truer reading). Returns the new list; the caller stores it on the profile.
+ */
+export function pushMood(
+  moods: MoodEntry[] | undefined,
+  mood: string,
+  today = todayInTZ('Africa/Johannesburg'),
+): MoodEntry[] {
+  const date = `${today.y}-${String(today.m).padStart(2, '0')}-${String(today.d).padStart(2, '0')}`;
+  const list = (moods ?? []).filter(e => e.date !== date);
+  list.push({ mood, date });
+  return list.slice(-MAX_MOODS);
+}
+
+// The human reading of each canonical mood label, for trend answers.
+const MOOD_WORDS: Record<string, string> = {
+  low: 'low', stressed: 'stressed', tired: 'tired', angry: 'frustrated', good: 'good',
+};
+
+/**
+ * v26: an honest readout of the last two weeks of mood entries, or null when
+ * there isn't enough signal to say anything real.
+ */
+export function moodTrend(
+  profile: Profile,
+  today = todayInTZ('Africa/Johannesburg'),
+): string | null {
+  const moods = profile.moods ?? [];
+  if (!moods.length) return null;
+  const todayMs = Date.UTC(today.y, today.m - 1, today.d);
+  const recent = moods.filter(e => {
+    const ms = Date.parse(e.date);
+    return Number.isFinite(ms) && todayMs - ms <= 14 * 86400000;
+  });
+  if (!recent.length) return null;
+
+  const counts: Record<string, number> = {};
+  for (const e of recent) counts[e.mood] = (counts[e.mood] ?? 0) + 1;
+  const heavy = (counts.low ?? 0) + (counts.stressed ?? 0);
+  const light = counts.good ?? 0;
+  const latest = recent[recent.length - 1];
+  const latestWord = MOOD_WORDS[latest.mood] ?? latest.mood;
+
+  const days = recent.length;
+  const parts = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, n]) => `${MOOD_WORDS[m] ?? m} on ${n} day${n === 1 ? '' : 's'}`);
+  const summary = `Over the last two weeks I've picked up how you were doing on ${days} day${days === 1 ? '' : 's'}: ${parts.join(', ')}.`;
+
+  let read: string;
+  if (heavy > light && heavy >= 2) {
+    read = `That's a heavier stretch than you deserve — and the most recent read was ${latestWord}. You don't have to carry it alone; tell me what's weighing the most.`;
+  } else if (light > heavy && light >= 2) {
+    read = `That's a good run — and lately you sounded ${latestWord}. Whatever you're doing, it's working. Keep me posted.`;
+  } else {
+    read = `Mixed, like real life. The latest read was ${latestWord}. How are you right now?`;
+  }
+  return `${summary} ${read}`;
+}
+
 // ── v18: memory control ("forget …") ─────────────────────────────────────────
 
 export type Forget =
@@ -503,7 +581,7 @@ export function applyForget(profile: Profile, forget: Forget): { profile: Profil
 const RETURN_GAP_MS = 6 * 60 * 60 * 1000; // only re-greet after a real break
 
 /** Responses NAVI must never wrap in a chirpy welcome (crisis handling). */
-function isCrisisReply(response: string): boolean {
+export function isCrisisReply(response: string): boolean {
   return /\bSADAG\b|0800\s?567\s?567|lifeline|suicide|crisis line/i.test(response);
 }
 
@@ -834,6 +912,14 @@ export function answerProfileQuestion(message: string, profile: Profile): string
     return `Look at this list: ${list}. You DID those. Every one is proof you finish what you start.`;
   }
 
+  // v26: mood trend — "how have i been feeling lately?" answered from the
+  // mood journal, honestly, or handed back as a real question when there's
+  // no data yet.
+  if (/\bhow (?:have i been|was i) feeling\b/.test(t) || /\bmy mood (?:lately|this week|history|trend)\b/.test(t) || /\bhow (?:has|was) my (?:week|mood) been\b/.test(t)) {
+    return moodTrend(profile) ??
+      "I haven't picked up enough about how you've been feeling to give you an honest read yet. So tell me straight — how are you right now?";
+  }
+
   // v16: full recall — "what do you know/remember about me?".
   if (/\bwhat do you (know|remember) about me\b/.test(t) || /\btell me what you know about me\b/.test(t) || /\bwhat have i told you\b/.test(t)) {
     const bits: string[] = [];
@@ -853,6 +939,7 @@ export function answerProfileQuestion(message: string, profile: Profile): string
     if (profile.dislikes?.length) bits.push(`you can't stand ${profile.dislikes.join(', ')}`);
     if (profile.wins?.length) bits.push(`you've already won at ${profile.wins.join('; ')}`);
     if (profile.mission) bits.push(`you're on a mission to ${profile.mission.goal} (step ${profile.mission.done + 1} of ${profile.mission.steps.length})`);
+    for (const h of profile.habits ?? []) bits.push(`you're building the habit of ${h.name}${h.streak > 1 ? ` (${h.streak}-day streak)` : ''}`);
     if (profile.workflows?.length) bits.push(`you've saved ${profile.workflows.length} workflow${profile.workflows.length === 1 ? '' : 's'} with me (${profile.workflows.map(w => w.name).join(', ')})`);
     for (const f of profile.facts ?? []) bits.push(toSecondPerson(f));
     if (!bits.length) {

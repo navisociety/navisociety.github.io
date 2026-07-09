@@ -79,6 +79,14 @@ const DELETE_RX = new RegExp(
 
 const LIST_RX = /^(?:please )?(?:list|show|show me|what are)(?: all)?(?: my| the)? (?:workflows|routines)$/;
 
+// v26: "run my morning workflow every day" / "make my morning workflow daily"
+const DAILY_ON_RX = new RegExp(
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? (?:every ?day|daily|every morning|each day)$`,
+);
+const DAILY_OFF_RX = new RegExp(
+  `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:every ?day|daily|every morning|each day)$`,
+);
+
 // "when i say good morning, run my morning workflow"
 const TRIGGER_RX = new RegExp(
   `^when(?:ever)? i say ["']?(.{3,40}?)["']? ?,? (?:run|start|do|execute)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
@@ -129,6 +137,17 @@ export function parseWorkflowDelete(message: string): string | null {
   if (!t || t.length > 80) return null;
   const m = t.match(DELETE_RX);
   return m ? (m[1] ?? m[2]).trim() : null;
+}
+
+/** The workflow name from a "run my X workflow every day" ask, or null. */
+export function parseDailySet(message: string): { name: string; daily: boolean } | null {
+  const t = tidy(message);
+  if (!t || t.length > 100) return null;
+  const on = t.match(DAILY_ON_RX);
+  if (on) return { name: on[1].trim(), daily: true };
+  const off = t.match(DAILY_OFF_RX);
+  if (off) return { name: off[1].trim(), daily: false };
+  return null;
 }
 
 /** { trigger, name } from "when i say X, run my Y workflow", or null. */
@@ -183,6 +202,7 @@ WORKFLOWS — saved routines I run on command:
 - create a workflow called morning: a verse about strength, then list my reminders, then encourage me
 - run my morning workflow
 - when I say good morning, run my morning workflow (sets a trigger phrase)
+- run my morning workflow every day (auto-runs on your first chat of the day)
 - list my workflows / delete my morning workflow
 
 MISSIONS — a goal I break into steps and walk you through:
@@ -202,6 +222,7 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowRun(message) !== null ||
     parseWorkflowDelete(message) !== null ||
     parseTriggerSet(message) !== null ||
+    parseDailySet(message) !== null ||
     parseMissionStart(message) !== null ||
     LIST_RX.test(t) ||
     MISSION_STATUS_RX.test(t) ||
@@ -215,7 +236,8 @@ function nameList(workflows: Workflow[]): string {
   return workflows
     .map((w) => {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
-      return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}`;
+      const daily = w.daily ? ' — runs daily' : '';
+      return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}`;
     })
     .join('\n');
 }
@@ -441,6 +463,29 @@ export async function tryAgent(
     };
   }
 
+  const dailySet = parseDailySet(message);
+  if (dailySet) {
+    const idx = workflows.findIndex((w) => w.name === dailySet.name);
+    if (idx < 0) {
+      return {
+        reply: `I don't have a workflow called "${dailySet.name}". ${workflows.length ? `You have: ${workflows.map((w) => w.name).join(', ')}.` : 'Create it first: create a workflow called ' + dailySet.name + ': …'}`,
+      };
+    }
+    const nextList = workflows.map((w, i) => {
+      if (i !== idx) return w;
+      const next = { ...w };
+      if (dailySet.daily) next.daily = true;
+      else { delete next.daily; delete next.lastRun; }
+      return next;
+    });
+    return {
+      reply: dailySet.daily
+        ? `Done — "${dailySet.name}" now runs itself every day, on your first chat of the day. You show up, I handle the routine.`
+        : `Okay — "${dailySet.name}" is off the daily schedule. It's still saved; run it anytime with "run my ${dailySet.name} workflow".`,
+      profile: { ...profile, workflows: nextList },
+    };
+  }
+
   const toRun = parseWorkflowRun(message);
   if (toRun) {
     const wf = workflows.find((w) => w.name === toRun);
@@ -459,4 +504,34 @@ export async function tryAgent(
   }
 
   return null;
+}
+
+/**
+ * v26: run every daily workflow that hasn't run today (SA time) and return a
+ * combined report plus the updated profile (lastRun stamped, step side-effects
+ * threaded), or null when nothing is due. index.ts appends the report to the
+ * first reply of the day's first session — reminders-style surfacing, scaled up.
+ */
+export async function runDailyWorkflows(
+  profile: Profile,
+  run: AgentRunner,
+  todayISO: string,
+): Promise<{ report: string; profile: Profile } | null> {
+  const due = (profile.workflows ?? []).filter((w) => w.daily && w.lastRun !== todayISO);
+  if (!due.length) return null;
+
+  let prof = profile;
+  const reports: string[] = [];
+  for (const wf of due) {
+    const out = await runWorkflow(wf, prof, run);
+    if (out.profile) prof = out.profile;
+    reports.push(`— Your daily "${wf.name}" workflow —\n\n${out.reply}`);
+    prof = {
+      ...prof,
+      workflows: (prof.workflows ?? []).map((w) =>
+        w.name === wf.name ? { ...w, lastRun: todayISO } : w,
+      ),
+    };
+  }
+  return { report: reports.join('\n\n'), profile: prof };
 }

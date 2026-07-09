@@ -18,7 +18,7 @@ import { stem, withinOneEdit, wordsMatch } from './match.ts';
 import {
   extractProfile, answerProfileQuestion, memoryAcknowledgement, toSecondPerson,
   mergeProfiles, detectMood, detectForget, applyForget, addReturningGreeting,
-  captureAck, newProfileBits, tryGoalDone,
+  captureAck, newProfileBits, tryGoalDone, pushMood, moodTrend,
 } from './memory.ts';
 import { parseLifeEvent, tryLifeEvent, addEventFollowUps } from './life.ts';
 import { extractTopicEntity, resolveReference } from './context.ts';
@@ -48,8 +48,9 @@ import { expandFollowUp } from './followup.ts';
 import { splitIntents } from './execute.ts';
 import {
   parseWorkflowCreate, parseWorkflowRun, parseWorkflowDelete,
-  parseTriggerSet, parseMissionStart, tryAgent,
+  parseTriggerSet, parseMissionStart, parseDailySet, tryAgent, runDailyWorkflows,
 } from './agent.ts';
+import { tryHabit } from './habit.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -1416,3 +1417,124 @@ Deno.test('v25: stepsForGoal picks the domain bank or the generic scaffold', () 
   eq(stepsForGoal('start a business').length, 6, 'business lane');
   eq(stepsForGoal('learn to juggle flaming pins')[0].includes('done'), true, 'generic scaffold defines done');
 });
+
+// ── v26: daily rhythm — habits, daily workflows, mood trends ─────────────────
+
+Deno.test('v26: habit create / log / streak arithmetic', () => {
+  let profile: Profile = {};
+  const created = tryHabit('track my habit: pray every day', profile, '2026-07-09');
+  if (!created?.profile?.habits) throw new Error('habit not stored');
+  eq(created.profile.habits[0].name, 'pray', '"every day" stripped from the name');
+  profile = created.profile;
+
+  const day1 = tryHabit('i did my prayer habit', profile, '2026-07-09');
+  eq(day1?.profile?.habits?.[0].streak, 1, 'fuzzy name match (prayer→pray), day 1');
+  profile = day1!.profile!;
+
+  const again = tryHabit('i did my prayer habit', profile, '2026-07-09');
+  eq(again?.profile, undefined, 'same day never double-counts');
+  if (!again?.reply.includes('Already counted')) throw new Error('double log must say so');
+
+  const day2 = tryHabit('habit done: pray', profile, '2026-07-10');
+  eq(day2?.profile?.habits?.[0].streak, 2, 'next day extends the streak');
+  profile = day2!.profile!;
+
+  const broken = tryHabit('i did my prayer habit', profile, '2026-07-15');
+  const h = broken?.profile?.habits?.[0];
+  eq(h?.streak, 1, 'a gap restarts the streak');
+  eq(h?.best, 2, 'best streak kept');
+  eq(h?.total, 3, 'lifetime total kept');
+  if (!broken?.reply.includes('Back on the horse')) throw new Error('broken streak gets grace, not guilt');
+});
+
+Deno.test('v26: habit status, delete, and guardrails', () => {
+  const profile: Profile = { habits: [
+    { name: 'pray', created: '2026-07-01', lastDone: '2026-07-09', streak: 5, best: 7, total: 20 },
+    { name: 'read my bible', created: '2026-07-01', streak: 0, best: 0, total: 0 },
+  ] };
+  const status = tryHabit('how are my habits', profile, '2026-07-09');
+  if (!status?.reply.includes('5-day streak (best 7, 20 total) — done today')) throw new Error('status line wrong: ' + status?.reply);
+
+  const bare = tryHabit('i did my habit', profile, '2026-07-09');
+  if (!bare?.reply.includes('Which one?')) throw new Error('bare log with 2 habits must ask which');
+
+  const dropped = tryHabit('drop my bible habit', profile, '2026-07-09');
+  eq(dropped?.profile?.habits?.length, 1, 'fuzzy delete');
+  if (!dropped?.reply.includes('best streak 0')) throw new Error('drop must honour the record');
+
+  eq(tryHabit('track my habit: hurt myself', profile), null, 'crisis is never a habit');
+  eq(tryHabit('i did my homework', profile), null, 'plain sentences untouched');
+  eq(tryHabit('what is a habit', profile), null, 'dictionary asks untouched');
+});
+
+Deno.test('v26: parseDailySet reads schedule on/off; daily shows in list', async () => {
+  eq(parseDailySet('run my morning workflow every day'), { name: 'morning', daily: true }, 'daily on');
+  eq(parseDailySet('make my morning routine daily'), { name: 'morning', daily: true }, 'make daily');
+  eq(parseDailySet('stop running my morning workflow every day'), { name: 'morning', daily: false }, 'daily off');
+  eq(parseDailySet('run my morning workflow'), null, 'plain run is not a schedule');
+
+  const { run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'morning', steps: ['a verse about strength'], created: 'now' }] };
+  const on = await tryAgent('run my morning workflow every day', EMAIL, profile, run);
+  eq(on?.profile?.workflows?.[0].daily, true, 'daily stored');
+  profile = on!.profile!;
+  const listed = await tryAgent('list my workflows', EMAIL, profile, run);
+  if (!listed?.reply.includes('runs daily')) throw new Error('list must show the schedule');
+  const off = await tryAgent('stop running my morning workflow daily', EMAIL, profile, run);
+  eq(off?.profile?.workflows?.[0].daily, undefined, 'daily cleared');
+});
+
+Deno.test('v26: runDailyWorkflows runs due dailies once per day', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'morning', steps: ['a verse about strength'], created: 'now', daily: true, lastRun: '2026-07-08' },
+    { name: 'evening', steps: ['a verse about peace'], created: 'now' },
+  ] };
+  const out = await runDailyWorkflows(profile, run, '2026-07-09');
+  if (!out) throw new Error('due daily must run');
+  eq(ran, ['a verse about strength'], 'only the daily workflow ran');
+  if (!out.report.includes('Your daily "morning" workflow')) throw new Error('report header missing');
+  eq(out.profile.workflows?.[0].lastRun, '2026-07-09', 'lastRun stamped');
+
+  eq(await runDailyWorkflows(out.profile, run, '2026-07-09'), null, 'never twice the same day');
+});
+
+Deno.test('v26: pushMood keeps one entry per day, capped and ordered', () => {
+  const d = (n: number) => ({ y: 2026, m: 7, d: n });
+  let moods = pushMood(undefined, 'low', d(1));
+  moods = pushMood(moods, 'good', d(1));
+  eq(moods, [{ mood: 'good', date: '2026-07-01' }], 'same day replaces');
+  moods = pushMood(moods, 'stressed', d(2));
+  eq(moods.length, 2, 'new day appends');
+});
+
+Deno.test('v26: moodTrend gives an honest read or nothing', () => {
+  const today = { y: 2026, m: 7, d: 9 };
+  eq(moodTrend({}, today), null, 'no data, no guess');
+  const heavy: Profile = { moods: [
+    { mood: 'low', date: '2026-07-05' }, { mood: 'stressed', date: '2026-07-07' }, { mood: 'low', date: '2026-07-08' },
+  ] };
+  const readHeavy = moodTrend(heavy, today)!;
+  if (!readHeavy.includes('low on 2 days') || !readHeavy.includes('heavier stretch')) throw new Error('heavy read wrong: ' + readHeavy);
+  const light: Profile = { moods: [
+    { mood: 'good', date: '2026-07-06' }, { mood: 'good', date: '2026-07-08' },
+  ] };
+  if (!moodTrend(light, today)!.includes('good run')) throw new Error('light read wrong');
+  const stale: Profile = { moods: [{ mood: 'low', date: '2026-01-01' }] };
+  eq(moodTrend(stale, today), null, 'old entries do not speak for today');
+});
+
+Deno.test('v26: "how have i been feeling" is answered from the journal', () => {
+  const profile: Profile = { moods: [
+    { mood: 'good', date: todayISOForTest() }, // today, always within 14 days
+  ] };
+  const r = answerProfileQuestion('how have i been feeling lately?', profile);
+  if (!r || !r.includes('good')) throw new Error('mood ask must read the journal: ' + r);
+  const empty = answerProfileQuestion('how have i been feeling?', {});
+  if (!empty || !empty.includes('how are you right now')) throw new Error('no data must ask, not guess');
+});
+
+function todayISOForTest(): string {
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date()).split('-');
+  return `${y}-${m}-${d}`;
+}

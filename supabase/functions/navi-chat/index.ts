@@ -46,12 +46,12 @@
 //   OPTIONS preflight handled for CORS. verify_jwt: false; gated by CORS origin.
 
 import { answerFromBible } from './bible.ts';
-import { trySkills, isFollowUp } from './skills.ts';
+import { trySkills, isFollowUp, todayInTZ } from './skills.ts';
 import { wordsMatch } from './match.ts';
 import {
   extractProfile, answerProfileQuestion, memoryAcknowledgement,
   mergeProfiles, detectMood, detectForget, applyForget, addReturningGreeting,
-  captureAck, tryGoalDone,
+  captureAck, tryGoalDone, pushMood, isCrisisReply,
   type Profile,
 } from './memory.ts';
 import { loadStoredProfile, saveStoredProfile } from './store.ts';
@@ -80,7 +80,8 @@ import { tryMemorize } from './memorize.ts';
 import { normalizeMessage } from './normalize.ts';
 import { expandFollowUp } from './followup.ts';
 import { splitIntents } from './execute.ts';
-import { tryAgent } from './agent.ts';
+import { tryAgent, runDailyWorkflows } from './agent.ts';
+import { tryHabit, isHabitAsk } from './habit.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4150,6 +4151,8 @@ async function answerIntent(
   if (email) {
     const reminder = tryReminder(part, profile);
     if (reminder) return { reply: reminder.reply, profile: reminder.profile };
+    const habit = tryHabit(part, profile);
+    if (habit) return { reply: habit.reply, profile: habit.profile };
     const forget = detectForget(part);
     if (forget) {
       const applied = applyForget(profile, forget);
@@ -4288,7 +4291,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
             const merged = mergeProfiles(prof, extractProfile([], message));
             merged.lastSeen = new Date().toISOString();
             const mood = detectMood(message);
-            if (mood) merged.lastMood = mood;
+            if (mood) {
+              merged.lastMood = mood;
+              merged.moods = pushMood(prof.moods, mood);
+            }
             merged.lastTopics = updateTopics(prof.lastTopics, message);
             await saveStoredProfile(email, merged);
           }
@@ -4315,6 +4321,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     } else if (isReminderAsk(message)) {
       return new Response(JSON.stringify({ response: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
+        status: 200,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // v26: habits are memory operations like reminders — handled up front,
+    // before the forget layer ("drop my prayer habit" is a habit command, not
+    // a memory-forget ask), and persisted immediately. Signed-in only.
+    if (email) {
+      const habitTurn = tryHabit(message, stored);
+      if (habitTurn) {
+        if (habitTurn.profile) await saveStoredProfile(email, habitTurn.profile);
+        return new Response(JSON.stringify({ response: habitTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    } else if (isHabitAsk(message)) {
+      return new Response(JSON.stringify({ response: "I can track habits and count your streaks, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
         status: 200,
         headers: { ...cors, "Content-Type": "application/json" },
       });
@@ -4515,6 +4540,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // (under the welcome-back line), and stay listed until ticked off.
       response = addDueReminders(response, stored);
       response = addReturningGreeting(response, stored);
+
+      // v26: daily workflows — the first session of a new SA day runs every
+      // workflow marked daily and appends its report, reminders-style. Never
+      // on a crisis reply; the person always comes before the routine.
+      if (!isCrisisReply(response)) {
+        const t = todayInTZ('Africa/Johannesburg');
+        const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
+        const daily = await runDailyWorkflows(stored, (part, prof) => answerIntent(part, email, prof), todayISO);
+        if (daily) {
+          response = `${response}\n\n${daily.report}`;
+          // Step side-effects and lastRun stamps ride into the final save.
+          Object.assign(stored, daily.profile);
+        }
+      }
     }
 
     // v18: persist anything newly learned this turn + refresh last_seen and
@@ -4524,7 +4563,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       const merged = mergeProfiles(stored, learned);
       merged.lastSeen = new Date().toISOString();
       const mood = detectMood(message);
-      if (mood) merged.lastMood = mood;
+      if (mood) {
+        merged.lastMood = mood;
+        // v26: the mood journal — one entry per day, so trends are answerable.
+        merged.moods = pushMood(stored.moods, mood);
+      }
       // v21: roll this turn's topic (if any) into the episodic topic trail.
       merged.lastTopics = updateTopics(stored.lastTopics, message);
       await saveStoredProfile(email, merged);
