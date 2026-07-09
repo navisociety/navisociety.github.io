@@ -49,8 +49,10 @@ import { splitIntents } from './execute.ts';
 import {
   parseWorkflowCreate, parseWorkflowRun, parseWorkflowDelete,
   parseTriggerSet, parseMissionStart, parseDailySet, tryAgent, runDailyWorkflows,
+  missionNudge,
 } from './agent.ts';
 import { tryHabit } from './habit.ts';
+import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -1306,9 +1308,9 @@ Deno.test('v25: steps keep natural "and" phrases whole and cap at 5', () => {
 });
 
 Deno.test('v25: parseWorkflowRun / parseWorkflowDelete / parseTriggerSet', () => {
-  eq(parseWorkflowRun('run my morning workflow'), 'morning', 'run name-first');
-  eq(parseWorkflowRun('please run workflow called morning'), 'morning', 'run keyword-first');
-  eq(parseWorkflowRun('start my night routine'), 'night', 'routine synonym');
+  eq(parseWorkflowRun('run my morning workflow'), { name: 'morning' }, 'run name-first');
+  eq(parseWorkflowRun('please run workflow called morning'), { name: 'morning' }, 'run keyword-first');
+  eq(parseWorkflowRun('start my night routine'), { name: 'night' }, 'routine synonym');
   eq(parseWorkflowRun('run my business'), null, 'needs the workflow word');
   eq(parseWorkflowDelete('delete my morning workflow'), 'morning', 'delete');
   eq(parseWorkflowDelete('forget the workflow called night'), 'night', 'forget form');
@@ -1538,3 +1540,113 @@ function todayISOForTest(): string {
   const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date()).split('-');
   return `${y}-${m}-${d}`;
 }
+
+// ── v27: agentic round 3 — topic slots, mission editing, nudges, briefing ────
+
+Deno.test('v27: parseWorkflowRun reads a topic tail on both run forms', () => {
+  eq(parseWorkflowRun('run my study workflow on grace'), { name: 'study', topic: 'grace' }, 'name-first + on');
+  eq(parseWorkflowRun('run the workflow called study about the holy spirit'), { name: 'study', topic: 'the holy spirit' }, 'keyword-first + about');
+  eq(parseWorkflowRun('please run my study routine with patience'), { name: 'study', topic: 'patience' }, 'routine + with');
+  eq(parseWorkflowRun('run my study workflow'), { name: 'study' }, 'no topic stays plain');
+});
+
+Deno.test('v27: a topic fills every * slot when the workflow runs', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'study', steps: ['a verse about *', 'define *'], created: 'now' }] };
+  const out = await tryAgent('run my study workflow on grace', EMAIL, profile, run);
+  eq(ran, ['a verse about grace', 'define grace'], 'slots filled in every step');
+  if (!out?.reply.includes('on "grace"')) throw new Error('run header must name the topic: ' + out?.reply);
+});
+
+Deno.test('v27: slotted workflows prompt without a topic and refuse daily/trigger runs', async () => {
+  const { ran, run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+
+  const bare = await tryAgent('run my study workflow', EMAIL, profile, run);
+  if (!bare?.reply.includes('* slot')) throw new Error('bare run must teach the topic form: ' + bare?.reply);
+  eq(ran, [], 'nothing executed without a topic');
+
+  const daily = await tryAgent('run my study workflow every day', EMAIL, profile, run);
+  if (!daily?.reply.includes('* slot')) throw new Error('daily set must be refused: ' + daily?.reply);
+  eq(daily?.profile, undefined, 'no daily flag saved');
+
+  profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now', trigger: 'study time' }] };
+  const fired = await tryAgent('study time', EMAIL, profile, run);
+  if (!fired?.reply.includes('* slot')) throw new Error('trigger must prompt, not run a literal *: ' + fired?.reply);
+  eq(ran, [], 'trigger did not execute slotted steps');
+
+  const skipped = await runDailyWorkflows(
+    { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now', daily: true }] },
+    run, '2026-07-09');
+  eq(skipped, null, 'daily runner never auto-runs a slotted workflow');
+});
+
+Deno.test('v27: mission skip drops the current step, and skipping the last wraps', async () => {
+  const { run } = stubRunner();
+  let profile: Profile = { mission: { goal: 'get fit', steps: ['s1', 's2', 's3'], done: 1, created: 'now' } };
+
+  const skipped = await tryAgent('skip this step', EMAIL, profile, run);
+  eq(skipped?.profile?.mission?.steps, ['s1', 's3'], 'current step removed');
+  eq(skipped?.profile?.mission?.done, 1, 'done count untouched');
+  if (!skipped?.reply.includes('s3')) throw new Error('reply must hand over the next step: ' + skipped?.reply);
+
+  profile = { mission: { goal: 'get fit', steps: ['s1', 's2'], done: 1, created: 'now' } };
+  const last = await tryAgent('skip', EMAIL, profile, run);
+  eq(last?.profile?.mission, undefined, 'skipping the last step closes the mission');
+  eq(last?.profile?.wins, ['get fit'], 'the goal still lands on the wins list');
+
+  const noMission = await tryAgent('skip', EMAIL, {}, run);
+  eq(noMission, null, 'bare skip without a mission stays ordinary conversation');
+});
+
+Deno.test('v27: add a step extends the active mission plan', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = { mission: { goal: 'get fit', steps: ['s1', 's2'], done: 0, created: 'now' } };
+  const out = await tryAgent('add a step to my mission: buy running shoes', EMAIL, profile, run);
+  eq(out?.profile?.mission?.steps, ['s1', 's2', 'buy running shoes'], 'step appended');
+  if (!out?.reply.includes('step 3 of 3')) throw new Error('reply must place the new step: ' + out?.reply);
+  eq(await tryAgent('add a step to my mission: buy shoes', EMAIL, {}, run), null, 'no mission, no add');
+});
+
+Deno.test('v27: missionNudge fires after 3 idle days, once per day, never fresh', () => {
+  const mission = { goal: 'get fit', steps: ['s1', 's2'], done: 0, created: '2026-07-01T08:00:00Z', touched: '2026-07-05T08:00:00Z' };
+  const nudged = missionNudge({ mission }, '2026-07-09');
+  if (!nudged) throw new Error('4 idle days must nudge');
+  if (!nudged.note.includes('get fit') || !nudged.note.includes('s1')) throw new Error('nudge must name goal and step: ' + nudged.note);
+  eq(nudged.profile.mission?.nudged, '2026-07-09', 'nudge stamped');
+  eq(missionNudge(nudged.profile, '2026-07-09'), null, 'never twice the same day');
+  eq(missionNudge({ mission: { ...mission, touched: '2026-07-08T08:00:00Z' } }, '2026-07-09'), null, 'a fresh mission is left alone');
+  eq(missionNudge({}, '2026-07-09'), null, 'no mission, no nudge');
+  const legacy = missionNudge({ mission: { goal: 'g', steps: ['s'], done: 0, created: '2026-07-01T08:00:00Z' } }, '2026-07-09');
+  if (!legacy) throw new Error('pre-v27 missions fall back to created');
+});
+
+Deno.test('v27: isBriefingAsk hits the briefing forms and nothing else', () => {
+  for (const yes of ['brief me', 'my briefing', 'give me my daily briefing', "what's my status", 'catch me up', 'where do i stand', 'status report']) {
+    if (!isBriefingAsk(yes)) throw new Error('should be a briefing ask: ' + yes);
+  }
+  for (const no of ['mission status', 'brief me on the roman empire', 'give me a status update on my order', 'briefly explain grace', 'how are my habits']) {
+    if (isBriefingAsk(no)) throw new Error('should NOT be a briefing ask: ' + no);
+  }
+});
+
+Deno.test('v27: buildBriefing compiles mission, habits, reminders, events, and wins', () => {
+  const today = '2026-07-09';
+  const profile: Profile = {
+    name: 'Dian',
+    mission: { goal: 'launch my ep', steps: ['s1', 's2'], done: 1, created: 'now' },
+    habits: [{ name: 'pray', created: today, lastDone: today, streak: 4, best: 7, total: 20 }],
+    reminders: [{ text: 'call mom', created: 'now' }, { text: 'renew domain', created: 'now', due: '2026-08-01' }],
+    events: [{ text: 'exam', date: '2026-07-12' }, { text: 'old thing', date: '2026-06-01' }],
+    wins: ['finished the site'],
+  };
+  const b = buildBriefing(profile, today);
+  for (const bit of ['Dian', 'launch my ep', 'step 2', 's2', 'pray: 4-day streak', 'call mom', '1 more scheduled', 'exam — in 3 days', 'finished the site']) {
+    if (!b.includes(bit)) throw new Error(`briefing missing "${bit}":\n` + b);
+  }
+  if (b.includes('old thing')) throw new Error('past events must not appear');
+  const empty = buildBriefing({}, today);
+  if (!empty.includes('MISSION — none active')) throw new Error('empty profile still briefs honestly');
+  eq(tryBriefing('brief me', '', {})?.reply.includes('signed in'), true, 'anonymous is asked to sign in');
+  eq(tryBriefing('tell me about grace', EMAIL, {}), null, 'ordinary asks pass through');
+});

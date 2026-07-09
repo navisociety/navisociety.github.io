@@ -80,8 +80,9 @@ import { tryMemorize } from './memorize.ts';
 import { normalizeMessage } from './normalize.ts';
 import { expandFollowUp } from './followup.ts';
 import { splitIntents } from './execute.ts';
-import { tryAgent, runDailyWorkflows } from './agent.ts';
+import { tryAgent, runDailyWorkflows, missionNudge } from './agent.ts';
 import { tryHabit, isHabitAsk } from './habit.ts';
+import { tryBriefing } from './brief.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4269,6 +4270,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
+    // v27: daily briefing — "brief me" compiles mission, habits, reminders,
+    // upcoming events, mood, and wins into one status report. Read-only over
+    // the profile; runs after the agent layer so "mission status" keeps its
+    // dedicated answer.
+    {
+      const brief = tryBriefing(message, email, stored);
+      if (brief) {
+        return new Response(JSON.stringify({ response: brief.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // v24: multi-intent execution — a message carrying two or three distinct
     // asks ("remind me to call mom tomorrow and give me a verse about hope")
     // is split and EVERY part is executed through the engines, not just the
@@ -4552,6 +4567,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
           response = `${response}\n\n${daily.report}`;
           // Step side-effects and lastRun stamps ride into the final save.
           Object.assign(stored, daily.profile);
+        }
+
+        // v27: a mission idle 3+ days gets one gentle nudge per day, naming
+        // the exact step waiting — accountability, reminders-style.
+        const nudge = missionNudge(stored, todayISO);
+        if (nudge) {
+          response = `${response}\n\n${nudge.note}`;
+          Object.assign(stored, nudge.profile);
         }
       }
     }

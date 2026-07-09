@@ -73,7 +73,10 @@ export type MoodEntry = { mood: string; date: string };
 
 // v25: the active mission. `done` counts completed steps, so the current step
 // is steps[done]. Completing the last step moves `goal` to the wins list.
-export type Mission = { goal: string; steps: string[]; done: number; created: string };
+// v27: `touched` is the last time a step moved (advance/skip/add); a mission
+// idle 3+ days earns a session-start nudge, and `nudged` (yyyy-mm-dd) stops
+// the same nudge repeating within a day.
+export type Mission = { goal: string; steps: string[]; done: number; created: string; touched?: string; nudged?: string };
 
 // v23: one life event. `date` is an ISO date (yyyy-mm-dd) in SA time.
 export type LifeEvent = { text: string; date: string };

@@ -120,7 +120,8 @@ function findHabit(habits: Habit[], spoken: string): number {
 
 // ── Formatting ──────────────────────────────────────────────────────────────
 
-function streakLine(h: Habit, today: string): string {
+// v27: exported so brief.ts renders habits in the daily briefing identically.
+export function streakLine(h: Habit, today: string): string {
   const state =
     h.lastDone === today ? 'done today'
     : h.lastDone === yesterdayOf(today) ? 'on track — not logged today yet'
