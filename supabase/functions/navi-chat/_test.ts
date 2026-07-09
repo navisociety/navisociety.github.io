@@ -35,7 +35,7 @@ import { adaptTone, userIsTerse } from './tone.ts';
 import { addCuriosity } from './curiosity.ts';
 import { trySummarize, tryRewrite, rewriteMode } from './understand.ts';
 import { parseCompose, tryCompose } from './compose.ts';
-import { parsePlanGoal, tryPlan } from './plan.ts';
+import { parsePlanGoal, stepsForGoal, tryPlan } from './plan.ts';
 import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 import { tryEquation } from './skills.ts';
@@ -46,6 +46,10 @@ import { memorizeRef, activeMemoryRef, gradeAttempt, blankOut, startCoaching } f
 import { normalizeMessage } from './normalize.ts';
 import { expandFollowUp } from './followup.ts';
 import { splitIntents } from './execute.ts';
+import {
+  parseWorkflowCreate, parseWorkflowRun, parseWorkflowDelete,
+  parseTriggerSet, parseMissionStart, tryAgent,
+} from './agent.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -1252,4 +1256,163 @@ Deno.test('v24: splitIntents never divides what belongs together', () => {
   eq(splitIntents('who is tesla and what did he invent'), [], 'pure factual pair is the reasoning engine lane');
   eq(splitIntents('what is gravity'), [], 'single ask');
   eq(splitIntents('i want to die and i need help'), [], 'crisis never split');
+});
+
+// ── v25: agentic workflows ────────────────────────────────────────────────────
+
+const EMAIL = 'test@example.com';
+// A stub runner standing in for answerIntent: echoes the step so tests can see
+// execution order, and marks one specific step as unexecutable.
+const stubRunner = (fail = '') => {
+  const ran: string[] = [];
+  const run = (part: string, _p: Profile) =>
+    Promise.resolve(part === fail ? { reply: '' } : { reply: `[did: ${part}]` });
+  return { ran, run: (part: string, p: Profile) => { ran.push(part); return run(part, p); } };
+};
+
+Deno.test('v25: parseWorkflowCreate reads named creations with then/comma steps', () => {
+  eq(
+    parseWorkflowCreate('create a workflow called morning: a verse about strength, then list my reminders, then encourage me'),
+    { name: 'morning', steps: ['a verse about strength', 'list my reminders', 'encourage me'] },
+    'called + then',
+  );
+  eq(
+    parseWorkflowCreate('Hey Navi, make a night routine: a verse about peace, pray for me'),
+    { name: 'night', steps: ['a verse about peace', 'pray for me'] },
+    'name-first + commas + navi address',
+  );
+  eq(
+    parseWorkflowCreate('create a workflow: a verse about hope then encourage me'),
+    { name: '', steps: ['a verse about hope', 'encourage me'] },
+    'unnamed creation surfaces empty name for the teach-the-syntax reply',
+  );
+  eq(parseWorkflowCreate('create a new workflow: what is 2+2'), { name: '', steps: ['what is 2+2'] }, '"new" never read as the name');
+  eq(parseWorkflowCreate('give me a verse about hope'), null, 'ordinary ask is not a creation');
+  eq(parseWorkflowCreate('i want to create a business'), null, 'goal talk is not a creation');
+});
+
+Deno.test('v25: steps keep natural "and" phrases whole and cap at 5', () => {
+  eq(
+    parseWorkflowCreate('create a workflow called calm: a verse about hope and love, then encourage me')!.steps,
+    ['a verse about hope and love', 'encourage me'],
+    'bare and never splits',
+  );
+  eq(
+    parseWorkflowCreate('create a workflow called big: s one, s two, s three, s four, s five, s six')!.steps.length,
+    5,
+    'capped at 5 steps',
+  );
+});
+
+Deno.test('v25: parseWorkflowRun / parseWorkflowDelete / parseTriggerSet', () => {
+  eq(parseWorkflowRun('run my morning workflow'), 'morning', 'run name-first');
+  eq(parseWorkflowRun('please run workflow called morning'), 'morning', 'run keyword-first');
+  eq(parseWorkflowRun('start my night routine'), 'night', 'routine synonym');
+  eq(parseWorkflowRun('run my business'), null, 'needs the workflow word');
+  eq(parseWorkflowDelete('delete my morning workflow'), 'morning', 'delete');
+  eq(parseWorkflowDelete('forget the workflow called night'), 'night', 'forget form');
+  eq(parseTriggerSet('when i say good morning, run my morning workflow'), { trigger: 'good morning', name: 'morning' }, 'trigger set');
+  eq(parseTriggerSet('when i say hello there run my night routine'), { trigger: 'hello there', name: 'night' }, 'no comma');
+});
+
+Deno.test('v25: parseMissionStart reads goals and refuses crisis language', () => {
+  eq(parseMissionStart('start a mission to launch my EP'), 'launch my ep', 'mission to');
+  eq(parseMissionStart('new mission: get fit'), 'get fit', 'colon form');
+  eq(parseMissionStart('start a mission to end my life'), null, 'crisis is never a mission');
+  eq(parseMissionStart('what is a mission trip'), null, 'ordinary question');
+});
+
+Deno.test('v25: tryAgent creates, lists, runs, and deletes a workflow', async () => {
+  const { ran, run } = stubRunner();
+  let profile: Profile = {};
+
+  const created = await tryAgent('create a workflow called morning: a verse about strength, then encourage me', EMAIL, profile, run);
+  if (!created?.profile?.workflows) throw new Error('creation did not save a workflow');
+  eq(created.profile.workflows[0].name, 'morning', 'saved under its name');
+  eq(created.profile.workflows[0].steps.length, 2, 'both steps saved');
+  profile = created.profile;
+
+  const listed = await tryAgent('list my workflows', EMAIL, profile, run);
+  if (!listed?.reply.includes('morning')) throw new Error('list must show the workflow');
+
+  const runOut = await tryAgent('run my morning workflow', EMAIL, profile, run);
+  eq(ran, ['a verse about strength', 'encourage me'], 'steps executed in order');
+  if (!runOut?.reply.includes('[did: a verse about strength]')) throw new Error('step 1 answer missing');
+  if (!runOut?.reply.includes('all 2 steps executed')) throw new Error('completion summary missing');
+
+  const deleted = await tryAgent('delete my morning workflow', EMAIL, profile, run);
+  eq(deleted?.profile?.workflows, [], 'workflow removed');
+});
+
+Deno.test('v25: tryAgent reports steps it could not execute', async () => {
+  const { run } = stubRunner('encourage me');
+  const profile: Profile = { workflows: [{ name: 'm', steps: ['a verse about strength', 'encourage me'], created: 'now' }] };
+  const out = await tryAgent('run my m workflow', EMAIL, profile, run);
+  if (!out?.reply.includes("I couldn't execute this one")) throw new Error('failed step must be reported');
+  if (!out?.reply.includes('1 of 2 steps executed')) throw new Error('honest summary missing');
+});
+
+Deno.test('v25: trigger phrase auto-runs its workflow, exact match only', async () => {
+  const { ran, run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'morning', steps: ['a verse about strength'], created: 'now' }] };
+
+  const set = await tryAgent('when i say good morning, run my morning workflow', EMAIL, profile, run);
+  if (!set?.profile?.workflows?.[0].trigger) throw new Error('trigger not stored');
+  profile = set.profile;
+
+  const fired = await tryAgent('Good morning!', EMAIL, profile, run);
+  if (!fired) throw new Error('trigger phrase must fire the workflow');
+  eq(ran, ['a verse about strength'], 'workflow ran on trigger');
+
+  const notFired = await tryAgent('good morning to everyone at church', EMAIL, profile, run);
+  eq(notFired, null, 'longer message is not the trigger');
+});
+
+Deno.test('v25: mission lifecycle — start, next, done, complete into wins', async () => {
+  const { run } = stubRunner();
+  let profile: Profile = {};
+
+  const started = await tryAgent('start a mission to start a business', EMAIL, profile, run);
+  if (!started?.profile?.mission) throw new Error('mission not stored');
+  eq(started.profile.mission.steps.length, 6, 'business step bank used');
+  eq(started.profile.mission.done, 0, 'starts at step 1');
+  profile = started.profile;
+
+  const next = await tryAgent("what's next", EMAIL, profile, run);
+  if (!next?.reply.includes('1 of 6')) throw new Error("what's next must show the current step");
+
+  const advanced = await tryAgent('done', EMAIL, profile, run);
+  eq(advanced?.profile?.mission?.done, 1, '"done" advances the mission');
+  profile = advanced!.profile!;
+
+  const second = await tryAgent('start a mission to get fit', EMAIL, profile, run);
+  if (!second?.reply.includes('already have an active mission')) throw new Error('one mission at a time');
+
+  // Finish the remaining steps; completion moves the goal to wins.
+  for (let i = 0; i < 4; i++) profile = (await tryAgent('done', EMAIL, profile, run))!.profile!;
+  const finished = await tryAgent('done', EMAIL, profile, run);
+  if (!finished?.reply.includes('MISSION COMPLETE')) throw new Error('completion must celebrate');
+  eq(finished?.profile?.mission, undefined, 'mission cleared');
+  eq(finished?.profile?.wins, ['start a business'], 'goal moved to wins');
+});
+
+Deno.test('v25: bare "done" and mission talk stay untouched without a mission', async () => {
+  const { run } = stubRunner();
+  eq(await tryAgent('done', EMAIL, {}, run), null, 'bare done falls through');
+  eq(await tryAgent("what's next", EMAIL, {}, run), null, 'bare next falls through');
+  const status = await tryAgent('mission status', EMAIL, {}, run);
+  if (!status?.reply.includes('No active mission')) throw new Error('status without mission explains');
+});
+
+Deno.test('v25: anonymous users are pointed at sign-in, chat left alone', async () => {
+  const { run } = stubRunner();
+  const asked = await tryAgent('create a workflow called morning: a verse then encourage me', '', {}, run);
+  if (!asked?.reply.includes('signed in')) throw new Error('agent ask must point at sign-in');
+  eq(await tryAgent('good morning', '', {}, run), null, 'plain chat untouched');
+  eq(await tryAgent('i want to start a business', '', {}, run), null, 'goal talk untouched');
+});
+
+Deno.test('v25: stepsForGoal picks the domain bank or the generic scaffold', () => {
+  eq(stepsForGoal('start a business').length, 6, 'business lane');
+  eq(stepsForGoal('learn to juggle flaming pins')[0].includes('done'), true, 'generic scaffold defines done');
 });

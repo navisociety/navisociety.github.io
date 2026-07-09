@@ -45,7 +45,21 @@ export type Profile = {
   // v23: dated life events ("my exam is on friday"), managed by life.ts.
   // NAVI asks how it went once the date has passed.
   events?: LifeEvent[];
+  // v25: agentic workflows — saved multi-step routines run on command or when
+  // their trigger phrase is spoken. Managed by agent.ts.
+  workflows?: Workflow[];
+  // v25: the active mission — one goal decomposed into steps that NAVI walks
+  // the user through across sessions. Managed by agent.ts.
+  mission?: Mission;
 };
+
+// v25: one saved workflow. `steps` are ordinary asks run through the full
+// engine pipeline in order; `trigger` is an exact phrase that auto-runs it.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string };
+
+// v25: the active mission. `done` counts completed steps, so the current step
+// is steps[done]. Completing the last step moves `goal` to the wins list.
+export type Mission = { goal: string; steps: string[]; done: number; created: string };
 
 // v23: one life event. `date` is an ISO date (yyyy-mm-dd) in SA time.
 export type LifeEvent = { text: string; date: string };
@@ -838,6 +852,8 @@ export function answerProfileQuestion(message: string, profile: Profile): string
     if (profile.likes?.length) bits.push(`you love ${profile.likes.join(', ')}`);
     if (profile.dislikes?.length) bits.push(`you can't stand ${profile.dislikes.join(', ')}`);
     if (profile.wins?.length) bits.push(`you've already won at ${profile.wins.join('; ')}`);
+    if (profile.mission) bits.push(`you're on a mission to ${profile.mission.goal} (step ${profile.mission.done + 1} of ${profile.mission.steps.length})`);
+    if (profile.workflows?.length) bits.push(`you've saved ${profile.workflows.length} workflow${profile.workflows.length === 1 ? '' : 's'} with me (${profile.workflows.map(w => w.name).join(', ')})`);
     for (const f of profile.facts ?? []) bits.push(toSecondPerson(f));
     if (!bits.length) {
       return "Not much yet — this conversation is still young. Tell me your name, or say \"remember that…\" and I'll hold onto whatever matters.";

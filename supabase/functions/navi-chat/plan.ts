@@ -164,13 +164,22 @@ const CLOSERS = [
   'Read it once, then close it and go do step 1. Plans reward starters.',
 ];
 
+/**
+ * The raw step bank for a goal — domain-aware when the goal matches one of
+ * the known lanes, first-principles scaffold otherwise. v25: also feeds
+ * agent.ts missions, which track these steps one at a time to completion.
+ */
+export function stepsForGoal(goal: string): string[] {
+  const domain = DOMAINS.find(d => d.rx.test(goal));
+  return domain ? domain.steps : GENERIC_STEPS(goal);
+}
+
 /** A numbered, domain-aware action plan for an explicit goal ask, or ''. */
 export function tryPlan(message: string): string {
   const goal = parsePlanGoal(message);
   if (!goal) return '';
 
-  const domain = DOMAINS.find(d => d.rx.test(goal));
-  const steps = domain ? domain.steps : GENERIC_STEPS(goal);
+  const steps = stepsForGoal(goal);
   const numbered = steps.map((s, i) => `${i + 1}. ${s}`).join('\n\n');
   const closer = CLOSERS[message.trim().length % CLOSERS.length];
   // "plan to start a business" but "plan for investing" / "plan for my first EP".

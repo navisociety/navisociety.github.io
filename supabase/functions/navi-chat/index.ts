@@ -80,6 +80,7 @@ import { tryMemorize } from './memorize.ts';
 import { normalizeMessage } from './normalize.ts';
 import { expandFollowUp } from './followup.ts';
 import { splitIntents } from './execute.ts';
+import { tryAgent } from './agent.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4246,6 +4247,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // v18: load this user's durable memory (empty for anonymous users).
     const stored: Profile = email ? await loadStoredProfile(email) : {};
+
+    // v25: agentic workflows — named multi-step routines (create/run/list/
+    // delete, plus trigger phrases that auto-run them) and missions (a goal
+    // decomposed into tracked steps, advanced with "done", finished into the
+    // wins list). Every workflow step executes through answerIntent — the same
+    // engines a normal message runs. MUST run before the multi-intent split:
+    // a creation ask carries "then" between its steps and would be torn apart.
+    {
+      const agentTurn = await tryAgent(message, email, stored, (part, prof) =>
+        answerIntent(part, email, prof));
+      if (agentTurn) {
+        if (email && agentTurn.profile) await saveStoredProfile(email, agentTurn.profile);
+        return new Response(JSON.stringify({ response: agentTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     // v24: multi-intent execution — a message carrying two or three distinct
     // asks ("remind me to call mom tomorrow and give me a verse about hope")
