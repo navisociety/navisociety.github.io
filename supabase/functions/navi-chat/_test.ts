@@ -53,6 +53,7 @@ import {
 } from './agent.ts';
 import { tryHabit } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
+import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -1649,4 +1650,119 @@ Deno.test('v27: buildBriefing compiles mission, habits, reminders, events, and w
   if (!empty.includes('MISSION — none active')) throw new Error('empty profile still briefs honestly');
   eq(tryBriefing('brief me', '', {})?.reply.includes('signed in'), true, 'anonymous is asked to sign in');
   eq(tryBriefing('tell me about grace', EMAIL, {}), null, 'ordinary asks pass through');
+});
+
+// ── v28: the weekly review ───────────────────────────────────────────────────
+
+Deno.test('v28: isReviewAsk hits the review forms and nothing else', () => {
+  for (const yes of ['review my week', 'weekly review', 'run my weekly review', 'how was my week', 'how did my week go', 'Navi, review my week!', 'give me the week in review']) {
+    if (!isReviewAsk(yes)) throw new Error('should be a review ask: ' + yes);
+  }
+  for (const no of ['review my essay', 'how was my day', 'review', 'can you review this verse for me', 'my week was rough', 'brief me']) {
+    if (isReviewAsk(no)) throw new Error('should NOT be a review ask: ' + no);
+  }
+});
+
+Deno.test('v28: the first review sets the baseline and says so', () => {
+  const today = '2026-07-09';
+  const profile: Profile = {
+    name: 'Dian',
+    habits: [{ name: 'pray', created: '2026-07-01', lastDone: today, streak: 4, best: 7, total: 20 }],
+    wins: ['finished the site'],
+  };
+  const { reply, profile: next } = buildReview(profile, today);
+  if (!reply.includes('first weekly review') || !reply.includes('Baseline set')) throw new Error('first review must announce the baseline:\n' + reply);
+  if (!reply.includes('pray: 4-day streak')) throw new Error('first review still shows current streaks:\n' + reply);
+  eq(next.review?.date, today, 'snapshot stamped');
+  eq(next.review?.habitTotals, { pray: 20 }, 'habit totals captured');
+  eq(next.review?.wins, ['finished the site'], 'wins list captured');
+});
+
+Deno.test('v28: buildReview reports habit deltas, mission velocity, wins earned, reminders cleared', () => {
+  const today = '2026-07-09';
+  const profile: Profile = {
+    mission: { goal: 'launch my ep', steps: ['s1', 's2', 's3', 's4'], done: 3, created: 'now' },
+    habits: [
+      { name: 'pray', created: '2026-06-01', lastDone: today, streak: 5, best: 7, total: 25 },
+      { name: 'run', created: '2026-07-05', lastDone: today, streak: 2, best: 2, total: 2 },
+    ],
+    wins: ['finished the site', 'paid off the card'],
+    reminders: [{ text: 'call mom', created: 'now' }],
+    review: {
+      date: '2026-07-02',
+      habitTotals: { pray: 20, read: 9 },
+      wins: ['finished the site'],
+      reminders: 3,
+      missionGoal: 'launch my ep',
+      missionDone: 1,
+    },
+  };
+  const { reply, profile: next } = buildReview(profile, today);
+  for (const bit of [
+    'since 2026-07-02',
+    'moved 2 steps — now 3 of 4', 's4',
+    'pray: kept 5 days since last review',
+    'run: new since last review',
+    'Dropped since last review: read',
+    'WINS THIS WEEK: paid off the card',
+    'down from 3 to 1 open',
+  ]) {
+    if (!reply.includes(bit)) throw new Error(`review missing "${bit}":\n` + reply);
+  }
+  eq(next.review?.date, today, 'snapshot re-stamped');
+  eq(next.review?.missionDone, 3, 'mission position captured for next week');
+  eq(next.review?.habitTotals, { pray: 25, run: 2 }, 'dropped habit leaves the snapshot');
+});
+
+Deno.test('v28: a finished mission is the headline, and mood shift compares the weeks', () => {
+  const today = '2026-07-15';
+  const finished: Profile = {
+    wins: ['get fit'],
+    review: { date: '2026-07-08', wins: [], reminders: 0, missionGoal: 'get fit', missionDone: 2 },
+  };
+  const r1 = buildReview(finished, today).reply;
+  if (!r1.includes('FINISHED "get fit"')) throw new Error('completed mission must headline:\n' + r1);
+
+  const lighter: Profile = {
+    moods: [
+      { mood: 'low', date: '2026-07-03' }, { mood: 'stressed', date: '2026-07-05' }, // last week
+      { mood: 'good', date: '2026-07-12' }, { mood: 'good', date: '2026-07-14' },   // this week
+    ],
+  };
+  const r2 = buildReview(lighter, today).reply;
+  if (!r2.includes('a good week') || !r2.includes('Lighter than last week')) throw new Error('mood shift must compare weeks:\n' + r2);
+
+  const heavier: Profile = {
+    moods: [
+      { mood: 'good', date: '2026-07-04' },
+      { mood: 'low', date: '2026-07-13' }, { mood: 'stressed', date: '2026-07-14' },
+    ],
+  };
+  if (!buildReview(heavier, today).reply.includes('Heavier than last week')) throw new Error('heavier shift must be named');
+});
+
+Deno.test('v28: tryReview signs in the anonymous and leaves ordinary chat alone', () => {
+  eq(tryReview('review my week', '', {})?.reply.includes('signed in'), true, 'anonymous is asked to sign in');
+  eq(tryReview('my week was really hard', EMAIL, {}), null, 'venting about the week passes through');
+  const out = tryReview('review my week', EMAIL, {});
+  if (!out?.reply.includes('first weekly review')) throw new Error('empty profile still gets an honest first review');
+  eq(out.profile?.review?.date !== undefined, true, 'even the empty review stamps the snapshot');
+});
+
+Deno.test('v28: reviewOffer fires after 7 days, once per day, and stays quiet with nothing to review', () => {
+  // After a past review: offer, stamp, never twice the same day.
+  const reviewed: Profile = { habits: [{ name: 'pray', created: '2026-06-20', streak: 1, best: 1, total: 5 }], review: { date: '2026-07-01', habitTotals: { pray: 3 }, wins: [], reminders: 0 } };
+  const offer = reviewOffer(reviewed, '2026-07-09');
+  if (!offer || !offer.note.includes('review my week')) throw new Error('7+ days since review must offer');
+  eq(offer.profile.review?.offered, '2026-07-09', 'offer stamped');
+  eq(offer.profile.review?.date, '2026-07-01', 'stamp must not touch the review date');
+  eq(reviewOffer(offer.profile, '2026-07-09'), null, 'never twice the same day');
+  eq(reviewOffer(reviewed, '2026-07-05'), null, 'a recent review stays quiet');
+
+  // Never reviewed: the oldest tracked history anchors the first offer.
+  const fresh: Profile = { habits: [{ name: 'pray', created: '2026-07-01', streak: 4, best: 4, total: 4 }] };
+  const first = reviewOffer(fresh, '2026-07-09');
+  if (!first || !first.note.includes('week of history')) throw new Error('a week of history must earn the first offer');
+  eq(reviewOffer(fresh, '2026-07-05'), null, 'too little history stays quiet');
+  eq(reviewOffer({}, '2026-07-09'), null, 'nothing tracked, nothing offered');
 });

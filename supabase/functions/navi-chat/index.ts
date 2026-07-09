@@ -83,6 +83,7 @@ import { splitIntents } from './execute.ts';
 import { tryAgent, runDailyWorkflows, missionNudge } from './agent.ts';
 import { tryHabit, isHabitAsk } from './habit.ts';
 import { tryBriefing } from './brief.ts';
+import { tryReview, reviewOffer } from './review.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4284,6 +4285,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
+    // v28: weekly review — "review my week" measures habits kept, mission
+    // velocity, mood shift, wins earned, and reminders cleared against the
+    // last review's snapshot, then re-stamps it. Saved immediately: the
+    // snapshot IS the feature's memory.
+    {
+      const rev = tryReview(message, email, stored);
+      if (rev) {
+        if (email && rev.profile) await saveStoredProfile(email, rev.profile);
+        return new Response(JSON.stringify({ response: rev.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // v24: multi-intent execution — a message carrying two or three distinct
     // asks ("remind me to call mom tomorrow and give me a verse about hope")
     // is split and EVERY part is executed through the engines, not just the
@@ -4575,6 +4591,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         if (nudge) {
           response = `${response}\n\n${nudge.note}`;
           Object.assign(stored, nudge.profile);
+        }
+
+        // v28: once the last weekly review (or the first week of tracked
+        // history) is 7+ days old, offer "review my week" — one note per day,
+        // stamped like the mission nudge.
+        const offer = reviewOffer(stored, todayISO);
+        if (offer) {
+          response = `${response}\n\n${offer.note}`;
+          Object.assign(stored, offer.profile);
         }
       }
     }

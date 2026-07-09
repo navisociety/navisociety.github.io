@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-09, at **v27** (commit `7df4bd8`), live and verified.
+Last updated: 2026-07-09, at **v28** (weekly review), live and verified.
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -33,13 +33,16 @@ rawMessage
                                    "then" and would be torn apart) (agent.ts)
   → tryBriefing()             v27  "brief me" status report — AFTER tryAgent so
                                    "mission status" keeps its answer (brief.ts)
+  → tryReview()               v28  "review my week" — deltas vs. the snapshot,
+                                   then re-stamps it; saves immediately (review.ts)
   → splitIntents()            v24  multi-intent execution (execute.ts)
   → reminders/habits/memory/engines/nodes/web fallback ...
   → session-start appends     (first message of a session, signed-in, never on
                                a crisis reply): event follow-ups → due
                                reminders → returning greeting → daily
                                workflows (runDailyWorkflows) → mission nudge
-                               (missionNudge)                       ← v27
+                               (missionNudge) → weekly-review offer
+                               (reviewOffer)                    ← v27/v28
   → end-of-request save       mergeProfiles + mood journal + topics → upsert
 ```
 
@@ -78,6 +81,19 @@ changes survive).
 profile: mission + current step, habit streaks (reuses habit.ts `streakLine`),
 reminders due now, life events within 7 days, mood trend, last 3 wins.
 Signed-in only; anonymous asks get a sign-in prompt.
+
+### review.ts — the weekly review (v28)
+`review my week` / `weekly review` / `how was my week` → week-over-week deltas
+against the `ReviewSnapshot` stored on the profile (`review` field, memory.ts):
+habits kept (lifetime totals vs. snapshot, new/dropped habits named), mission
+velocity (steps moved; a finished mission is the headline), mood shift (this
+week's dated journal vs. last week's — needs no snapshot), wins earned (exact —
+the snapshot keeps the wins list), reminders cleared (count vs. snapshot).
+The FIRST review sets the baseline and says so; every review re-stamps the
+snapshot (saved immediately at the call site). `reviewOffer` appends one
+session-start note per day (`offered` stamp, missionNudge-style) once the last
+review — or, before any review, the oldest tracked history (habit/mission
+created, first mood) — is 7+ days old, and only when there's data to review.
 
 ### The supporting organs the agent layer composes
 - `execute.ts` (v24) multi-intent split · `plan.ts` (v21) goal step banks ·
@@ -155,10 +171,9 @@ parameters, edit plans mid-flight, self-report (briefing), self-nudge.
 The theme: **NAVI moves from answering to running things, without ever losing
 determinism or safety.** Next natural rungs, roughly in order of value:
 
-1. **Weekly review** — a Sunday/on-demand "review my week": week-over-week
-   habit deltas, mood shift, wins earned, mission velocity, reminders cleared.
-   All data already exists (moods have dates, habits have totals, wins list).
-   Model it on brief.ts; add `lastReview` stamp for a session-start offer.
+1. ~~**Weekly review**~~ — SHIPPED in v28 (review.ts). Week-over-week habit
+   deltas, mood shift, wins earned, mission velocity, reminders cleared, plus
+   the 7-day session-start offer.
 2. **Conditional workflow steps** — "if I haven't logged my prayer habit,
    remind me" → a small `when <condition>:` step prefix evaluated against the
    profile before running the step. Keep conditions to a closed vocabulary
@@ -194,7 +209,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v25 | `371f930` | workflows (create/run/list/delete/triggers), missions |
 | v26 | `b3ee78f` | habit streaks, daily auto-run workflows, mood journal |
 | v27 | `7df4bd8` | topic * slots, mission skip/add + idle nudge, daily briefing |
+| v28 | (see git) | weekly review: deltas vs. snapshot + 7-day session-start offer |
 
-Test counts: 121 → 132 → 139 → **147**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → **153**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

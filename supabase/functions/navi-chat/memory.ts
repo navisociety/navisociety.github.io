@@ -56,6 +56,9 @@ export type Profile = {
   // v26: mood journal — one entry per SA day (last signal of the day wins),
   // newest last, capped, so "how have i been feeling lately?" has real data.
   moods?: MoodEntry[];
+  // v28: the weekly review snapshot — counters captured when "review my week"
+  // last ran, so the next review reports honest deltas. Managed by review.ts.
+  review?: ReviewSnapshot;
 };
 
 // v25: one saved workflow. `steps` are ordinary asks run through the full
@@ -70,6 +73,20 @@ export type Habit = { name: string; created: string; lastDone?: string; streak: 
 
 // v26: one mood journal entry — a canonical detectMood label on an SA date.
 export type MoodEntry = { mood: string; date: string };
+
+// v28: what the world looked like at the last weekly review. Every field is
+// a small counter or capped copy, so the row stays tiny. `offered` (yyyy-mm-dd)
+// stops the session-start "review my week?" offer repeating within a day;
+// `date` is absent until the first review actually runs.
+export type ReviewSnapshot = {
+  date?: string;                        // yyyy-mm-dd (SA) of the last review
+  habitTotals?: Record<string, number>; // habit name → lifetime total then
+  wins?: string[];                      // the wins list then (already capped)
+  reminders?: number;                   // open reminders then
+  missionGoal?: string;                 // active mission then, if any
+  missionDone?: number;                 // …and how many steps were done
+  offered?: string;                     // yyyy-mm-dd of the last offer note
+};
 
 // v25: the active mission. `done` counts completed steps, so the current step
 // is steps[done]. Completing the last step moves `goal` to the wins list.
