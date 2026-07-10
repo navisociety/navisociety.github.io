@@ -317,6 +317,15 @@ const WF_STEP_REMOVE_RX = new RegExp(
   `^(?:please )?(?:remove|delete|drop|cut|take) step (\\d{1,2}) (?:from|of|out of|in)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
 );
 
+// v32: the editing line completed — reorder steps and rename the routine.
+const WF_STEP_MOVE_RX = new RegExp(
+  `^(?:please )?move step (\\d{1,2}) (up|down|to the top|to the front|to the bottom|to the end) (?:in|of|on)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+
+const WF_RENAME_RX = new RegExp(
+  `^(?:please )?rename(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:to|as) ["']?(${NAME_CHARS}?)["']?$`,
+);
+
 /** The workflow name from a "show my X workflow" ask, or null. */
 export function parseWorkflowShow(message: string): string | null {
   const t = tidy(message);
@@ -352,6 +361,34 @@ export function parseWorkflowStepEdit(message: string): WorkflowStepEdit | null 
   m = t.match(WF_STEP_REMOVE_RX);
   if (m) return { kind: 'remove', name: m[2].trim(), n: parseInt(m[1], 10) };
   return null;
+}
+
+export type WorkflowStepMove = { name: string; n: number; dir: 'up' | 'down' | 'top' | 'bottom' };
+
+/** A "move step N up/down/to the top in my X workflow" ask, or null. */
+export function parseWorkflowStepMove(message: string): WorkflowStepMove | null {
+  const t = tidy(message);
+  if (!t || t.length > 100) return null;
+  const m = t.match(WF_STEP_MOVE_RX);
+  if (!m) return null;
+  const word = m[2];
+  const dir = word === 'up' ? 'up'
+    : word === 'down' ? 'down'
+    : word === 'to the top' || word === 'to the front' ? 'top'
+    : 'bottom';
+  return { name: m[3].trim(), n: parseInt(m[1], 10), dir };
+}
+
+/** { from, to } from a "rename my X workflow to Y" ask, or null. */
+export function parseWorkflowRename(message: string): { from: string; to: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 100) return null;
+  const m = t.match(WF_RENAME_RX);
+  if (!m) return null;
+  const from = m[1].trim();
+  const to = m[2].trim();
+  if (!from || !to || /^(?:new|a|the|me|my)$/.test(to)) return null;
+  return { from, to };
 }
 
 // The one gate every step entering a workflow passes (creation shares the meta
@@ -560,6 +597,8 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowDelete(message) !== null ||
     parseWorkflowShow(message) !== null ||
     parseWorkflowStepEdit(message) !== null ||
+    parseWorkflowStepMove(message) !== null ||
+    parseWorkflowRename(message) !== null ||
     parseTriggerSet(message) !== null ||
     parseDailySet(message) !== null ||
     parseMissionStart(message) !== null ||
@@ -1017,6 +1056,62 @@ export async function tryAgent(
     const next = { ...wf, steps };
     return {
       reply: `Step ${edit.n} removed — "${wf.name}" is now ${steps.length} step${steps.length === 1 ? '' : 's'}:\n${stepLines(next)}`,
+      profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+    };
+  }
+
+  // ── v32: step reordering & workflow renaming — the editing line complete ──
+  const moved = parseWorkflowStepMove(message);
+  if (moved) {
+    const idx = workflows.findIndex((w) => w.name === moved.name);
+    if (idx < 0) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${moved.name}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${moved.name}" to reorder. Create it first:\ncreate a workflow called ${moved.name}: …` };
+    }
+    const wf = workflows[idx];
+    if (moved.n < 1 || moved.n > wf.steps.length) {
+      return { reply: `"${wf.name}" only has ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}\n\nPick a number on that list.` };
+    }
+    const from = moved.n - 1;
+    const to = moved.dir === 'up' ? from - 1
+      : moved.dir === 'down' ? from + 1
+      : moved.dir === 'top' ? 0
+      : wf.steps.length - 1;
+    if (to === from || to < 0 || to > wf.steps.length - 1) {
+      const where = moved.dir === 'up' || moved.dir === 'top' ? 'already at the top' : 'already at the bottom';
+      return { reply: `Step ${moved.n} of "${wf.name}" is ${where}:\n${stepLines(wf)}` };
+    }
+    const steps = [...wf.steps];
+    const [s] = steps.splice(from, 1);
+    steps.splice(to, 0, s);
+    const next = { ...wf, steps };
+    return {
+      reply: `Moved — "${wf.name}" now runs:\n${stepLines(next)}`,
+      profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+    };
+  }
+
+  const renamed = parseWorkflowRename(message);
+  if (renamed) {
+    const idx = workflows.findIndex((w) => w.name === renamed.from);
+    if (idx < 0) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${renamed.from}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${renamed.from}" to rename.` };
+    }
+    if (renamed.to === renamed.from) {
+      return { reply: `"${renamed.from}" is already its name — nothing to change.` };
+    }
+    if (workflows.some((w) => w.name === renamed.to)) {
+      return { reply: `You already have a workflow called "${renamed.to}" — two routines can't share a name. Pick another, or delete that one first.` };
+    }
+    const wf = workflows[idx];
+    const next = { ...wf, name: renamed.to };
+    const trig = wf.trigger ? ` Its trigger ("${wf.trigger}") still works.` : '';
+    const daily = wf.daily ? ' It still runs daily.' : '';
+    return {
+      reply: `Done — "${renamed.from}" is now "${renamed.to}".${trig}${daily} Say "run my ${renamed.to} workflow" to use it.`,
       profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
     };
   }

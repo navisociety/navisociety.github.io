@@ -87,6 +87,7 @@ import { tryBriefing } from './brief.ts';
 import { tryReview, reviewOffer } from './review.ts';
 import { tryVision } from './vision.ts';
 import { tryChats } from './chats.ts';
+import { tryMail } from './mail.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4186,6 +4187,12 @@ async function answerIntent(
   const chats = await tryChats(part, email, profile);
   if (chats) return { reply: chats.reply, profile: chats.profile };
 
+  // v32: the email bridge — "draft an email to me about *" works as a
+  // workflow step (the topic slot fills the subject); a send offer's
+  // pending stamp rides the returned profile.
+  const mail = await tryMail(part, email, profile);
+  if (mail) return { reply: mail.reply, profile: mail.profile };
+
   const bible = await answerFromBible(part);
   if (bible) return { reply: bible };
   const devotion = await tryDevotion(part);
@@ -4427,6 +4434,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (chatsTurn) {
         if (email && chatsTurn.profile) await saveStoredProfile(email, chatsTurn.profile);
         return new Response(JSON.stringify({ response: chatsTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // v32: the email bridge — NAVI executes REAL tasks: "draft an email to me
+    // about …", "list my email drafts", "send draft 2" (two-step confirm —
+    // the pending stamp rides the returned profile, persisted immediately).
+    // AFTER tryChats so a pending chat cleanup always outranks a pending
+    // send on a bare "yes" — deterministic order, never a race.
+    {
+      const mailTurn = await tryMail(message, email, stored);
+      if (mailTurn) {
+        if (email && mailTurn.profile) await saveStoredProfile(email, mailTurn.profile);
+        return new Response(JSON.stringify({ response: mailTurn.reply }), {
           status: 200,
           headers: { ...cors, "Content-Type": "application/json" },
         });

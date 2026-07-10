@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-10, at **v31** (the stewardship round), live and verified.
+Last updated: 2026-07-10, at **v32** (the real-tasks round), live and verified.
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -62,6 +62,13 @@ creation/deletion — CREATE_NAMED_FIRST_RX would read "add a step to my study
 workflow: x" as a workflow named "step to my study", and DELETE_RX would read
 "remove step 2 from my study workflow" as one named "step 2 from my study".
 
+v32 additions: tryMail right after tryChats in BOTH the main path and
+answerIntent — AFTER tryChats on purpose, so a bare "yes" with two pending
+offers is always consumed by the chat cleanup first (deterministic order).
+Its send stamp (Profile.mailSend) rides the returned profile, saved
+immediately on the main path. Step-move and rename live inside tryAgent in
+the same before-creation/deletion cluster as the v31 editing commands.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -72,7 +79,37 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v31)
+### agent.ts — workflows & missions (v25→v32)
+
+**v32 — the real-tasks round** (NAVI's first action that leaves the platform):
+- **Email bridge** (mail.ts, NEW — the third vision.ts/chats.ts sibling, and
+  the first whose action can't be undone): "draft an email to me about …"
+  (optional "saying …" body; a subject-only ask gets a simple deterministic
+  body signed with the profile name), "list my email drafts" (numbered,
+  newest first — the Email tool's order), "delete email draft N", and
+  "send draft N" — a TWO-STEP move exactly like the v31 chat cleanup: the
+  offer (recipient + subject read back) is stamped on `Profile.mailSend`,
+  a bare "yes" only counts fresh (10 min), the draft row is RE-READ at
+  execute time (edited/deleted drafts are never mis-sent), and the send goes
+  through the user's OWN Gmail (navi_gmail_tokens row + refresh, same OAuth
+  shape as the navi-email function; GOOGLE_CLIENT_ID/SECRET are project
+  secrets all functions see). Honest failure replies at every stage:
+  unreachable keeps the stamp for a retry, "Gmail isn't connected" points at
+  the Email tool's Connect button, a vanished draft sends NOTHING and says
+  so. Drafts shelf capped at 20 from chat. The verb "send an email to …"
+  drafts AND stamps the offer in one turn — still never sends without the
+  yes. IMPORTANT ORDER: tryMail is wired right after tryChats in BOTH paths,
+  so on a bare "yes" a pending chat cleanup always outranks a pending send —
+  deterministic, never a race. ALSO KNOW: App.tsx (locked) intercepts
+  signed-in messages carrying a literal address + intent verb and creates
+  the draft client-side — the bridge is the address-free + server-side half
+  ("send draft 2", "email me about …", and every workflow step, since
+  answerIntent never passes through the client).
+- **Step reordering + workflow renaming** (agent.ts — roadmap #14 done):
+  "move step N up/down / to the top / to the end in my X workflow" and
+  "rename my X workflow to Y" (trigger + daily survive; dedupe against
+  existing names; already-at-the-top/bottom answered honestly). Parsed in
+  the same before-creation/deletion cluster as the v31 editing commands.
 
 **v31 — the stewardship round** (NAVI curates its own surfaces):
 - **Chat-sessions bridge** (chats.ts, NEW — vision.ts's sibling): "how many
@@ -304,20 +341,36 @@ determinism or safety.** Next natural rungs, roughly in order of value:
 
 With the v29/v30 backlog cleared, the next rungs for the execution line:
 
-11. **More cross-platform bridges** — PARTLY SHIPPED in v31: the chat-sessions
-    bridge (chats.ts) joins the Vision Board. Still open: Create-tool
-    creations, Share drafts. Each new bridge is a vision.ts/chats.ts sibling;
-    keep photos/files tool-managed. The chats bridge adds a new reusable
-    pattern to the family: the TWO-STEP CONFIRM for destructive ops (offer
-    stamp on the profile + fresh-bare-yes window + re-count at execute).
+11. **More cross-platform bridges** — the Email bridge (mail.ts) SHIPPED in
+    v32 — NAVI's first real-world action (drafts + Gmail sends behind the
+    two-step confirm). Still open: Create-tool creations, Share drafts (both
+    are localStorage stand-ins today — no tables to bridge until they get a
+    backend). Each new bridge is a vision.ts/chats.ts/mail.ts sibling; keep
+    photos/files tool-managed. The reusable pattern for anything
+    destructive/irreversible: TWO-STEP CONFIRM (offer stamp on the profile +
+    fresh-bare-yes window + re-read at execute), and each new stamp must slot
+    into the pipeline order so only ONE offer can consume a bare "yes".
 12. **Board-aware conditions** — "when my vision board is empty: …" needs an
     async evalCondition seam (today it's sync); only worth it with a second
     async condition source.
 13. ~~**Owner analytics on gaps**~~ — SHIPPED in v31 (tryGapsManage: dismiss
     gap N / clear my learning list, owner-only).
-14. **Workflow reordering / renaming** — step editing shipped in v31; "move
-    step 3 up" and "rename my morning workflow to sunrise" are the natural
-    completions if editing sees real use.
+14. ~~**Workflow reordering / renaming**~~ — SHIPPED in v32 (move step N
+    up/down/top/end; rename with trigger/daily surviving).
+
+With v32 the execution line has its first real-world actuator. Next rungs:
+
+15. **Email replies from context** — "reply to the last email from X" needs
+    an inbox read (Gmail list + get, token already available in mail.ts);
+    draft the reply as a navi_emails row and reuse the same send confirm.
+16. **Scheduled sends** — "send draft 2 tomorrow morning" could ride the
+    session-start append (NAVI only speaks when spoken to — the send fires
+    on the first chat after the time passes, with the confirm at schedule
+    time). Respect the anti-goal: no cron, no server push.
+17. **Workflow steps that send** — today a workflow step can DRAFT
+    ("draft an email to me about *"); letting a step send would bypass the
+    confirm — don't. If Dian wants it, the confirm must move to run time
+    ("this run wants to send 1 email — yes?").
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -334,8 +387,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v28 | `9568807` | weekly review: deltas vs. snapshot + 7-day session-start offer |
 | v29 | `d9e159a` | executive round: conditional steps, open topic triggers, read-only mission step, mission queue, habit sparklines |
 | v30 | `d17c68d` | cross-platform round: Vision Board bridge (vision.ts), condition negations + streak thresholds, queue editing, reminder escalation, self-improvement gaps report |
-| v31 | (see git) | stewardship round: chat-sessions bridge with two-step confirm (chats.ts), gaps curation (dismiss/clear), workflow show + step editing |
+| v31 | `9f2ba3b` | stewardship round: chat-sessions bridge with two-step confirm (chats.ts), gaps curation (dismiss/clear), workflow show + step editing |
+| v32 | (see git) | real-tasks round: email bridge (mail.ts — draft/list/delete + REAL Gmail send behind the two-step confirm), workflow step reordering + renaming |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → **178**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → **185**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

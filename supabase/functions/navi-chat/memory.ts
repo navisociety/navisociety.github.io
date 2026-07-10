@@ -66,6 +66,10 @@ export type Profile = {
   // old chats and asks; consumed, cancelled, or replaced by the next chat
   // command, and expires if left hanging. Managed by chats.ts.
   chatCleanup?: ChatCleanup;
+  // v32: a pending email-send confirmation — stamped when NAVI reads a draft
+  // back and asks; consumed on yes (the draft is re-read at execute time),
+  // cancelled on no, refused stale. Managed by mail.ts.
+  mailSend?: MailSend;
 };
 
 // v31: one pending chat cleanup. `cutoff` is the ISO timestamp a session's
@@ -73,6 +77,12 @@ export type Profile = {
 // when it asked (re-counted at execute time, so the reply stays honest);
 // `asked` is when the offer was made — a bare "yes" only counts while fresh.
 export type ChatCleanup = { cutoff: string; count: number; asked: string };
+
+// v32: one pending email send. `id` is the navi_emails row NAVI offered to
+// send (re-read at execute time so an edited/deleted draft is never mis-sent);
+// `to`/`subject` echo what was offered; `asked` is when — a bare "yes" only
+// counts while fresh.
+export type MailSend = { id: string; to: string; subject: string; asked: string };
 
 // v25: one saved workflow. `steps` are ordinary asks run through the full
 // engine pipeline in order; `trigger` is an exact phrase that auto-runs it.

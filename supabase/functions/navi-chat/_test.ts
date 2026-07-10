@@ -51,13 +51,14 @@ import {
   parseWorkflowCreate, parseWorkflowRun, parseWorkflowDelete,
   parseTriggerSet, parseMissionStart, parseDailySet, tryAgent, runDailyWorkflows,
   missionNudge, evalCondition, parseConditionStep, parseMissionQueue,
-  parseWorkflowShow, parseWorkflowStepEdit,
+  parseWorkflowShow, parseWorkflowStepEdit, parseWorkflowStepMove, parseWorkflowRename,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
 import { parseCleanupAsk, isChatCountAsk, tryChats } from './chats.ts';
+import { parseMailDraft, isDraftListAsk, parseDraftDelete, parseDraftSend, tryMail } from './mail.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -2210,4 +2211,128 @@ Deno.test('v31: workflow editing — show, add, replace, remove, and every guard
   if (!anon?.reply.includes('signed in')) throw new Error('anonymous editing points at sign-in: ' + anon?.reply);
 
   eq(profile.workflows?.[0].steps, ['s1', 's2', 's3'], 'the original profile is never mutated');
+});
+
+// ── v32: the real-tasks round ────────────────────────────────────────────────
+
+Deno.test('v32: parseMailDraft reads draft asks and stays out of conversation', () => {
+  eq(parseMailDraft('draft an email to me about the studio schedule'),
+    { to: 'me', subject: 'the studio schedule', wantSend: false }, 'subject-only draft to me');
+  eq(parseMailDraft('draft an email to sam@studio.com about friday saying see you at 3'),
+    { to: 'sam@studio.com', subject: 'friday', body: 'see you at 3', wantSend: false }, 'recipient + body');
+  eq(parseMailDraft('send an email to me about payday that says the money landed'),
+    { to: 'me', subject: 'payday', body: 'the money landed', wantSend: true }, 'the send verb flags the offer');
+  eq(parseMailDraft('write me an email to myself regarding the invoice'),
+    { to: 'myself', subject: 'the invoice', wantSend: false }, 'write/regarding forms');
+  eq(parseMailDraft('draft a plan to win the week'), null, 'plans belong to plan.ts');
+  eq(parseMailDraft('i should email my landlord about the leak'), null, 'musings are not commands');
+  eq(parseMailDraft('draft an email to me about wanting to end my life'), null, 'crisis language never enters an envelope');
+});
+
+Deno.test('v32: mail list/delete/send parsers are anchored', () => {
+  eq(isDraftListAsk('list my email drafts'), true, 'the core list ask');
+  eq(isDraftListAsk('show me my email drafts'), true, 'show form');
+  eq(isDraftListAsk('what email drafts do i have'), true, 'question form');
+  eq(isDraftListAsk('list my drafts'), false, 'unqualified drafts stay conversation');
+  eq(isDraftListAsk('list my email addresses'), false, 'addresses are not drafts');
+  eq(parseDraftDelete('delete email draft 2'), 2, 'delete by number');
+  eq(parseDraftDelete('discard draft 1'), 1, 'discard form');
+  eq(parseDraftDelete('delete the draft dodger'), null, 'no number, no command');
+  eq(parseDraftSend('send draft 2'), 2, 'send by number');
+  eq(parseDraftSend('send email draft 12'), 12, 'send email-draft form');
+  eq(parseDraftSend('send my regards to broadway'), null, 'regards stay conversation');
+});
+
+Deno.test('v32: tryMail — bare yes/no is conversation unless a send is pending', async () => {
+  eq(await tryMail('yes', EMAIL, {}), null, 'bare yes with nothing pending');
+  eq(await tryMail('no', EMAIL, {}), null, 'bare no with nothing pending');
+  eq(await tryMail('what is 2+2', EMAIL, { mailSend: { id: 'x', to: 'a@b.co', subject: 's', asked: new Date().toISOString() } }), null, 'a pending offer never captures unrelated talk');
+  const anon = await tryMail('list my email drafts', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous mail points at sign-in: ' + anon?.reply);
+  const noPending = await tryMail('yes, send it', EMAIL, {});
+  if (!noPending?.reply.includes('no email waiting')) throw new Error('explicit confirm with nothing pending is redirected: ' + noPending?.reply);
+});
+
+Deno.test('v32: tryMail — cancel keeps the draft and clears the stamp; stale bare yes refuses', async () => {
+  const fresh: Profile = { mailSend: { id: 'd1', to: 'sam@studio.com', subject: 'friday', asked: new Date().toISOString() } };
+  const kept = await tryMail('no', EMAIL, fresh);
+  if (!kept?.reply.includes('Kept as a draft')) throw new Error('cancel keeps the draft: ' + kept?.reply);
+  eq(kept?.profile?.mailSend, undefined, 'cancel clears the stamp');
+
+  const stale: Profile = { mailSend: { id: 'd1', to: 'sam@studio.com', subject: 'friday', asked: '2026-07-01T00:00:00Z' } };
+  const refused = await tryMail('yes', EMAIL, stale);
+  if (!refused?.reply.includes('stale')) throw new Error('a stale offer refuses a bare yes: ' + refused?.reply);
+  eq(refused?.profile?.mailSend, undefined, 'the stale stamp is cleared');
+});
+
+Deno.test('v32: tryMail — offline, every DB-touching path fails HONESTLY', async () => {
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise this for real
+  const list = await tryMail('list my email drafts', EMAIL, {});
+  if (!list?.reply.includes("couldn't reach")) throw new Error('unreachable lists are honest: ' + list?.reply);
+  const draft = await tryMail('draft an email to me about the gig', EMAIL, {});
+  if (!draft?.reply.includes("couldn't reach")) throw new Error('unreachable drafts are honest: ' + draft?.reply);
+  const send = await tryMail('send draft 1', EMAIL, {});
+  if (!send?.reply.includes("couldn't reach")) throw new Error('unreachable send offers are honest: ' + send?.reply);
+  const fresh: Profile = { mailSend: { id: 'd1', to: 'sam@studio.com', subject: 'friday', asked: new Date().toISOString() } };
+  const confirmed = await tryMail('yes, send it', EMAIL, fresh);
+  if (!confirmed?.reply.includes("couldn't reach")) throw new Error('unreachable confirmed sends are honest: ' + confirmed?.reply);
+  eq(confirmed?.profile, undefined, 'the stamp survives an unreachable send, so a retry works');
+});
+
+Deno.test('v32: parseWorkflowStepMove / parseWorkflowRename read the reorder commands', () => {
+  eq(parseWorkflowStepMove('move step 3 up in my morning workflow'), { name: 'morning', n: 3, dir: 'up' }, 'up');
+  eq(parseWorkflowStepMove('move step 2 down in my morning routine'), { name: 'morning', n: 2, dir: 'down' }, 'down + routine');
+  eq(parseWorkflowStepMove('move step 3 to the top of my study workflow'), { name: 'study', n: 3, dir: 'top' }, 'to the top');
+  eq(parseWorkflowStepMove('move step 1 to the end of my study workflow'), { name: 'study', n: 1, dir: 'bottom' }, 'to the end');
+  eq(parseWorkflowStepMove('move the couch up to my bedroom'), null, 'furniture stays conversation');
+  eq(parseWorkflowRename('rename my morning workflow to sunrise'), { from: 'morning', to: 'sunrise' }, 'the core rename');
+  eq(parseWorkflowRename('rename the morning routine as dawn patrol'), { from: 'morning', to: 'dawn patrol' }, 'as + routine');
+  eq(parseWorkflowRename('rename my playlist to bangers'), null, 'playlists are not workflows');
+});
+
+Deno.test('v32: step moving and renaming — the guards hold', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    workflows: [
+      { name: 'morning', steps: ['s1', 's2', 's3'], created: 'now', trigger: 'good morning' },
+      { name: 'evening', steps: ['e1'], created: 'now' },
+    ],
+  };
+
+  const up = await tryAgent('move step 3 up in my morning workflow', EMAIL, profile, run);
+  eq(up?.profile?.workflows?.[0].steps, ['s1', 's3', 's2'], 'up swaps with the step above');
+
+  const toTop = await tryAgent('move step 3 to the top of my morning workflow', EMAIL, profile, run);
+  eq(toTop?.profile?.workflows?.[0].steps, ['s3', 's1', 's2'], 'to the top goes first');
+
+  const toEnd = await tryAgent('move step 1 to the end of my morning workflow', EMAIL, profile, run);
+  eq(toEnd?.profile?.workflows?.[0].steps, ['s2', 's3', 's1'], 'to the end goes last');
+
+  const stuck = await tryAgent('move step 1 up in my morning workflow', EMAIL, profile, run);
+  if (!stuck?.reply.includes('already at the top')) throw new Error('the top step cannot rise: ' + stuck?.reply);
+  eq(stuck?.profile, undefined, 'nothing changes when already there');
+
+  const range = await tryAgent('move step 9 up in my morning workflow', EMAIL, profile, run);
+  if (!range?.reply.includes('only has 3 steps')) throw new Error('out-of-range is honest: ' + range?.reply);
+
+  const renamed = await tryAgent('rename my morning workflow to sunrise', EMAIL, profile, run);
+  eq(renamed?.profile?.workflows?.[0].name, 'sunrise', 'rename lands');
+  eq(renamed?.profile?.workflows?.[0].trigger, 'good morning', 'the trigger survives a rename');
+  if (!renamed?.reply.includes('good morning')) throw new Error('the reply names the surviving trigger: ' + renamed?.reply);
+
+  const dupe = await tryAgent('rename my morning workflow to evening', EMAIL, profile, run);
+  if (!dupe?.reply.includes('share a name')) throw new Error('renaming onto a taken name refuses: ' + dupe?.reply);
+  eq(dupe?.profile, undefined, 'the dupe guard changes nothing');
+
+  const same = await tryAgent('rename my morning workflow to morning', EMAIL, profile, run);
+  if (!same?.reply.includes('already its name')) throw new Error('renaming to itself is honest: ' + same?.reply);
+
+  const missing = await tryAgent('rename my midnight workflow to dawn', EMAIL, profile, run);
+  if (!missing?.reply.includes(`don't have a workflow called "midnight"`)) throw new Error('a missing name is named: ' + missing?.reply);
+
+  const anon = await tryAgent('rename my morning workflow to sunrise', '', profile, run);
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous renaming points at sign-in: ' + anon?.reply);
+
+  eq(profile.workflows?.[0].steps, ['s1', 's2', 's3'], 'the original profile is never mutated');
+  eq(profile.workflows?.[0].name, 'morning', 'the original name is never mutated');
 });
