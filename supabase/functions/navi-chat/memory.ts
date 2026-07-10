@@ -62,7 +62,17 @@ export type Profile = {
   // v28: the weekly review snapshot — counters captured when "review my week"
   // last ran, so the next review reports honest deltas. Managed by review.ts.
   review?: ReviewSnapshot;
+  // v31: a pending chat-cleanup confirmation — stamped when NAVI counts the
+  // old chats and asks; consumed, cancelled, or replaced by the next chat
+  // command, and expires if left hanging. Managed by chats.ts.
+  chatCleanup?: ChatCleanup;
 };
+
+// v31: one pending chat cleanup. `cutoff` is the ISO timestamp a session's
+// updated_at must be OLDER than to be deleted; `count` is what NAVI counted
+// when it asked (re-counted at execute time, so the reply stays honest);
+// `asked` is when the offer was made — a bare "yes" only counts while fresh.
+export type ChatCleanup = { cutoff: string; count: number; asked: string };
 
 // v25: one saved workflow. `steps` are ordinary asks run through the full
 // engine pipeline in order; `trigger` is an exact phrase that auto-runs it.

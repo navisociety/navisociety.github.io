@@ -29,6 +29,7 @@ import { wantsMore, nextChunk } from './deepen.ts';
 import {
   normalizeKey, detectTeach, detectFeedback, previousUserQuestion,
   recallKnowledge, learnKnowledge, logGap, isGapsAsk, tryGapsReport,
+  tryGapsManage,
 } from './learn.ts';
 import { detectComparison, splitCompound, tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
@@ -50,11 +51,13 @@ import {
   parseWorkflowCreate, parseWorkflowRun, parseWorkflowDelete,
   parseTriggerSet, parseMissionStart, parseDailySet, tryAgent, runDailyWorkflows,
   missionNudge, evalCondition, parseConditionStep, parseMissionQueue,
+  parseWorkflowShow, parseWorkflowStepEdit,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
+import { parseCleanupAsk, isChatCountAsk, tryChats } from './chats.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -2079,4 +2082,132 @@ Deno.test('v30: the self-improvement loop — gaps ask detection and the non-own
     const owner = await tryGapsReport('what should you learn', 'prophetdian@gmail.com');
     if (!owner?.includes("couldn't reach")) throw new Error('an unreachable list is reported honestly: ' + owner);
   }
+});
+
+// ── v31: the stewardship round ───────────────────────────────────────────────
+
+Deno.test('v31: parseCleanupAsk reads horizons and stays out of conversation', () => {
+  eq(parseCleanupAsk('clean up my old chats'), 30, 'bare cleanup defaults to 30 days');
+  eq(parseCleanupAsk('delete my old conversations'), 30, 'conversations count too');
+  eq(parseCleanupAsk('delete chats older than 60 days'), 60, 'explicit days');
+  eq(parseCleanupAsk('remove my chats older than 2 weeks'), 14, 'weeks convert');
+  eq(parseCleanupAsk('prune conversations older than 2 months'), 60, 'months convert');
+  eq(parseCleanupAsk('clean up my room'), null, 'rooms are not chats');
+  eq(parseCleanupAsk('delete my old photos'), null, 'photos are not chats');
+});
+
+Deno.test('v31: isChatCountAsk detects reads, not life questions', () => {
+  eq(isChatCountAsk('how many chats do i have'), true, 'the core ask');
+  eq(isChatCountAsk('list my chats'), true, 'list form');
+  eq(isChatCountAsk('show me my conversations'), true, 'show form');
+  eq(isChatCountAsk('how many kids do i have'), false, 'kids are not chats');
+  eq(isChatCountAsk('how many chats about prayer'), false, 'unanchored tails fall through');
+});
+
+Deno.test('v31: tryChats — bare yes/no is conversation unless an offer is pending', async () => {
+  eq(await tryChats('yes', EMAIL, {}), null, 'bare yes with nothing pending');
+  eq(await tryChats('no', EMAIL, {}), null, 'bare no with nothing pending');
+  eq(await tryChats('what is 2+2', EMAIL, { chatCleanup: { cutoff: 'x', count: 2, asked: new Date().toISOString() } }), null, 'a pending offer never captures unrelated talk');
+  const anon = await tryChats('clean up my old chats', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous cleanup points at sign-in: ' + anon?.reply);
+  const noPending = await tryChats('yes, clean them up', EMAIL, {});
+  if (!noPending?.reply.includes('no chat cleanup waiting')) throw new Error('explicit confirm with nothing pending is redirected: ' + noPending?.reply);
+});
+
+Deno.test('v31: tryChats — cancel keeps everything and clears the stamp; stale bare yes refuses', async () => {
+  const fresh: Profile = { chatCleanup: { cutoff: '2026-06-01T00:00:00Z', count: 3, asked: new Date().toISOString() } };
+  const kept = await tryChats('no', EMAIL, fresh);
+  if (!kept?.reply.includes('Kept')) throw new Error('cancel keeps: ' + kept?.reply);
+  eq(kept?.profile?.chatCleanup, undefined, 'cancel clears the stamp');
+
+  const stale: Profile = { chatCleanup: { cutoff: '2026-06-01T00:00:00Z', count: 3, asked: '2026-07-01T00:00:00Z' } };
+  const refused = await tryChats('yes', EMAIL, stale);
+  if (!refused?.reply.includes('stale')) throw new Error('a stale offer refuses a bare yes: ' + refused?.reply);
+  eq(refused?.profile?.chatCleanup, undefined, 'the stale stamp is cleared');
+});
+
+Deno.test('v31: tryChats — offline, reads and confirmed deletes fail HONESTLY', async () => {
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise this for real
+  const count = await tryChats('how many chats do i have', EMAIL, {});
+  if (!count?.reply.includes("couldn't reach")) throw new Error('unreachable reads are honest: ' + count?.reply);
+  const ask = await tryChats('clean up my old chats', EMAIL, {});
+  if (!ask?.reply.includes("couldn't reach")) throw new Error('unreachable counts are honest: ' + ask?.reply);
+  const fresh: Profile = { chatCleanup: { cutoff: '2026-06-01T00:00:00Z', count: 3, asked: new Date().toISOString() } };
+  const confirmed = await tryChats('yes, clean them up', EMAIL, fresh);
+  if (!confirmed?.reply.includes("couldn't reach")) throw new Error('unreachable deletes are honest: ' + confirmed?.reply);
+  eq(confirmed?.profile, undefined, 'the stamp survives an unreachable delete, so a retry works');
+});
+
+Deno.test('v31: tryGapsManage — owner-only curation, conversation untouched', async () => {
+  const outsider = await tryGapsManage('dismiss gap 2', EMAIL);
+  if (!outsider?.includes('Prophet Dian')) throw new Error('non-owner gets the friendly line: ' + outsider);
+  eq(await tryGapsManage('mind the gap', 'prophetdian@gmail.com'), null, 'ordinary gap talk falls through');
+  eq(await tryGapsManage('clear my reminders', 'prophetdian@gmail.com'), null, 'reminders belong to remind.ts');
+  eq(await tryGapsManage('clear my learning list of doubts somehow', 'prophetdian@gmail.com'), null, 'unanchored tails fall through');
+  if (!Deno.env.get('SUPABASE_URL')) {
+    const dismiss = await tryGapsManage('dismiss gap 1', 'prophetdian@gmail.com');
+    if (!dismiss?.includes("couldn't reach")) throw new Error('unreachable dismiss is honest: ' + dismiss);
+    const wipe = await tryGapsManage('clear my learning list', 'prophetdian@gmail.com');
+    if (!wipe?.includes("couldn't reach")) throw new Error('unreachable clear is honest: ' + wipe);
+  }
+});
+
+Deno.test('v31: parseWorkflowShow / parseWorkflowStepEdit read the edit commands', () => {
+  eq(parseWorkflowShow('show my morning workflow'), 'morning', 'the core show');
+  eq(parseWorkflowShow('show me the steps of my morning workflow'), 'morning', 'steps-of form');
+  eq(parseWorkflowShow('view the study routine'), 'study', 'view + routine');
+  eq(parseWorkflowShow('show my workflows'), null, 'the plural belongs to list');
+  eq(parseWorkflowShow('show my mission queue'), null, 'queues are not workflows');
+  eq(parseWorkflowStepEdit('add a step to my study workflow: define grace'), { kind: 'add', name: 'study', text: 'define grace' }, 'add');
+  eq(parseWorkflowStepEdit('replace step 2 of my study workflow with a verse about hope'), { kind: 'replace', name: 'study', n: 2, text: 'a verse about hope' }, 'replace');
+  eq(parseWorkflowStepEdit('remove step 2 from my study workflow'), { kind: 'remove', name: 'study', n: 2 }, 'remove');
+  eq(parseWorkflowStepEdit('remove the step ladder from my garage'), null, 'garages stay conversation');
+  eq(parseWorkflowStepEdit('add a step to my study workflow: end my life'), null, 'crisis language never enters a workflow');
+  eq(parseWorkflowStepEdit('add a step to my mission: call the venue'), null, 'mission steps belong to the mission block');
+});
+
+Deno.test('v31: workflow editing — show, add, replace, remove, and every guard', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    workflows: [{ name: 'morning', steps: ['s1', 's2', 's3'], created: 'now' }],
+  };
+
+  const shown = await tryAgent('show my morning workflow', EMAIL, profile, run);
+  if (!shown?.reply.includes('1. s1') || !shown.reply.includes('3. s3')) throw new Error('show numbers the steps: ' + shown?.reply);
+  eq(shown?.profile, undefined, 'show is read-only');
+
+  const missing = await tryAgent('show my evening workflow', EMAIL, profile, run);
+  if (!missing?.reply.includes(`don't have a workflow called "evening"`)) throw new Error('a missing name is named: ' + missing?.reply);
+
+  const added = await tryAgent('add a step to my morning workflow: define grace', EMAIL, profile, run);
+  eq(added?.profile?.workflows?.[0].steps, ['s1', 's2', 's3', 'define grace'], 'add appends');
+
+  const replaced = await tryAgent('replace step 2 of my morning workflow with a verse about hope', EMAIL, profile, run);
+  eq(replaced?.profile?.workflows?.[0].steps, ['s1', 'a verse about hope', 's3'], 'replace swaps in place');
+
+  const removed = await tryAgent('remove step 2 from my morning workflow', EMAIL, profile, run);
+  eq(removed?.profile?.workflows?.[0].steps, ['s1', 's3'], 'remove drops the step');
+
+  const outOfRange = await tryAgent('replace step 9 of my morning workflow with x-rays', EMAIL, profile, run);
+  if (!outOfRange?.reply.includes('only has 3 steps')) throw new Error('out-of-range is honest: ' + outOfRange?.reply);
+  eq(outOfRange?.profile, undefined, 'nothing changes out of range');
+
+  const five: Profile = { workflows: [{ name: 'full', steps: ['a1', 'a2', 'a3', 'a4', 'a5'], created: 'now' }] };
+  const capped = await tryAgent('add a step to my full workflow: one more', EMAIL, five, run);
+  if (!capped?.reply.includes('5 steps')) throw new Error('the step cap holds: ' + capped?.reply);
+  eq(capped?.profile, undefined, 'the cap refuses without changing anything');
+
+  const solo: Profile = { workflows: [{ name: 'tiny', steps: ['only'], created: 'now' }] };
+  const lastOne = await tryAgent('remove step 1 from my tiny workflow', EMAIL, solo, run);
+  if (!lastOne?.reply.includes('delete my tiny workflow')) throw new Error('the last step points at delete: ' + lastOne?.reply);
+  eq(lastOne?.profile, undefined, 'the shell is never emptied');
+
+  const meta = await tryAgent('replace step 1 of my morning workflow with run my evening workflow', EMAIL, profile, run);
+  if (!meta?.reply.includes('ordinary asks')) throw new Error('workflows never run workflows: ' + meta?.reply);
+  eq(meta?.profile, undefined, 'the meta guard refuses without changing anything');
+
+  const anon = await tryAgent('remove step 2 from my morning workflow', '', profile, run);
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous editing points at sign-in: ' + anon?.reply);
+
+  eq(profile.workflows?.[0].steps, ['s1', 's2', 's3'], 'the original profile is never mutated');
 });

@@ -428,5 +428,67 @@ export async function tryGapsReport(message: string, email: string): Promise<str
     const hits = Number(r.hits ?? 1);
     return `${i + 1}. "${String(r.query_text ?? '').trim()}"${hits > 1 ? ` — asked ${hits}×` : ''}`;
   }).join('\n');
-  return `Here's what I couldn't answer — my top blind spots, most-asked first:\n${lines}\n\nTeach me any of them and I'll hold it forever, for everyone:\nlearn: <question> :: <answer>`;
+  return `Here's what I couldn't answer — my top blind spots, most-asked first:\n${lines}\n\nTeach me any of them and I'll hold it forever, for everyone:\nlearn: <question> :: <answer>\n(Or "dismiss gap 2" if one isn't worth teaching, "clear my learning list" to wipe it.)`;
+}
+
+// ── v31: managing the gaps list — the loop the report opened, closed ─────────
+// The v30 report READS the backlog; these commands CURATE it. "dismiss gap 2"
+// retires a question that isn't worth teaching (numbered exactly as the report
+// numbers them — same query, same order), and "clear my learning list" wipes
+// the whole backlog. Owner-only, like the report: the list is Prophet Dian's.
+
+const GAPS_ORDER =
+  'resolved=not.is.true&order=hits.desc.nullslast,last_asked.desc.nullslast';
+
+const GAP_DISMISS_RX =
+  /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+)?(?:dismiss|resolve|forget|drop|remove|skip) gap (\d{1,2})[?!.]*$/i;
+
+const GAP_CLEAR_RX =
+  /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+)?(?:clear|wipe|empty|reset) (?:my |your |the )?(?:whole |entire )?(?:learning list|gaps? list|gaps|blind spots(?: list)?)[?!.]*$/i;
+
+/**
+ * Handle "dismiss gap N" / "clear my learning list", or return null when the
+ * message isn't gaps curation. Owner-only — anyone else gets the same
+ * friendly line the report gives.
+ */
+export async function tryGapsManage(message: string, email: string): Promise<string | null> {
+  const trimmed = message.trim();
+  const dismiss = trimmed.match(GAP_DISMISS_RX);
+  const clear = dismiss ? null : trimmed.match(GAP_CLEAR_RX);
+  if (!dismiss && !clear) return null;
+  if (email !== OWNER_EMAIL) {
+    return 'My learning list is something I go over with Prophet Dian — but ask me anything, and if I miss, it goes on the list so I get sharper.';
+  }
+
+  if (dismiss) {
+    const n = parseInt(dismiss[1], 10);
+    const rows = await getRows('navi_gaps', `${GAPS_ORDER}&limit=5&select=query_key,query_text`);
+    if (rows === null) {
+      return 'I couldn\'t reach my learning list just now — try me again in a moment.';
+    }
+    if (!rows.length) {
+      return 'My learning list is already clear — nothing to dismiss.';
+    }
+    if (n < 1 || n > rows.length) {
+      return `The list only goes up to ${rows.length} right now — say "what should you learn?" to see it numbered, then "dismiss gap <n>".`;
+    }
+    const row = rows[n - 1];
+    await tableWrite(
+      `navi_gaps?query_key=eq.${encodeURIComponent(String(row.query_key ?? ''))}`,
+      'PATCH',
+      { resolved: true },
+    );
+    return `Dismissed gap ${n} — "${String(row.query_text ?? '').trim()}" is off my learning list. If it ever matters, teaching it brings the answer, not the gap:\nlearn: <question> :: <answer>`;
+  }
+
+  // Clear the whole backlog.
+  const rows = await getRows('navi_gaps', `${GAPS_ORDER}&limit=1000&select=query_key`);
+  if (rows === null) {
+    return 'I couldn\'t reach my learning list just now — try me again in a moment.';
+  }
+  if (!rows.length) {
+    return 'My learning list is already clear — nothing to wipe.';
+  }
+  await tableWrite('navi_gaps?resolved=not.is.true', 'PATCH', { resolved: true });
+  return `Learning list cleared — ${rows.length} open gap${rows.length === 1 ? '' : 's'} dismissed. The next question I can't answer starts the list fresh.`;
 }

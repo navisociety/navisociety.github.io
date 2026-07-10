@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-09, at **v30** (the cross-platform round), live and verified.
+Last updated: 2026-07-10, at **v31** (the stewardship round), live and verified.
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -52,6 +52,16 @@ them too): tryEscalate right after tryReminder; tryVision right after the
 habit block (main path) / after the signed-in memory block (answerIntent);
 tryGapsReport before detectTeach (main path only, owner-gated inside).
 
+v31 additions: tryChats right after tryVision in BOTH the main path and
+answerIntent (the pending-cleanup stamp rides the returned profile, saved
+immediately on the main path); tryGapsManage BEFORE detectForget on the main
+path — "clear my learning list" / "forget gap 2" are gaps commands and the
+forget layer would otherwise swallow them (a local smoke run caught exactly
+this). Workflow show/step-edit live inside tryAgent, parsed BEFORE workflow
+creation/deletion — CREATE_NAMED_FIRST_RX would read "add a step to my study
+workflow: x" as a workflow named "step to my study", and DELETE_RX would read
+"remove step 2 from my study workflow" as one named "step 2 from my study".
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -62,7 +72,31 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v30)
+### agent.ts — workflows & missions (v25→v31)
+
+**v31 — the stewardship round** (NAVI curates its own surfaces):
+- **Chat-sessions bridge** (chats.ts, NEW — vision.ts's sibling): "how many
+  chats do i have" / "list my chats" read `navi_chat_sessions` (count + 5 most
+  recent, over PostgREST with the service key); "clean up my old chats" /
+  "delete chats older than N days" is a TWO-STEP destructive move — NAVI
+  counts what's idle past the horizon, stamps the offer on the profile
+  (`Profile.chatCleanup`: cutoff/count/asked), and only deletes on an explicit
+  yes. A bare "yes" works only while the offer is fresh (10 min); a stale one
+  is refused and cleared; "no"/"cancel the chat cleanup" keeps everything.
+  The horizon has a 7-DAY FLOOR so the live conversation can never delete
+  itself; deletes CASCADE the messages; the count is re-taken at execute time.
+  Bare "yes"/"no" with no pending offer return null — conversation untouched.
+- **Gaps curation** (learn.ts tryGapsManage): "dismiss gap 2" (numbered as the
+  report numbers them — same query, same order), "clear my learning list".
+  Owner-only like the report; PATCHes `resolved=true` on navi_gaps.
+- **Workflow step editing** (agent.ts): "show my X workflow" reads the steps
+  back numbered (+ trigger/daily info); "add a step to my X workflow: …",
+  "replace step 2 of my X workflow with …", "remove step 2 from my X
+  workflow" edit in place. Guards: MAX_STEPS cap, never empty a workflow
+  (points at delete instead), stepProblem() re-applies the meta rule (no
+  workflow/mission phrasing, conditions read through, the mission-step
+  literal allowed), crisis-guarded new text, out-of-range numbers answered
+  with the numbered list.
 
 **v30 — the cross-platform round** (NAVI executes beyond the chat):
 - **Vision Board bridge** (vision.ts, NEW): "add … to my vision board" /
@@ -270,15 +304,20 @@ determinism or safety.** Next natural rungs, roughly in order of value:
 
 With the v29/v30 backlog cleared, the next rungs for the execution line:
 
-11. **More cross-platform bridges** — the Vision Board pattern (direct table
-    ops + honest failure replies + answerIntent wiring) generalizes: chat
-    sessions ("clean up my old chats"), Create-tool creations, Share drafts.
-    Each new bridge is a vision.ts sibling; keep photos/files tool-managed.
+11. **More cross-platform bridges** — PARTLY SHIPPED in v31: the chat-sessions
+    bridge (chats.ts) joins the Vision Board. Still open: Create-tool
+    creations, Share drafts. Each new bridge is a vision.ts/chats.ts sibling;
+    keep photos/files tool-managed. The chats bridge adds a new reusable
+    pattern to the family: the TWO-STEP CONFIRM for destructive ops (offer
+    stamp on the profile + fresh-bare-yes window + re-count at execute).
 12. **Board-aware conditions** — "when my vision board is empty: …" needs an
     async evalCondition seam (today it's sync); only worth it with a second
     async condition source.
-13. **Owner analytics on gaps** — resolve/dismiss commands for the gaps list
-    ("forget gap 2"), closing the loop tryGapsReport opened.
+13. ~~**Owner analytics on gaps**~~ — SHIPPED in v31 (tryGapsManage: dismiss
+    gap N / clear my learning list, owner-only).
+14. **Workflow reordering / renaming** — step editing shipped in v31; "move
+    step 3 up" and "rename my morning workflow to sunrise" are the natural
+    completions if editing sees real use.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -294,8 +333,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v27 | `7df4bd8` | topic * slots, mission skip/add + idle nudge, daily briefing |
 | v28 | `9568807` | weekly review: deltas vs. snapshot + 7-day session-start offer |
 | v29 | `d9e159a` | executive round: conditional steps, open topic triggers, read-only mission step, mission queue, habit sparklines |
-| v30 | (see git) | cross-platform round: Vision Board bridge (vision.ts), condition negations + streak thresholds, queue editing, reminder escalation, self-improvement gaps report |
+| v30 | `d17c68d` | cross-platform round: Vision Board bridge (vision.ts), condition negations + streak thresholds, queue editing, reminder escalation, self-improvement gaps report |
+| v31 | (see git) | stewardship round: chat-sessions bridge with two-step confirm (chats.ts), gaps curation (dismiss/clear), workflow show + step editing |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → **170**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → **178**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

@@ -293,6 +293,86 @@ export function evalCondition(
 const MISSION_STEP_LITERAL_RX =
   /^(?:read |show |give )?(?:me )?(?:my )?(?:next |current )?mission step$/;
 
+// ── v31: workflow step editing — reshape a routine without rebuilding it ────
+// "show my morning workflow" reads the steps back numbered, so editing by
+// number is usable; add/replace/remove then operate on those numbers. These
+// MUST be parsed before creation and deletion in tryAgent: CREATE_NAMED_FIRST_RX
+// would read "add a step to my study workflow: x" as a workflow named
+// "step to my study", and DELETE_RX would read "remove step 2 from my study
+// workflow" as one named "step 2 from my study".
+
+const WF_SHOW_RX = new RegExp(
+  `^(?:please )?(?:show|view|inspect)(?: me)?(?: the)?(?: steps (?:of|in|for))?(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?:'?s steps| steps)?$`,
+);
+
+const WF_STEP_ADD_RX = new RegExp(
+  `^(?:please )?add (?:a |another |one more )?step to(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) ?[:—-] ?(.+)$`,
+);
+
+const WF_STEP_REPLACE_RX = new RegExp(
+  `^(?:please )?(?:replace|change|edit|update|rewrite|swap) step (\\d{1,2}) (?:of|in|on)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:with|to) ?[:]? ?(.+)$`,
+);
+
+const WF_STEP_REMOVE_RX = new RegExp(
+  `^(?:please )?(?:remove|delete|drop|cut|take) step (\\d{1,2}) (?:from|of|out of|in)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+
+/** The workflow name from a "show my X workflow" ask, or null. */
+export function parseWorkflowShow(message: string): string | null {
+  const t = tidy(message);
+  if (!t || t.length > 80) return null;
+  const m = t.match(WF_SHOW_RX);
+  if (!m) return null;
+  const name = m[1].trim();
+  // "show my workflows"/"show my mission" style asks belong elsewhere.
+  return name && !/^(?:a|the|my|me)$/.test(name) ? name : null;
+}
+
+export type WorkflowStepEdit =
+  | { kind: 'add'; name: string; text: string }
+  | { kind: 'replace'; name: string; n: number; text: string }
+  | { kind: 'remove'; name: string; n: number };
+
+/** One of the three step-edit commands, or null. Crisis-guarded on new text. */
+export function parseWorkflowStepEdit(message: string): WorkflowStepEdit | null {
+  const t = tidy(message);
+  if (!t || t.length > 200) return null;
+  let m = t.match(WF_STEP_ADD_RX);
+  if (m) {
+    const text = m[2].trim();
+    if (!text || CRISIS_RX.test(text)) return null;
+    return { kind: 'add', name: m[1].trim(), text };
+  }
+  m = t.match(WF_STEP_REPLACE_RX);
+  if (m) {
+    const text = m[3].trim();
+    if (!text || CRISIS_RX.test(text)) return null;
+    return { kind: 'replace', name: m[2].trim(), n: parseInt(m[1], 10), text };
+  }
+  m = t.match(WF_STEP_REMOVE_RX);
+  if (m) return { kind: 'remove', name: m[2].trim(), n: parseInt(m[1], 10) };
+  return null;
+}
+
+// The one gate every step entering a workflow passes (creation shares the meta
+// rule inline): sane length, and no workflow/mission phrasing except the
+// read-only "my next mission step" literal — conditions are read through.
+function stepProblem(step: string): string | null {
+  if (step.length < 3 || step.length > 120) {
+    return 'A step needs to be an ordinary ask — between 3 and 120 characters.';
+  }
+  const cond = parseConditionStep(step);
+  const body = cond ? cond.body : step;
+  if (!MISSION_STEP_LITERAL_RX.test(body) && /\b(workflow|routine|mission)\b/.test(body)) {
+    return 'Workflow steps have to be ordinary asks — a workflow can\'t run other workflows or missions. (The one exception: the read-only step "my next mission step".)';
+  }
+  return null;
+}
+
+function stepLines(wf: Workflow): string {
+  return wf.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
+}
+
 /** The workflow name from a delete ask, or null. */
 export function parseWorkflowDelete(message: string): string | null {
   const t = tidy(message);
@@ -449,6 +529,7 @@ WORKFLOWS — saved routines I run on command:
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
 - run my morning workflow every day (auto-runs on your first chat of the day)
 - list my workflows / delete my morning workflow
+- show my morning workflow (reads the steps back numbered), then edit in place: replace step 2 of my morning workflow with … / remove step 2 from my morning workflow / add a step to my morning workflow: …
 
 MISSIONS — a goal I break into steps and walk you through:
 - start a mission to launch my EP
@@ -461,6 +542,7 @@ MISSIONS — a goal I break into steps and walk you through:
 BEYOND THE CHAT — I execute on your other tools too:
 - add … to my vision board / what's on my vision board / remove … from my vision board (put my mission on my vision board pins the active goal)
 - a reminder that's waited 3+ days gets offered a promotion: "make that reminder a habit" or "make that reminder a mission step"
+- how many chats do i have / clean up my old chats — I count what's been idle 30+ days and ALWAYS ask before deleting anything
 
 And anytime you want the full picture — mission, habits, reminders, mood — just say "brief me".
 
@@ -476,6 +558,8 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowCreate(message) !== null ||
     parseWorkflowRun(message) !== null ||
     parseWorkflowDelete(message) !== null ||
+    parseWorkflowShow(message) !== null ||
+    parseWorkflowStepEdit(message) !== null ||
     parseTriggerSet(message) !== null ||
     parseDailySet(message) !== null ||
     parseMissionStart(message) !== null ||
@@ -867,6 +951,74 @@ export async function tryAgent(
     // fall through untouched.
     const goal = parseMissionStart(message);
     if (goal) return startMission(goal, profile);
+  }
+
+  // ── v31: workflow inspection & step editing ───────────────────────────────
+  // Before creation/deletion parsing — their regexes would misread these asks
+  // (see the parser comments above).
+  const shown = parseWorkflowShow(message);
+  if (shown) {
+    const wf = workflows.find((w) => w.name === shown);
+    if (!wf) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${shown}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${shown}" to show. Create one:\ncreate a workflow called ${shown}: a verse about strength, then list my reminders` };
+    }
+    const trig = wf.trigger ? `\nTrigger: "${wf.trigger}"` : '';
+    const daily = wf.daily ? '\nRuns daily on your first chat of the day.' : '';
+    return {
+      reply: `"${wf.name}" — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}${trig}${daily}\n\nEdit it in place: "replace step 2 of my ${wf.name} workflow with …", "remove step 2 from my ${wf.name} workflow", or "add a step to my ${wf.name} workflow: …".`,
+    };
+  }
+
+  const edit = parseWorkflowStepEdit(message);
+  if (edit) {
+    const idx = workflows.findIndex((w) => w.name === edit.name);
+    if (idx < 0) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${edit.name}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${edit.name}" to edit. Create it first:\ncreate a workflow called ${edit.name}: …` };
+    }
+    const wf = workflows[idx];
+
+    if (edit.kind === 'add') {
+      if (wf.steps.length >= MAX_STEPS) {
+        return { reply: `"${wf.name}" already has ${MAX_STEPS} steps — that's the ceiling. Replace or remove one first, then add.` };
+      }
+      const problem = stepProblem(edit.text);
+      if (problem) return { reply: problem };
+      const next = { ...wf, steps: [...wf.steps, edit.text] };
+      return {
+        reply: `Added — "${wf.name}" is now ${next.steps.length} step${next.steps.length === 1 ? '' : 's'}:\n${stepLines(next)}`,
+        profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+      };
+    }
+
+    if (edit.n < 1 || edit.n > wf.steps.length) {
+      return { reply: `"${wf.name}" only has ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}\n\nPick a number on that list.` };
+    }
+
+    if (edit.kind === 'replace') {
+      const problem = stepProblem(edit.text);
+      if (problem) return { reply: problem };
+      const steps = wf.steps.map((s, i) => (i === edit.n - 1 ? edit.text : s));
+      const next = { ...wf, steps };
+      return {
+        reply: `Step ${edit.n} of "${wf.name}" replaced:\n${stepLines(next)}`,
+        profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+      };
+    }
+
+    // remove
+    if (wf.steps.length === 1) {
+      return { reply: `That's the only step "${wf.name}" has — removing it leaves an empty shell. If the routine's done its job, say "delete my ${wf.name} workflow" instead.` };
+    }
+    const steps = wf.steps.filter((_, i) => i !== edit.n - 1);
+    const next = { ...wf, steps };
+    return {
+      reply: `Step ${edit.n} removed — "${wf.name}" is now ${steps.length} step${steps.length === 1 ? '' : 's'}:\n${stepLines(next)}`,
+      profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+    };
   }
 
   // ── Workflow commands ─────────────────────────────────────────────────────

@@ -63,7 +63,7 @@ import { wantsMore, wikiFullExtract, nextChunk } from './deepen.ts';
 import {
   detectTeach, teachKnowledge, detectFeedback, applyFeedback,
   previousUserQuestion, recallKnowledge, learnKnowledge, logGap,
-  tryGapsReport,
+  tryGapsReport, tryGapsManage,
 } from './learn.ts';
 import { tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
@@ -86,6 +86,7 @@ import { tryHabit, isHabitAsk } from './habit.ts';
 import { tryBriefing } from './brief.ts';
 import { tryReview, reviewOffer } from './review.ts';
 import { tryVision } from './vision.ts';
+import { tryChats } from './chats.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4179,6 +4180,12 @@ async function answerIntent(
   const vision = await tryVision(part, email, profile);
   if (vision) return { reply: vision.reply };
 
+  // v31: the chats bridge — "how many chats do i have" works as a workflow
+  // step or multi-intent part too; a cleanup offer's pending stamp rides the
+  // returned profile.
+  const chats = await tryChats(part, email, profile);
+  if (chats) return { reply: chats.reply, profile: chats.profile };
+
   const bible = await answerFromBible(part);
   if (bible) return { reply: bible };
   const devotion = await tryDevotion(part);
@@ -4405,6 +4412,36 @@ Deno.serve(async (req: Request): Promise<Response> => {
       const visionTurn = await tryVision(message, email, stored);
       if (visionTurn) {
         return new Response(JSON.stringify({ response: visionTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // v31: the chat-sessions bridge — NAVI stewards its own history. Count and
+    // list are plain reads; cleanup is a two-step move (count + ask, then an
+    // explicit yes) whose pending stamp lives on the profile — persisted
+    // immediately, like every other early-return profile change.
+    {
+      const chatsTurn = await tryChats(message, email, stored);
+      if (chatsTurn) {
+        if (email && chatsTurn.profile) await saveStoredProfile(email, chatsTurn.profile);
+        return new Response(JSON.stringify({ response: chatsTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // v31: gaps curation — "dismiss gap 2" / "clear my learning list" retires
+    // entries from the self-improvement backlog (owner-only inside, like the
+    // report). BEFORE the forget layer — "clear my learning list" and
+    // "forget gap 2" are gaps commands, not personal-memory forget asks —
+    // and before the report, so curation phrasing never falls through.
+    {
+      const gapsEdit = await tryGapsManage(message, email);
+      if (gapsEdit) {
+        return new Response(JSON.stringify({ response: gapsEdit }), {
           status: 200,
           headers: { ...cors, "Content-Type": "application/json" },
         });
