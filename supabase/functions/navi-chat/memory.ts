@@ -70,6 +70,10 @@ export type Profile = {
   // back and asks; consumed on yes (the draft is re-read at execute time),
   // cancelled on no, refused stale. Managed by mail.ts.
   mailSend?: MailSend;
+  // v33: sends waiting for their moment ("send draft 2 tomorrow morning") —
+  // confirmed at schedule time, fired by the first session after the time
+  // passes (NAVI only speaks when spoken to). Cap 3. Managed by mail.ts.
+  mailScheduled?: ScheduledSend[];
 };
 
 // v31: one pending chat cleanup. `cutoff` is the ISO timestamp a session's
@@ -82,7 +86,16 @@ export type ChatCleanup = { cutoff: string; count: number; asked: string };
 // send (re-read at execute time so an edited/deleted draft is never mis-sent);
 // `to`/`subject` echo what was offered; `asked` is when — a bare "yes" only
 // counts while fresh.
-export type MailSend = { id: string; to: string; subject: string; asked: string };
+// v33: `sendAt` (ISO datetime) marks a SCHEDULED offer — the yes books the
+// send onto Profile.mailScheduled instead of firing it immediately.
+export type MailSend = { id: string; to: string; subject: string; asked: string; sendAt?: string };
+
+// v33: one booked send. `id` is the navi_emails draft row (re-read when the
+// send actually fires, so an edited/deleted draft is never mis-sent);
+// `sendAt` is the ISO datetime it becomes due; the send fires on the first
+// session-start after that moment — never from a cron, never behind the
+// user's back.
+export type ScheduledSend = { id: string; to: string; subject: string; sendAt: string; created: string };
 
 // v25: one saved workflow. `steps` are ordinary asks run through the full
 // engine pipeline in order; `trigger` is an exact phrase that auto-runs it.

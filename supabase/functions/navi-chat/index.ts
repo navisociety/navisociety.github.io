@@ -87,7 +87,7 @@ import { tryBriefing } from './brief.ts';
 import { tryReview, reviewOffer } from './review.ts';
 import { tryVision } from './vision.ts';
 import { tryChats } from './chats.ts';
-import { tryMail } from './mail.ts';
+import { tryMail, runDueSends } from './mail.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4691,6 +4691,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
           response = `${response}\n\n${daily.report}`;
           // Step side-effects and lastRun stamps ride into the final save.
           Object.assign(stored, daily.profile);
+        }
+
+        // v33: booked sends whose moment has passed fire NOW — the only
+        // proactive channel NAVI has is the session-start append, so "send
+        // draft 2 tomorrow morning" goes out with the first chat after the
+        // time passes. Each due booking re-reads its draft and reports
+        // honestly; the trimmed schedule rides the final save.
+        const dueSends = await runDueSends(stored, email);
+        if (dueSends) {
+          response = `${response}\n\n${dueSends.note}`;
+          Object.assign(stored, dueSends.profile);
+          // A consumed (or emptied) schedule must not resurrect via the
+          // base-spread merge — mirror the delete onto stored explicitly.
+          if (!dueSends.profile.mailScheduled) delete stored.mailScheduled;
         }
 
         // v27: a mission idle 3+ days gets one gentle nudge per day, naming

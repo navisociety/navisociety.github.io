@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-10, at **v32** (the real-tasks round), live and verified.
+Last updated: 2026-07-14, at **v33** (the correspondence round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -40,10 +40,13 @@ rawMessage
   → session-start appends     (first message of a session, signed-in, never on
                                a crisis reply): event follow-ups → due
                                reminders → returning greeting → daily
-                               workflows (runDailyWorkflows) → mission nudge
-                               (missionNudge) → reminder escalation offer
-                               (reminderEscalation, v30) → weekly-review offer
-                               (reviewOffer)                    ← v27/v28/v30
+                               workflows (runDailyWorkflows) → due booked
+                               sends (runDueSends, v33 — the emptied
+                               schedule is mirrored onto `stored` by hand;
+                               Object.assign can't unset a key) → mission
+                               nudge (missionNudge) → reminder escalation
+                               offer (reminderEscalation, v30) →
+                               weekly-review offer (reviewOffer)  ← v27-v33
   → end-of-request save       mergeProfiles + mood journal + topics → upsert
 ```
 
@@ -69,6 +72,12 @@ Its send stamp (Profile.mailSend) rides the returned profile, saved
 immediately on the main path. Step-move and rename live inside tryAgent in
 the same before-creation/deletion cluster as the v31 editing commands.
 
+v33 additions: everything rides the EXISTING tryMail wiring (no new pipeline
+position) — inbox reads, replies, booking offers, schedule list/cancel are all
+new branches inside mail.ts, still AFTER tryChats so a pending chat cleanup
+outranks any mail stamp on a bare "yes". The one new wiring point is
+runDueSends in the session-start block, right after runDailyWorkflows.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -79,7 +88,39 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v32)
+### agent.ts — workflows & missions (v25→v33)
+
+**v33 — the correspondence round** (all in mail.ts — NAVI reads, replies, books):
+- **Inbox read**: "check my inbox" / "any new emails?" reads the 5 newest
+  inbox mails over the Gmail API (metadata only — From/Subject; NAVI reads,
+  it never deletes). Uses the same navi_gmail_tokens row + refresh as the
+  send path; honest not-connected / unreachable replies (roadmap #15's read
+  half — the `gmail.modify` scope the Email tool requests already covers it).
+- **Reply from context**: "reply to the last email from sam [saying …]"
+  searches the inbox (`in:inbox from:(sam)`), drafts a real `Re:` row to the
+  actual sender address, and stamps the v32 send offer in the same turn —
+  still never sends without the yes. BY NAME ON PURPOSE: the locked client
+  (App.tsx) intercepts any chat message carrying a literal address + an
+  email verb before it reaches the function, so the address form only works
+  server-side (workflow steps via answerIntent). No "saying …" gets a
+  deterministic acknowledgement body, crisis-guarded like everything else.
+- **Booked sends** (roadmap #16, respecting the no-cron anti-goal): "send
+  draft 2 tomorrow morning" parses a CLOSED time vocabulary (parseSendWhen:
+  now / in N hours / in N minutes / tonight / tomorrow [morning|afternoon|
+  evening] / tomorrow at 9am / [on|next] weekday [morning…]; SA time,
+  deterministic; unknown phrasing teaches the vocabulary, a past moment is
+  refused, "now" collapses into the immediate path). The offer is the same
+  two-step confirm (`MailSend.sendAt` marks it); the yes BOOKS onto
+  `Profile.mailScheduled` (cap 3, dupe-guarded, cap-checked at offer AND
+  confirm) instead of firing. `runDueSends()` fires due bookings at
+  session-start (after daily workflows, inside the crisis guard): each
+  re-reads its draft (gone → nothing sent, booking off), sends through the
+  user's own Gmail, and reports honestly; bookings that can't fire
+  (unreachable / not connected / send refused) stay booked and say so.
+  "show my scheduled sends" / "cancel [the] scheduled send [N]" /
+  "unschedule draft N" manage the book (profile-only). NOTE the
+  session-start wiring mirrors the delete onto `stored` explicitly —
+  `Object.assign` can't unset a consumed schedule.
 
 **v32 — the real-tasks round** (NAVI's first action that leaves the platform):
 - **Email bridge** (mail.ts, NEW — the third vision.ts/chats.ts sibling, and
@@ -360,17 +401,28 @@ With the v29/v30 backlog cleared, the next rungs for the execution line:
 
 With v32 the execution line has its first real-world actuator. Next rungs:
 
-15. **Email replies from context** — "reply to the last email from X" needs
-    an inbox read (Gmail list + get, token already available in mail.ts);
-    draft the reply as a navi_emails row and reuse the same send confirm.
-16. **Scheduled sends** — "send draft 2 tomorrow morning" could ride the
-    session-start append (NAVI only speaks when spoken to — the send fires
-    on the first chat after the time passes, with the confirm at schedule
-    time). Respect the anti-goal: no cron, no server push.
+15. ~~**Email replies from context**~~ — SHIPPED in v33 (inbox read +
+    "reply to the last email from X", by sender NAME from chat — the locked
+    client intercepts literal addresses; reuses the v32 send confirm).
+16. ~~**Scheduled sends**~~ — SHIPPED in v33 (booked sends: closed time
+    vocabulary, two-step confirm at booking time, runDueSends fires at
+    session-start — no cron, no server push, honest failure notes).
 17. **Workflow steps that send** — today a workflow step can DRAFT
     ("draft an email to me about *"); letting a step send would bypass the
     confirm — don't. If Dian wants it, the confirm must move to run time
     ("this run wants to send 1 email — yes?").
+
+Post-v33 candidates, in rough order of value:
+
+18. **Inbox-aware conditions** — "when i have new email: …" workflow steps
+    share the async seam problem with #12 (evalCondition is sync today);
+    two async condition sources now exist, so the seam may be worth it.
+19. **Reply chains** — the v33 reply drafts a fresh `Re:` mail; real
+    In-Reply-To/References threading needs the source Message-ID header
+    (one more metadataHeader in searchInbox) and a threaded buildMime.
+20. **Digest reads** — "summarise my inbox" wants body snippets (the
+    `snippet` field already rides messages.list) fed through the existing
+    deterministic summarise engine (understand.ts) — still zero external LLM.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -388,8 +440,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v29 | `d9e159a` | executive round: conditional steps, open topic triggers, read-only mission step, mission queue, habit sparklines |
 | v30 | `d17c68d` | cross-platform round: Vision Board bridge (vision.ts), condition negations + streak thresholds, queue editing, reminder escalation, self-improvement gaps report |
 | v31 | `9f2ba3b` | stewardship round: chat-sessions bridge with two-step confirm (chats.ts), gaps curation (dismiss/clear), workflow show + step editing |
-| v32 | (see git) | real-tasks round: email bridge (mail.ts — draft/list/delete + REAL Gmail send behind the two-step confirm), workflow step reordering + renaming |
+| v32 | `c58829b` | real-tasks round: email bridge (mail.ts — draft/list/delete + REAL Gmail send behind the two-step confirm), workflow step reordering + renaming |
+| v33 | (see git) | correspondence round: inbox read, reply-from-context (by sender name), booked sends (closed time vocabulary + session-start runDueSends) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → **185**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → **193**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

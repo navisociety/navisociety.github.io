@@ -58,7 +58,11 @@ import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
 import { parseCleanupAsk, isChatCountAsk, tryChats } from './chats.ts';
-import { parseMailDraft, isDraftListAsk, parseDraftDelete, parseDraftSend, tryMail } from './mail.ts';
+import {
+  parseMailDraft, isDraftListAsk, parseDraftDelete, parseDraftSend, tryMail,
+  parseDraftSendLater, isInboxAsk, parseMailReply, isScheduledListAsk,
+  parseScheduledCancel, parseSendWhen, runDueSends,
+} from './mail.ts';
 import type { Profile } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -2335,4 +2339,181 @@ Deno.test('v32: step moving and renaming — the guards hold', async () => {
 
   eq(profile.workflows?.[0].steps, ['s1', 's2', 's3'], 'the original profile is never mutated');
   eq(profile.workflows?.[0].name, 'morning', 'the original name is never mutated');
+});
+
+// ── v33: the correspondence round ────────────────────────────────────────────
+
+Deno.test('v33: parseSendWhen speaks the closed time vocabulary', () => {
+  // Tue 14 July 2026, 10:00 UTC = 12:00 SA time.
+  const now = Date.UTC(2026, 6, 14, 10, 0);
+  const today = { y: 2026, m: 7, d: 14 };
+
+  eq(parseSendWhen('now', now, today), 'now', 'now');
+  eq(parseSendWhen('right now', now, today), 'now', 'right now');
+  eq(parseSendWhen('in 2 hours', now, today), new Date(now + 2 * 3600_000).toISOString(), 'in 2 hours');
+  eq(parseSendWhen('in 30 minutes', now, today), new Date(now + 30 * 60_000).toISOString(), 'in 30 minutes');
+  eq(parseSendWhen('tonight', now, today), '2026-07-14T16:00:00.000Z', 'tonight = 18:00 SA');
+  eq(parseSendWhen('tomorrow', now, today), '2026-07-15T06:00:00.000Z', 'tomorrow = 08:00 SA');
+  eq(parseSendWhen('tomorrow afternoon', now, today), '2026-07-15T12:00:00.000Z', 'tomorrow afternoon = 14:00 SA');
+  eq(parseSendWhen('tomorrow at 9pm', now, today), '2026-07-15T19:00:00.000Z', 'tomorrow at 9pm = 21:00 SA');
+  eq(parseSendWhen('on friday', now, today), '2026-07-17T06:00:00.000Z', 'friday from a tuesday');
+  eq(parseSendWhen('friday evening', now, today), '2026-07-17T16:00:00.000Z', 'weekday + time of day');
+  eq(parseSendWhen('on tuesday', now, today), '2026-07-21T06:00:00.000Z', 'a weekday named on that weekday means NEXT week');
+
+  const evening = Date.UTC(2026, 6, 14, 17, 0); // 19:00 SA — tonight is gone
+  eq(parseSendWhen('tonight', evening, today), 'past', 'a moment already gone is past, never immediate');
+  eq(parseSendWhen('in 0 hours', now, today), 'past', 'zero delay is past');
+
+  eq(parseSendWhen('when the moon is full', now, today), null, 'unknown phrasing is refused, never guessed');
+  eq(parseSendWhen('at some point', now, today), null, 'vague phrasing is refused');
+  eq(parseSendWhen('tomorrow at 13pm', now, today), null, '13pm is not a clock time');
+});
+
+Deno.test('v33: schedule/inbox/reply parsers are anchored', () => {
+  eq(parseDraftSendLater('send draft 2 tomorrow morning'), { n: 2, when: 'tomorrow morning' }, 'the core booking ask');
+  eq(parseDraftSendLater('send draft 2'), null, 'a bare send belongs to the immediate parser');
+  eq(parseDraftSendLater('send my regards tomorrow'), null, 'regards stay conversation');
+
+  eq(isInboxAsk('check my inbox'), true, 'the core inbox ask');
+  eq(isInboxAsk('any new emails?'), true, 'question form');
+  eq(isInboxAsk('check my email'), true, 'email form');
+  eq(isInboxAsk('read my inbox'), true, 'read form');
+  eq(isInboxAsk('check my facts'), false, 'facts are not an inbox');
+  eq(isInboxAsk('inbox zero is a lie'), false, 'musings stay conversation');
+
+  eq(parseMailReply('reply to the last email from sam'), { from: 'sam' }, 'reply by name');
+  eq(parseMailReply('reply to the latest email from sam saying thanks for the notes'),
+    { from: 'sam', body: 'thanks for the notes' }, 'reply with a said body');
+  eq(parseMailReply('reply to sam'), null, 'a bare reply is not anchored enough');
+  eq(parseMailReply('reply to the last email from my boss saying i want to die'), null, 'crisis language never enters an envelope');
+
+  eq(isScheduledListAsk('show my scheduled sends'), true, 'the core list ask');
+  eq(isScheduledListAsk('what emails are scheduled'), true, 'question form');
+  eq(isScheduledListAsk('show my schedule'), false, 'a diary is not the send book');
+
+  eq(parseScheduledCancel('cancel the scheduled send'), 0, 'bare cancel resolves later');
+  eq(parseScheduledCancel('cancel scheduled send 2'), 2, 'numbered cancel');
+  eq(parseScheduledCancel('unschedule draft 2'), 2, 'unschedule form');
+  eq(parseScheduledCancel('cancel my subscription'), null, 'subscriptions are not bookings');
+});
+
+Deno.test('v33: booking asks — vocabulary is taught, the past is refused', async () => {
+  const vocab = await tryMail('send draft 2 when the moon is full', EMAIL, {});
+  if (!vocab?.reply.includes("didn't recognise the time")) throw new Error('unknown time teaches the vocabulary: ' + vocab?.reply);
+  const past = await tryMail('send draft 1 in 0 hours', EMAIL, {});
+  if (!past?.reply.includes('already passed')) throw new Error('a past time is refused: ' + past?.reply);
+  eq(await tryMail('i sent flowers to my mom yesterday', EMAIL, {}), null, 'ordinary talk of sending stays conversation');
+});
+
+Deno.test('v33: a scheduled confirm BOOKS instead of firing — profile-only', async () => {
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  const fresh: Profile = { mailSend: { id: 'd1', to: 'sam@studio.com', subject: 'friday', asked: new Date().toISOString(), sendAt: future } };
+
+  const booked = await tryMail('yes', EMAIL, fresh);
+  if (!booked?.reply.includes('Booked')) throw new Error('the yes books the send: ' + booked?.reply);
+  eq(booked?.profile?.mailSend, undefined, 'the offer stamp is consumed');
+  eq(booked?.profile?.mailScheduled?.length, 1, 'the booking lands on the schedule');
+  eq(booked?.profile?.mailScheduled?.[0].id, 'd1', 'the booking keeps the draft id');
+  eq(booked?.profile?.mailScheduled?.[0].sendAt, future, 'the booking keeps its moment');
+
+  const cancelled = await tryMail('no', EMAIL, fresh);
+  if (!cancelled?.reply.includes('Kept as a draft')) throw new Error('no keeps the draft: ' + cancelled?.reply);
+  eq(cancelled?.profile?.mailScheduled, undefined, 'nothing is booked on a no');
+
+  const stale: Profile = { mailSend: { id: 'd1', to: 'sam@studio.com', subject: 'friday', asked: '2026-07-01T00:00:00Z', sendAt: future } };
+  const refused = await tryMail('yes', EMAIL, stale);
+  if (!refused?.reply.includes('stale')) throw new Error('a stale booking offer refuses a bare yes: ' + refused?.reply);
+
+  const full: Profile = {
+    mailSend: { id: 'd4', to: 'a@b.co', subject: 's4', asked: new Date().toISOString(), sendAt: future },
+    mailScheduled: [
+      { id: 'a', to: 'a@b.co', subject: '1', sendAt: future, created: 'x' },
+      { id: 'b', to: 'a@b.co', subject: '2', sendAt: future, created: 'x' },
+      { id: 'c', to: 'a@b.co', subject: '3', sendAt: future, created: 'x' },
+    ],
+  };
+  const refusedFull = await tryMail('yes', EMAIL, full);
+  if (!refusedFull?.reply.includes('full')) throw new Error('the schedule cap holds at the confirm too: ' + refusedFull?.reply);
+  eq(refusedFull?.profile?.mailScheduled?.length, 3, 'nothing extra is booked past the cap');
+
+  const dupe: Profile = {
+    mailSend: { id: 'a', to: 'a@b.co', subject: '1', asked: new Date().toISOString(), sendAt: future },
+    mailScheduled: [{ id: 'a', to: 'a@b.co', subject: '1', sendAt: future, created: 'x' }],
+  };
+  const refusedDupe = await tryMail('yes', EMAIL, dupe);
+  if (!refusedDupe?.reply.includes('already booked')) throw new Error('a draft books once: ' + refusedDupe?.reply);
+});
+
+Deno.test('v33: the schedule list and cancel are profile-only moves', async () => {
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  const empty = await tryMail('show my scheduled sends', EMAIL, {});
+  if (!empty?.reply.includes('Nothing is booked')) throw new Error('an empty schedule says so: ' + empty?.reply);
+
+  const two: Profile = { mailScheduled: [
+    { id: 'a', to: 'a@b.co', subject: 'first', sendAt: future, created: 'x' },
+    { id: 'b', to: 'c@d.co', subject: 'second', sendAt: future, created: 'x' },
+  ] };
+  const listed = await tryMail('show my scheduled sends', EMAIL, two);
+  if (!listed?.reply.includes('1. "first"') || !listed?.reply.includes('2. "second"')) {
+    throw new Error('the schedule lists numbered: ' + listed?.reply);
+  }
+
+  const noneToCancel = await tryMail('cancel the scheduled send', EMAIL, {});
+  if (!noneToCancel?.reply.includes('Nothing is booked')) throw new Error('cancelling an empty schedule is honest: ' + noneToCancel?.reply);
+
+  const ambiguous = await tryMail('cancel the scheduled send', EMAIL, two);
+  if (!ambiguous?.reply.includes('cancel scheduled send N')) throw new Error('two bookings need a number: ' + ambiguous?.reply);
+
+  const second = await tryMail('cancel scheduled send 2', EMAIL, two);
+  if (!second?.reply.includes('Unbooked') || !second?.reply.includes('second')) throw new Error('the numbered cancel names its booking: ' + second?.reply);
+  eq(second?.profile?.mailScheduled?.length, 1, 'one booking remains');
+  eq(second?.profile?.mailScheduled?.[0].id, 'a', 'the right booking remains');
+
+  const one: Profile = { mailScheduled: [{ id: 'a', to: 'a@b.co', subject: 'only', sendAt: future, created: 'x' }] };
+  const bare = await tryMail('cancel the scheduled send', EMAIL, one);
+  if (!bare?.reply.includes('Unbooked')) throw new Error('a lone booking cancels bare: ' + bare?.reply);
+  eq(bare?.profile?.mailScheduled, undefined, 'an emptied schedule leaves the profile');
+
+  const range = await tryMail('cancel scheduled send 9', EMAIL, one);
+  if (!range?.reply.includes('only 1 booked send')) throw new Error('out-of-range is honest: ' + range?.reply);
+
+  const offer: Profile = { mailSend: { id: 'z', to: 'a@b.co', subject: 'pending', asked: new Date().toISOString(), sendAt: future } };
+  const offCancelled = await tryMail('cancel the scheduled send', EMAIL, offer);
+  if (!offCancelled?.reply.includes("won't be booked")) throw new Error('a pending booking offer can be cancelled by name: ' + offCancelled?.reply);
+  eq(offCancelled?.profile?.mailSend, undefined, 'the offer stamp is cleared');
+});
+
+Deno.test('v33: runDueSends — quiet when nothing is due, honest when it cannot fire', async () => {
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  const pastDue = new Date(Date.now() - 60_000).toISOString();
+
+  eq(await runDueSends({}, EMAIL), null, 'no schedule, no note');
+  eq(await runDueSends({ mailScheduled: [{ id: 'a', to: 'a@b.co', subject: 's', sendAt: future, created: 'x' }] }, EMAIL), null, 'a future booking stays silent');
+  eq(await runDueSends({ mailScheduled: [{ id: 'a', to: 'a@b.co', subject: 's', sendAt: pastDue, created: 'x' }] }, ''), null, 'anonymous sessions never fire sends');
+
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
+  const due = await runDueSends({ mailScheduled: [{ id: 'a', to: 'a@b.co', subject: 's', sendAt: pastDue, created: 'x' }] }, EMAIL);
+  if (!due?.note.includes("couldn't reach")) throw new Error('an unreachable due send is honest: ' + due?.note);
+  eq(due?.profile.mailScheduled?.length, 1, 'the booking survives to retry next session');
+});
+
+Deno.test('v33: inbox and reply asks fail honestly offline; anonymous asks point at sign-in', async () => {
+  const anon = await tryMail('check my inbox', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous inbox points at sign-in: ' + anon?.reply);
+  const anonReply = await tryMail('reply to the last email from sam', '', {});
+  if (!anonReply?.reply.includes('signed in')) throw new Error('anonymous reply points at sign-in: ' + anonReply?.reply);
+
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
+  const inbox = await tryMail('check my inbox', EMAIL, {});
+  if (!inbox?.reply.includes("couldn't reach")) throw new Error('an unreachable inbox is honest: ' + inbox?.reply);
+  const reply = await tryMail('reply to the last email from sam', EMAIL, {});
+  if (!reply?.reply.includes("couldn't reach")) throw new Error('an unreachable reply is honest: ' + reply?.reply);
+});
+
+Deno.test('v33: a pending booking offer never captures unrelated conversation', async () => {
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  const offer: Profile = { mailSend: { id: 'z', to: 'a@b.co', subject: 'pending', asked: new Date().toISOString(), sendAt: future } };
+  eq(await tryMail('what is 2+2', EMAIL, offer), null, 'math is not a confirmation');
+  eq(await tryMail('schedule a meeting with sam', EMAIL, {}), null, 'meetings are not send bookings');
+  eq(await tryMail('yes', EMAIL, {}), null, 'bare yes with nothing pending stays conversation');
 });
