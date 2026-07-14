@@ -1,6 +1,18 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35/v36 below)
+//
+// v36 additions (the foresight round):
+//   - WORKFLOW DRY-RUN — "preview my aware workflow" / "dry run my study
+//     workflow on grace" / "what would my aware workflow do right now?"
+//     walks the steps like runWorkflow but REPORTS instead of executing:
+//     conditions are evaluated against the live world (same async sources),
+//     each step comes back "would run" / "would skip (+why)" / "can't tell",
+//     nothing runs, nothing changes. Slotted workflows need a topic, same as
+//     a real run.
+//   - BOOKED-SEND CONDITIONS — "when a booked send is waiting:" /
+//     "when no booked sends are waiting:" read Profile.mailScheduled — sync,
+//     free, no source needed.
 //
 // v35 additions (the awareness round):
 //   - CONDITION VOCABULARY 3.0 — the async seam. evalCondition is now async
@@ -233,6 +245,31 @@ function hasSlot(wf: Workflow): boolean {
   return wf.steps.some((s) => s.includes('*'));
 }
 
+// v36: the dry-run — "preview my aware workflow [on grace]" / "what would my
+// aware workflow do right now?". Same name/topic shape as the run parsers,
+// different verbs, so the two can never collide.
+const PREVIEW_RX = new RegExp(
+  `^(?:please )?(?:preview|dry.?run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: (?:on|about|for|with) (.+))?$`,
+);
+const PREVIEW_WHATWOULD_RX = new RegExp(
+  `^what would(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) do(?: right now| today| now)?(?: (?:on|about|for|with) (.+))?$`,
+);
+
+/** v36: { name, topic? } from a dry-run ask, or null. Topic crisis-guarded. */
+export function parseWorkflowPreview(
+  message: string,
+): { name: string; topic?: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 120) return null;
+  const m = t.match(PREVIEW_RX) ?? t.match(PREVIEW_WHATWOULD_RX);
+  if (!m) return null;
+  const name = m[1].trim();
+  if (!name || /^(?:a|the|my|me)$/.test(name)) return null;
+  const topic = m[2]?.trim();
+  if (topic && (topic.length > 60 || CRISIS_RX.test(topic))) return null;
+  return topic ? { name, topic } : { name };
+}
+
 // ── v29: conditional steps ──────────────────────────────────────────────────
 
 // "when i haven't logged my prayer habit: remind me to pray" — the condition
@@ -246,7 +283,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -323,6 +360,15 @@ export async function evalCondition(
   if (/^i have (?:a|an)(?: active)? mission$/.test(cond)) return !!profile.mission;
   // v30: the mission negation — "when i have no mission: …" nudges the restart.
   if (/^i (?:don'?t have a|have no)(?: active)? mission$/.test(cond)) return !profile.mission;
+
+  // v36: booked-send awareness — the schedule lives ON the profile, so this
+  // pair is sync and free (no network, no source).
+  if (/^(?:a|any) booked send is waiting$|^i have (?:a )?booked sends?(?: waiting)?$/.test(cond)) {
+    return (profile.mailScheduled ?? []).length > 0;
+  }
+  if (/^no booked sends? (?:is|are) waiting$|^i have no booked sends?(?: waiting)?$/.test(cond)) {
+    return (profile.mailScheduled ?? []).length === 0;
+  }
 
   // v35: board-aware conditions — the board lives outside the profile, so
   // these are the first conditions that LOOK at the world. Unreachable board
@@ -629,6 +675,7 @@ WORKFLOWS — saved routines I run on command:
 - run my morning workflow every day (auto-runs on your first chat of the day)
 - list my workflows / delete my morning workflow
 - show my morning workflow (reads the steps back numbered), then edit in place: replace step 2 of my morning workflow with … / remove step 2 from my morning workflow / add a step to my morning workflow: …
+- preview my morning workflow (or "what would my morning workflow do right now?") — I check every condition against the live world and report what would run and what would skip, without executing anything
 
 MISSIONS — a goal I break into steps and walk you through:
 - start a mission to launch my EP
@@ -658,6 +705,7 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowRun(message) !== null ||
     parseWorkflowDelete(message) !== null ||
     parseWorkflowShow(message) !== null ||
+    parseWorkflowPreview(message) !== null ||
     parseWorkflowStepEdit(message) !== null ||
     parseWorkflowStepMove(message) !== null ||
     parseWorkflowRename(message) !== null ||
@@ -788,6 +836,52 @@ async function runWorkflow(
         : `Workflow "${wf.name}" finished — ${executed} of ${attempted} steps executed${skipNote}.`,
   );
   return { reply: blocks.join('\n\n'), profile: changed ? prof : undefined };
+}
+
+/**
+ * v36: the dry-run — the same walk as runWorkflow, but every step is REPORTED
+ * instead of executed. Conditions are evaluated against the live world;
+ * nothing runs, nothing changes, so there's no profile to return.
+ */
+async function previewWorkflow(
+  wf: Workflow,
+  profile: Profile,
+  topic?: string,
+  email = '',
+  sources?: ConditionSources,
+): Promise<string> {
+  const t = todayInTZ('Africa/Johannesburg');
+  const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
+  const lines: string[] = [];
+  let wouldRun = 0;
+  for (let i = 0; i < wf.steps.length; i++) {
+    const step = topic ? wf.steps[i].replaceAll('*', topic) : wf.steps[i];
+    const cond = parseConditionStep(step);
+    if (!cond) {
+      wouldRun++;
+      lines.push(`${i + 1}. would run — ${step}`);
+      continue;
+    }
+    const holds = await evalCondition(cond.cond, profile, todayISO, email, sources);
+    if (holds === true) {
+      wouldRun++;
+      lines.push(`${i + 1}. would run — ${cond.body} ("when ${cond.cond}" holds right now)`);
+    } else if (holds === false) {
+      lines.push(`${i + 1}. would skip — "when ${cond.cond}" isn't the case right now`);
+    } else if (holds === 'unreachable') {
+      lines.push(`${i + 1}. can't tell — I couldn't check "${cond.cond}" just now; on a real run I'd skip it to be safe`);
+    } else if (holds === 'not-connected') {
+      lines.push(`${i + 1}. can't tell — "${cond.cond}" needs your Gmail, and it isn't connected; on a real run I'd skip it`);
+    } else {
+      lines.push(`${i + 1}. would skip — I don't know the condition "${cond.cond}". I understand: ${KNOWN_CONDITIONS}.`);
+    }
+  }
+  const onTopic = topic ? ` on "${topic}"` : '';
+  const runIt = `run my ${wf.name} workflow${topic ? ` on ${topic}` : ''}`;
+  const foot = wouldRun
+    ? `Right now that's ${wouldRun} of ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}. Say "${runIt}" to do it for real.`
+    : `Right now every step would skip. Conditions change — preview again later, or "${runIt}" runs it anyway.`;
+  return `Dry run of "${wf.name}"${onTopic} — nothing was executed:\n${lines.join('\n')}\n\n${foot}`;
 }
 
 function startMission(goal: string, profile: Profile): { reply: string; profile: Profile } {
@@ -1085,6 +1179,24 @@ export async function tryAgent(
     return {
       reply: `"${wf.name}" — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}${trig}${daily}\n\nEdit it in place: "replace step 2 of my ${wf.name} workflow with …", "remove step 2 from my ${wf.name} workflow", or "add a step to my ${wf.name} workflow: …".`,
     };
+  }
+
+  // v36: the dry-run — report what a run would do, execute nothing. Sits with
+  // the inspection commands; the run/show parsers can't see these verbs.
+  const previewAsk = parseWorkflowPreview(message);
+  if (previewAsk) {
+    const wf = workflows.find((w) => w.name === previewAsk.name);
+    if (!wf) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${previewAsk.name}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${previewAsk.name}" to preview. Create it first:\ncreate a workflow called ${previewAsk.name}: a verse about strength, then list my reminders` };
+    }
+    if (hasSlot(wf) && !previewAsk.topic) {
+      return {
+        reply: `"${wf.name}" has a * slot in its steps, so a preview needs a topic too. Say it like:\npreview my ${wf.name} workflow on grace`,
+      };
+    }
+    return { reply: await previewWorkflow(wf, profile, previewAsk.topic, email, sources) };
   }
 
   const edit = parseWorkflowStepEdit(message);

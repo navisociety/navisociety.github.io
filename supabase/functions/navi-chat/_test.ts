@@ -52,6 +52,7 @@ import {
   parseTriggerSet, parseMissionStart, parseDailySet, tryAgent, runDailyWorkflows,
   missionNudge, evalCondition, parseConditionStep, parseMissionQueue,
   parseWorkflowShow, parseWorkflowStepEdit, parseWorkflowStepMove, parseWorkflowRename,
+  parseWorkflowPreview,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
@@ -2655,4 +2656,68 @@ Deno.test('v35: world conditions steer workflow steps — run, skip, honest cann
   if (!out4?.reply.includes('needs your Gmail')) throw new Error('a missing Gmail link is named: ' + out4?.reply);
 
   eq(profile.workflows?.[0].steps.length, 2, 'the original profile is never mutated');
+});
+
+// ── v36: the foresight round ─────────────────────────────────────────────────
+
+Deno.test('v36: parseWorkflowPreview reads dry-run asks and stays out of conversation', () => {
+  eq(parseWorkflowPreview('preview my aware workflow'), { name: 'aware' }, 'the core preview');
+  eq(parseWorkflowPreview('dry run my study workflow on grace'), { name: 'study', topic: 'grace' }, 'dry run + topic');
+  eq(parseWorkflowPreview('dry-run the study routine'), { name: 'study' }, 'hyphenated + routine');
+  eq(parseWorkflowPreview('what would my aware workflow do right now?'), { name: 'aware' }, 'the question form');
+  eq(parseWorkflowPreview('what would my study workflow do on grace'), { name: 'study', topic: 'grace' }, 'question + topic');
+  eq(parseWorkflowPreview('preview my mixtape'), null, 'no workflow word, no preview');
+  eq(parseWorkflowPreview('what would jesus do'), null, 'not a workflow question');
+  eq(parseWorkflowPreview('preview my week'), null, 'a week is not a workflow');
+});
+
+Deno.test('v36: the dry-run reports without executing — run, skip, cannot-tell', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = {
+    mailScheduled: [{ id: 'a', to: 'a@b.co', subject: 's', sendAt: '2027-01-01T08:00:00Z', created: 'x' }],
+    workflows: [{
+      name: 'aware',
+      steps: [
+        'a verse about strength',
+        'when my vision board is empty: encourage me',
+        'when i have new email: a verse about diligence',
+        'when a booked send is waiting: a verse about patience',
+      ],
+      created: 'now',
+    }],
+  };
+
+  const world = stubSources(3, 'not-connected');
+  const out = await tryAgent('preview my aware workflow', EMAIL, profile, run, world.sources);
+  if (!out?.reply.includes('nothing was executed')) throw new Error('the dry-run says what it is: ' + out?.reply);
+  if (!out.reply.includes('1. would run — a verse about strength')) throw new Error('ordinary steps would run: ' + out.reply);
+  if (!out.reply.includes(`2. would skip — "when my vision board is empty" isn't the case right now`)) throw new Error('a false condition would skip: ' + out.reply);
+  if (!out.reply.includes(`3. can't tell`)) throw new Error('no Gmail is a cannot-tell: ' + out.reply);
+  if (!out.reply.includes('4. would run — a verse about patience')) throw new Error('the booked-send condition holds: ' + out.reply);
+  eq(ran, [], 'NOTHING was executed');
+  eq(out.profile, undefined, 'nothing changed');
+
+  const slotted: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+  const needsTopic = await tryAgent('preview my study workflow', EMAIL, slotted, run, world.sources);
+  if (!needsTopic?.reply.includes('needs a topic')) throw new Error('slotted previews ask for a topic: ' + needsTopic?.reply);
+  const withTopic = await tryAgent('what would my study workflow do on grace', EMAIL, slotted, run, world.sources);
+  if (!withTopic?.reply.includes('would run — a verse about grace')) throw new Error('the topic fills the slot: ' + withTopic?.reply);
+
+  const missing = await tryAgent('preview my night workflow', EMAIL, profile, run, world.sources);
+  if (!missing?.reply.includes(`don't have a workflow called "night"`)) throw new Error('a missing name is named: ' + missing?.reply);
+
+  const anon = await tryAgent('preview my aware workflow', '', profile, run, world.sources);
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous previews point at sign-in: ' + anon?.reply);
+  eq(ran, [], 'still nothing executed after every preview');
+});
+
+Deno.test('v36: booked-send conditions read the profile — sync and free', async () => {
+  const t = '2026-07-14';
+  const spy = stubSources(0, 0);
+  const booked: Profile = { mailScheduled: [{ id: 'a', to: 'a@b.co', subject: 's', sendAt: '2027-01-01T08:00:00Z', created: 'x' }] };
+  eq(await evalCondition('a booked send is waiting', booked, t, EMAIL, spy.sources), true, 'a booking waits');
+  eq(await evalCondition('a booked send is waiting', {}, t, EMAIL, spy.sources), false, 'no bookings');
+  eq(await evalCondition('no booked sends are waiting', {}, t, EMAIL, spy.sources), true, 'the negation holds');
+  eq(await evalCondition('i have no booked sends', booked, t, EMAIL, spy.sources), false, 'the negation fails with one booked');
+  eq(spy.calls, [], 'booked-send conditions never touch a source');
 });

@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-14, at **v35** (the awareness round).
+Last updated: 2026-07-14, at **v36** (the foresight round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -104,6 +104,15 @@ the step with an honest note (unreachable → "played it safe";
 not-connected → points at the Email tool's Connect button) — never a guess,
 and never mistaken for the teach-the-vocabulary null.
 
+v36 additions: all inside agent.ts, no new wiring. parseWorkflowPreview +
+previewWorkflow live in the v31 inspection cluster of tryAgent (parsed AFTER
+show, BEFORE step-edit — the verbs never collide with run/show/delete).
+The dry-run returns reply-only (never a profile — it must not change
+anything); slotted workflows demand a topic exactly like a real run;
+isAgentAsk includes preview so anonymous asks get the sign-in prompt. The
+booked-send condition pair reads Profile.mailScheduled synchronously — no
+source, no network.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -114,7 +123,20 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v35) · mail.ts (v32→v35)
+### agent.ts — workflows & missions (v25→v36) · mail.ts (v32→v35)
+
+**v36 — the foresight round** (all agent.ts):
+- **Workflow dry-run** (roadmap #25): "preview my aware workflow" /
+  "dry run my study workflow on grace" / "what would my aware workflow do
+  right now?" — walks the steps like a real run but only REPORTS: each step
+  comes back "would run" / "would skip (+ the reason)" / "can't tell (+ the
+  honest why: unreachable source or no Gmail link)". Conditions are evaluated
+  against the live world through the v35 sources; topic slots fill for the
+  preview; NOTHING executes and the profile never changes. The footer counts
+  what would run and hands back the exact "run my …" command.
+- **Booked-send conditions** (a slice of roadmap #23): "when a booked send is
+  waiting:" / "when no booked sends are waiting:" — sync, profile-only reads
+  of mailScheduled. No source, no network, free.
 
 **v35 — the awareness round** (agent.ts + one helper each in vision.ts/mail.ts):
 - **World conditions** (roadmap #12 + #18 — the async evalCondition seam):
@@ -504,17 +526,24 @@ Post-v34 candidates:
 
 Post-v35 candidates (the execution line beyond email):
 
-23. **More world conditions on the seam** — the seam is built; each new
-    source is now ~10 lines: "when i have chats older than N days:"
-    (chats.ts counts), "when a booked send is waiting:" (profile-only,
-    could even be sync). Add sources sparingly; every one is a live network
-    call inside a workflow run.
+23. **More world conditions on the seam** — PARTLY DONE in v36 (the
+    booked-send pair, sync). Still open: "when i have chats older than N
+    days:" (chats.ts counts — needs a third source). Add sources sparingly;
+    every one is a live network call inside a workflow run.
 24. **Condition-aware briefing line** — "brief me" could append one line of
     world state (board count, unread count) — read-only, but it makes the
     briefing a network call; weigh against the instant-reply feel.
-25. **Workflow dry-run** — "what would my aware workflow do right now?"
-    evaluates every condition and reports run/skip WITHOUT executing steps —
-    pure read, great with world conditions, no new safety surface.
+25. ~~**Workflow dry-run**~~ — SHIPPED in v36 (preview/dry run/what-would,
+    reply-only, live conditions, slotted topics, nothing executes).
+
+Post-v36 candidates:
+
+26. **Mission dry-run** — "what would finish my mission?" reads the remaining
+    steps back (pure read, missionStatus already shows the current one — this
+    shows the whole tail). Small, honest, zero risk.
+27. **Preview-before-daily** — the session-start daily report could open with
+    a one-line preview summary ("2 of 4 steps will run") — but it doubles the
+    condition fetches per run; probably not worth it. Decide with Dian.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -535,8 +564,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v32 | `c58829b` | real-tasks round: email bridge (mail.ts — draft/list/delete + REAL Gmail send behind the two-step confirm), workflow step reordering + renaming |
 | v33 | `2dfbdf8` | correspondence round: inbox read, reply-from-context (by sender name), booked sends (closed time vocabulary + session-start runDueSends) |
 | v34 | `3271dfa` | slash-command round: /email/to/subject/body shorthand (client + server, splitIntents-guarded), inbox digests through the summarise engine |
-| v35 | (see git) | awareness round: async evalCondition seam — board-aware and inbox-aware workflow conditions with honest unreachable/not-connected skips |
+| v35 | `f76074c` | awareness round: async evalCondition seam — board-aware and inbox-aware workflow conditions with honest unreachable/not-connected skips |
+| v36 | (see git) | foresight round: workflow dry-run (preview / what-would, reply-only, live conditions) + sync booked-send conditions |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → **198**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → **201**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
