@@ -3217,7 +3217,7 @@ const KNOWLEDGE: KNode[] = [
   {
     triggers: ['email', 'send email', 'draft email', '/email', 'message someone', 'write email', 'compose email'],
     responses: [
-      "I can help you draft and send emails. Just include the recipient's email address and your message in the chat — I'll create a draft automatically. Or type /email followed by the recipient and your message.",
+      'I can help you draft and send emails. Type /email/recipient@example.com/Subject line/Body text — recipient, subject, then body, split by slashes. Or just include the recipient\'s address and your message in the chat and I\'ll draft it automatically.',
     ],
     priority: 2,
   },

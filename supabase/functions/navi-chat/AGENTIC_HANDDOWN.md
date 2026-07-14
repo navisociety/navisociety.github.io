@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-14, at **v33** (the correspondence round).
+Last updated: 2026-07-14, at **v34** (the slash-command round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -78,6 +78,19 @@ new branches inside mail.ts, still AFTER tryChats so a pending chat cleanup
 outranks any mail stamp on a bare "yes". The one new wiring point is
 runDueSends in the session-start block, right after runDailyWorkflows.
 
+v34 additions: the /email shorthand and inbox digests are new branches inside
+mail.ts (no new pipeline position). ONE guard was added at splitIntents:
+`isMailSlashAsk(message)` skips the multi-intent split entirely for messages
+opening "/email/" — the slash body is free text, so an "and"/"then" inside it
+is body, never a second ask (the golden rule applied). parseMailSlash is the
+ONE mail parser that reads the RAW message (never tidy()) so the body keeps
+its case; the recipient alone is lowercased. A malformed slash ask
+("/email/me/hi" — body missing) is TAUGHT, never dropped into conversation.
+The locked client (App.tsx) got its sanctioned /email update the same round:
+the slash form is parsed client-side for literal addresses (Dian asked for
+this format explicitly — the one UI exception since the lock), and the
+edge-side parser covers "me" + workflow steps.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -88,7 +101,25 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v33)
+### agent.ts — workflows & missions (v25→v33) · mail.ts (v32→v34)
+
+**v34 — the slash-command round** (mail.ts + the one sanctioned App.tsx touch):
+- **The /email shorthand**: `/email/recipient/subject/body` — three parts cut
+  by the first three slashes; the body keeps any further slashes, its case,
+  and its "and"/"then"s (isMailSlashAsk keeps the message out of splitIntents).
+  Client side (App.tsx — Dian explicitly requested this format, the one UI
+  change since the lock): a message opening "/email/" is ONLY ever the slash
+  form; parsed with parseSlashEmailDraft, drafted via the navi-email function,
+  malformed asks get the usage line. Legacy "/email addr message" still parses
+  when there's no slash after the command word. Server side (mail.ts
+  parseMailSlash): same syntax for "me"/"myself" and workflow steps; drafts
+  only, wantSend:false — sending still takes the v32 two-step yes. Malformed
+  is 'malformed' (taught); crisis subject/body returns null (steps aside).
+- **Inbox digests** (roadmap #20): "summarise my inbox" / "inbox digest" —
+  the 5 newest inbox mails with their Gmail `snippet`s (which ride
+  format=metadata for free, HTML entities decoded) pressed through the
+  deterministic `summarize` engine from understand.ts. Read-only, no confirm,
+  honest not-connected/unreachable replies. Still zero external LLM.
 
 **v33 — the correspondence round** (all in mail.ts — NAVI reads, replies, books):
 - **Inbox read**: "check my inbox" / "any new emails?" reads the 5 newest
@@ -310,6 +341,9 @@ created, first mood) — is 7+ days old, and only when there's data to review.
    Web lookups (DDG/Wikipedia) are the only network reads, silent, cached.
 6. **UI is LOCKED** (App.tsx and UI files) until Dian says otherwise. The
    agentic layer is server-side only — you never need the frontend.
+   (One sanctioned exception so far: v34's /email slash form in App.tsx's
+   email intercept — Dian requested that format explicitly. The lock stands
+   for everything else.)
 7. **One mission at a time** — focus is the feature, not a limitation.
 8. Caps everywhere (workflows 8, steps 5, mission steps 10, wins 10, habits 6).
    Every new list needs a cap and an eviction rule.
@@ -419,10 +453,23 @@ Post-v33 candidates, in rough order of value:
     two async condition sources now exist, so the seam may be worth it.
 19. **Reply chains** — the v33 reply drafts a fresh `Re:` mail; real
     In-Reply-To/References threading needs the source Message-ID header
-    (one more metadataHeader in searchInbox) and a threaded buildMime.
-20. **Digest reads** — "summarise my inbox" wants body snippets (the
-    `snippet` field already rides messages.list) fed through the existing
-    deterministic summarise engine (understand.ts) — still zero external LLM.
+    (one more metadataHeader in searchInbox), a threaded buildMime, AND
+    somewhere to keep the Message-ID between draft and send — `navi_emails`
+    has no headers column, so this needs DDL via the Management API
+    (management token held out-of-band; a v34 session skipped this rung for
+    exactly that reason).
+20. ~~**Digest reads**~~ — SHIPPED in v34 ("summarise my inbox": snippets
+    through understand.ts summarize; snippet rides format=metadata free).
+
+Post-v34 candidates:
+
+21. **Slash-form sends from chat** — "/email/…" currently only DRAFTS.
+    A trailing `/send` segment could stamp the v32 offer in the same turn
+    (like the "send an email to …" verb already does) — cheap, symmetrical,
+    still confirm-gated.
+22. **Digest depth** — the digest reads 5 snippets; "summarise the last
+    email from sam" (one mail, format=full body through summarize) is the
+    natural next read — still zero external LLM, still read-only.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -441,8 +488,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v30 | `d17c68d` | cross-platform round: Vision Board bridge (vision.ts), condition negations + streak thresholds, queue editing, reminder escalation, self-improvement gaps report |
 | v31 | `9f2ba3b` | stewardship round: chat-sessions bridge with two-step confirm (chats.ts), gaps curation (dismiss/clear), workflow show + step editing |
 | v32 | `c58829b` | real-tasks round: email bridge (mail.ts — draft/list/delete + REAL Gmail send behind the two-step confirm), workflow step reordering + renaming |
-| v33 | (see git) | correspondence round: inbox read, reply-from-context (by sender name), booked sends (closed time vocabulary + session-start runDueSends) |
+| v33 | `2dfbdf8` | correspondence round: inbox read, reply-from-context (by sender name), booked sends (closed time vocabulary + session-start runDueSends) |
+| v34 | (see git) | slash-command round: /email/to/subject/body shorthand (client + server, splitIntents-guarded), inbox digests through the summarise engine |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → **193**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → **196**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

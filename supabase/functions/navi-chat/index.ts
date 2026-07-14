@@ -87,7 +87,7 @@ import { tryBriefing } from './brief.ts';
 import { tryReview, reviewOffer } from './review.ts';
 import { tryVision } from './vision.ts';
 import { tryChats } from './chats.ts';
-import { tryMail, runDueSends } from './mail.ts';
+import { tryMail, runDueSends, isMailSlashAsk } from './mail.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -3258,7 +3258,7 @@ const KNOWLEDGE: KNode[] = [
   {
     triggers: ['email', 'send email', 'draft email', '/email', 'message someone', 'write email', 'compose email'],
     responses: [
-      "I can help you draft and send emails. Just include the recipient's email address and your message in the chat — I'll create a draft automatically. Or type /email followed by the recipient and your message.",
+      'I can help you draft and send emails. Type /email/recipient@example.com/Subject line/Body text — recipient, subject, then body, split by slashes. Or just include the recipient\'s address and your message in the chat and I\'ll draft it automatically.',
     ],
     priority: 2,
   },
@@ -4332,8 +4332,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // the reasoning engine further down. Commits (reply + any profile change)
     // only when at least two parts produced real answers; otherwise the whole
     // message falls through to the normal single-ask pipeline untouched.
+    // v34: a /email shorthand message is ONE command — its free-text body may
+    // carry "and"/"then", so it must never enter the multi-intent split.
     {
-      const intents = splitIntents(message);
+      const intents = isMailSlashAsk(message) ? [] : splitIntents(message);
       if (intents.length >= 2) {
         let prof = stored;
         const replies: string[] = [];

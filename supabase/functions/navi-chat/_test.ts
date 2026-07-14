@@ -62,6 +62,7 @@ import {
   parseMailDraft, isDraftListAsk, parseDraftDelete, parseDraftSend, tryMail,
   parseDraftSendLater, isInboxAsk, parseMailReply, isScheduledListAsk,
   parseScheduledCancel, parseSendWhen, runDueSends,
+  parseMailSlash, isMailSlashAsk, isInboxDigestAsk,
 } from './mail.ts';
 import type { Profile } from './memory.ts';
 
@@ -2516,4 +2517,61 @@ Deno.test('v33: a pending booking offer never captures unrelated conversation', 
   eq(await tryMail('what is 2+2', EMAIL, offer), null, 'math is not a confirmation');
   eq(await tryMail('schedule a meeting with sam', EMAIL, {}), null, 'meetings are not send bookings');
   eq(await tryMail('yes', EMAIL, {}), null, 'bare yes with nothing pending stays conversation');
+});
+
+// ── v34: the slash-command round ─────────────────────────────────────────────
+
+Deno.test('v34: parseMailSlash reads the /email shorthand, keeps case, teaches when malformed', () => {
+  eq(parseMailSlash('/email/sam@studio.com/Friday plans/See you at 7, bring the Mix.'),
+    { to: 'sam@studio.com', subject: 'Friday plans', body: 'See you at 7, bring the Mix.', wantSend: false }, 'the core slash ask');
+  eq(parseMailSlash('/email/SAM@Studio.com/Hi There/The Body keeps CASE'),
+    { to: 'sam@studio.com', subject: 'Hi There', body: 'The Body keeps CASE', wantSend: false }, 'the address lowercases; subject and body keep case');
+  eq(parseMailSlash('/email/me/Note to self/Remember the 9am call and then the studio'),
+    { to: 'me', subject: 'Note to self', body: 'Remember the 9am call and then the studio', wantSend: false }, '"me" rides through; "and then" is body, not a second ask');
+  eq(parseMailSlash('/email/sam@x.com/Mix notes/Bounce v2, then A/B the chorus/verse levels'),
+    { to: 'sam@x.com', subject: 'Mix notes', body: 'Bounce v2, then A/B the chorus/verse levels', wantSend: false }, 'the body keeps its own slashes');
+  eq(parseMailSlash('/ email / sam@x.com / Hi / Body text'),
+    { to: 'sam@x.com', subject: 'Hi', body: 'Body text', wantSend: false }, 'spaced slashes still read');
+
+  eq(parseMailSlash('/email/sam@x.com/only a subject'), 'malformed', 'a missing body is taught');
+  eq(parseMailSlash('/email/sam@x.com'), 'malformed', 'a bare recipient is taught');
+  eq(parseMailSlash('/email//Hi/Body'), 'malformed', 'an empty recipient is taught');
+  eq(parseMailSlash('/email sam@x.com hello there friend'), null, 'the legacy space form belongs to the client parser');
+  eq(parseMailSlash('either/or/neither/both'), null, 'slashy prose stays conversation');
+  eq(parseMailSlash('/email/me/goodbye/i want to die'), null, 'crisis language never enters an envelope');
+
+  eq(isMailSlashAsk('/email/a@b.co/s/b'), true, 'the split guard sees slash asks');
+  eq(isMailSlashAsk('remind me to pray and give me a verse'), false, 'ordinary compounds still split');
+});
+
+Deno.test('v34: slash asks through tryMail — honest address check, teaching, sign-in, offline', async () => {
+  const taught = await tryMail('/email/sam@x.com/only a subject', EMAIL, {});
+  if (!taught?.reply.includes('three parts')) throw new Error('a malformed slash ask is taught: ' + taught?.reply);
+  const bad = await tryMail('/email/not an address/Hi/Body here', EMAIL, {});
+  if (!bad?.reply.includes("doesn't look like an email address")) throw new Error('a bad address is answered honestly: ' + bad?.reply);
+  const anon = await tryMail('/email/sam@x.com/Hi/Body text', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous slash asks point at sign-in: ' + anon?.reply);
+
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
+  const offline = await tryMail('/email/me/Hi/Body text here', EMAIL, {});
+  if (!offline?.reply.includes("couldn't reach")) throw new Error('an unreachable slash draft is honest: ' + offline?.reply);
+});
+
+Deno.test('v34: isInboxDigestAsk is anchored; the digest fails honestly offline', async () => {
+  eq(isInboxDigestAsk('summarise my inbox'), true, 'the core digest ask');
+  eq(isInboxDigestAsk('summarize the email inbox'), true, 'z-spelling + email form');
+  eq(isInboxDigestAsk('digest my inbox'), true, 'digest verb');
+  eq(isInboxDigestAsk('inbox digest'), true, 'noun form');
+  eq(isInboxDigestAsk('give me an inbox summary'), true, 'give-me form');
+  eq(isInboxDigestAsk("what's new in my inbox"), true, 'question form');
+  eq(isInboxDigestAsk('check my inbox'), false, 'a plain check belongs to the reader');
+  eq(isInboxDigestAsk('summarise this article for me'), false, 'pasted-text summaries stay with understand.ts');
+  eq(isInboxDigestAsk('my inbox is a mess'), false, 'musings stay conversation');
+
+  const anon = await tryMail('summarise my inbox', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous digest points at sign-in: ' + anon?.reply);
+
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
+  const offline = await tryMail('summarise my inbox', EMAIL, {});
+  if (!offline?.reply.includes("couldn't reach")) throw new Error('an unreachable digest is honest: ' + offline?.reply);
 });

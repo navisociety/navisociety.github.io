@@ -68,6 +68,23 @@ function parseEmailDraft(text: string): EmailDraft | null {
   return { recipient, subject, body };
 }
 
+// v34: the slash form — /email/recipient@x.com/Subject/Body. Split on the
+// first three slashes only: the body keeps any slashes (and newlines) of its
+// own. Returns null when a part is missing or the recipient isn't an address.
+const EMAIL_EXACT_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+
+function parseSlashEmailDraft(text: string): EmailDraft | null {
+  const m = text.trim().match(/^\/\s*email\s*\/([\s\S]+)$/i);
+  if (!m) return null;
+  const parts = m[1].split('/');
+  if (parts.length < 3) return null;
+  const recipient = parts[0].trim();
+  const subject = parts[1].trim().slice(0, 120);
+  const body = parts.slice(2).join('/').trim();
+  if (!EMAIL_EXACT_REGEX.test(recipient) || !subject || !body) return null;
+  return { recipient, subject, body };
+}
+
 // True when a non-/email message both names an address AND uses an intent verb.
 function hasAutoEmailIntent(text: string): boolean {
   if (!EMAIL_REGEX.test(text)) return false;
@@ -282,13 +299,17 @@ export default function App() {
       }
 
       const userEmail = naviSession.email;
-      // For /email, strip the command word before parsing the recipient/body.
+      // v34: /email/recipient/subject/body is the slash form — parsed as three
+      // slash-split parts. A message that opens "/email/" is ONLY ever the
+      // slash form; anything else /email-prefixed falls to the free-form parse.
+      const isSlashForm = /^\/\s*email\s*\//i.test(text.trim());
+      // For legacy /email, strip the command word before parsing recipient/body.
       const payloadText = isEmailCommand ? text.replace(/^\/email\b[\s:]*/i, '').trim() : text;
-      const draft = parseEmailDraft(payloadText);
+      const draft = isSlashForm ? parseSlashEmailDraft(text) : parseEmailDraft(payloadText);
 
       if (!draft) {
         if (isEmailCommand) {
-          reply('To use the email tool, type: /email recipient@example.com Your message here.');
+          reply('To draft an email, type: /email/recipient@example.com/Subject line/Body text — recipient, subject, then body, split by slashes.');
           return;
         }
         // Auto-detect with no usable draft → fall through to normal inference.

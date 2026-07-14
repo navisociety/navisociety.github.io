@@ -2,6 +2,16 @@
 //
 // NAVI v32 — The email bridge: NAVI executes REAL tasks.
 // NAVI v33 — The correspondence round: NAVI reads, replies, and books sends.
+// NAVI v34 — The slash-command round: the /email shorthand + inbox digests.
+//
+//   "/email/sam@x.com/Subject line/Body text"        → a draft, parts split on
+//        slashes (recipient / subject / body; the body keeps its own slashes
+//        and its CASE — this is the one parser that reads the raw message).
+//        Same syntax the locked client teaches, so chat and workflow steps
+//        speak one shape. Drafts only — sending still takes the two-step yes.
+//   "summarise my inbox"                             → the 5 newest inbox
+//        mails with their snippets pressed through the deterministic
+//        summarise engine (understand.ts) — still zero external LLM.
 //
 //   "check my inbox" / "any new emails?"            → the 5 newest inbox mails
 //   "reply to the last email from sam [saying …]"   → a real Re: draft +
@@ -56,6 +66,7 @@
 
 import type { MailSend, Profile, ScheduledSend } from './memory.ts';
 import { todayInTZ } from './skills.ts';
+import { summarize } from './understand.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -161,6 +172,46 @@ export function parseMailDraft(message: string): MailDraftAsk | null {
   }
   if (!subject || CRISIS_RX.test(subject) || (body && CRISIS_RX.test(body))) return null;
   return { to, subject: subject.slice(0, MAX_SUBJECT), body, wantSend: m[1] === 'send' };
+}
+
+// v34: the /email shorthand — "/email/to/subject/body". The ONE mail parser
+// that reads the raw message (never tidy()): the body keeps its case, its
+// punctuation, and any slashes of its own. A message that opens "/email/" is
+// unmistakably ours, so a malformed one is TAUGHT ('malformed'), never dropped
+// into conversation — except crisis language, which steps aside as always.
+const SLASH_OPEN_RX = /^\/\s*email\s*\//i;
+
+/**
+ * v34: true when the message opens with the /email shorthand. Such a message
+ * is ONE command whose body is free text — index.ts uses this to keep it out
+ * of the multi-intent split (an "and" inside the body is body, not a second ask).
+ */
+export function isMailSlashAsk(message: string): boolean {
+  return SLASH_OPEN_RX.test(message.trim());
+}
+
+export function parseMailSlash(message: string): MailDraftAsk | 'malformed' | null {
+  const raw = message.trim();
+  if (!SLASH_OPEN_RX.test(raw)) return null;
+  if (raw.length > MAX_BODY + MAX_SUBJECT + 100) return 'malformed';
+  const parts = raw.replace(SLASH_OPEN_RX, '').split('/');
+  if (parts.length < 3) return 'malformed';
+  const toRaw = parts[0].trim().toLowerCase();
+  const subject = parts[1].trim().slice(0, MAX_SUBJECT);
+  const body = parts.slice(2).join('/').trim().slice(0, MAX_BODY);
+  if (!toRaw || !subject || !body) return 'malformed';
+  if (CRISIS_RX.test(subject) || CRISIS_RX.test(body)) return null;
+  return { to: toRaw, subject, body, wantSend: false };
+}
+
+// v34: digest reads — snippets, not just headers. Anchored like INBOX_RX.
+const DIGEST_RX =
+  /^(?:please )?(?:summari[sz]e|digest)(?: my| the)? (?:e?mail )?inbox(?: for me)?$|^(?:give me |show me )?(?:an |the |my )?inbox (?:summary|digest)$|^what'?s new in my inbox$/;
+
+/** v34: true for a "summarise my inbox" digest ask. */
+export function isInboxDigestAsk(message: string): boolean {
+  const t = tidy(message);
+  return !!t && t.length <= 60 && DIGEST_RX.test(t);
 }
 
 /** True for a "list my email drafts" read ask. */
@@ -477,10 +528,18 @@ async function sendViaGmail(g: GmailToken, draft: DraftRow): Promise<boolean> {
 
 // ── v33: the inbox read (metadata only — NAVI reads, it never deletes) ──────
 
-type InboxMsg = { id: string; from: string; subject: string; date: string };
+type InboxMsg = { id: string; from: string; subject: string; date: string; snippet: string };
 
 function hdr(headers: Array<{ name: string; value: string }> | undefined, name: string): string {
   return (headers ?? []).find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+}
+
+// Gmail snippets arrive HTML-escaped ("don&#39;t") — undo the common entities.
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
 }
 
 /** The newest inbox mails matching a Gmail query — or null when unreachable. */
@@ -506,6 +565,8 @@ async function searchInbox(g: GmailToken, query: string, max: number): Promise<I
         from: hdr(msg.payload?.headers, 'From'),
         subject: hdr(msg.payload?.headers, 'Subject'),
         date: hdr(msg.payload?.headers, 'Date'),
+        // v34: the preview Gmail already computed — rides format=metadata free.
+        snippet: typeof msg.snippet === 'string' ? decodeEntities(msg.snippet) : '',
       }));
   } catch {
     return null;
@@ -613,11 +674,15 @@ export async function tryMail(
   const confirmExplicit = CONFIRM_EXPLICIT_RX.test(t);
   const cancelBare = CANCEL_BARE_RX.test(t);
   const cancelExplicit = CANCEL_EXPLICIT_RX.test(t);
-  const draftAsk = parseMailDraft(message);
+  // v34: the /email shorthand outranks the prose parser; a malformed slash
+  // ask ("/email/me/hi" — body missing) is taught, never dropped.
+  const slashAsk = parseMailSlash(message);
+  const draftAsk = (slashAsk && slashAsk !== 'malformed' ? slashAsk : null) ?? parseMailDraft(message);
   const listAsk = draftAsk ? false : isDraftListAsk(message);
   const deleteN = draftAsk || listAsk ? null : parseDraftDelete(message);
   // v33: the new asks. All anchored and mutually exclusive with the old ones.
   const inboxAsk = isInboxAsk(message);
+  const digestAsk = isInboxDigestAsk(message); // v34
   const replyAsk = parseMailReply(message);
   const schedListAsk = isScheduledListAsk(message);
   const schedCancel = parseScheduledCancel(message);
@@ -637,7 +702,7 @@ export async function tryMail(
 
   const anyAsk = !!draftAsk || listAsk || deleteN !== null || sendN !== null ||
     laterAt !== null || laterProblem !== null || inboxAsk || !!replyAsk ||
-    schedListAsk || schedCancel !== null;
+    schedListAsk || schedCancel !== null || slashAsk === 'malformed' || digestAsk;
 
   // Bare yes/no with nothing pending is ordinary conversation — not ours.
   if (!pending && (confirmBare || cancelBare) && !confirmExplicit && !cancelExplicit) {
@@ -701,6 +766,13 @@ export async function tryMail(
   // A mail-explicit confirm/cancel with nothing pending gets pointed the right way.
   if (!pending && (confirmExplicit || cancelExplicit) && !anyAsk) {
     return { reply: 'There\'s no email waiting on a yes. Say "list my email drafts", then "send draft N" — I\'ll read it back and ask before anything real goes out.' };
+  }
+
+  // ── v34: a malformed /email is taught, never guessed at ───────────────────
+  if (slashAsk === 'malformed') {
+    return {
+      reply: 'That\'s the /email shape, but it needs three parts split by slashes: /email/someone@example.com/Subject line/Body text. The body can hold slashes of its own — only the first three cuts count.',
+    };
   }
 
   // ── "draft an email to … about …" ─────────────────────────────────────────
@@ -868,6 +940,24 @@ export async function tryMail(
     ).join('\n');
     return {
       reply: `The ${msgs.length === 1 ? 'newest mail' : `${msgs.length} newest mails`} in your inbox:\n${lines}\n\nSay "reply to the last email from …" and I'll draft the reply — I read your inbox, I never delete from it.`,
+    };
+  }
+
+  // ── v34: "summarise my inbox" — snippets through the summarise engine ─────
+  if (digestAsk) {
+    const g = await gmailToken(email);
+    if (g === null) return { reply: UNREACHABLE_INBOX };
+    if (g === 'not-connected') return { reply: NOT_CONNECTED_READ };
+    const msgs = await searchInbox(g, 'in:inbox', INBOX_PEEK);
+    if (msgs === null) return { reply: UNREACHABLE_INBOX };
+    if (!msgs.length) return { reply: 'Your inbox is clear — nothing to digest right now.' };
+    const lines = msgs.map((m, i) => {
+      const gist = summarize(m.snippet, 2, 180) || m.snippet.slice(0, 180);
+      const preview = gist ? ` — ${gist}` : '';
+      return `${i + 1}. ${fromName(m.from) || '(unknown sender)'}, "${m.subject || '(no subject)'}"${preview}`;
+    }).join('\n');
+    return {
+      reply: `The gist of your ${msgs.length === 1 ? 'newest mail' : `${msgs.length} newest mails`}:\n${lines}\n\nSay "reply to the last email from …" and I'll draft the reply — I read your inbox, I never delete from it.`,
     };
   }
 
