@@ -4688,7 +4688,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (!isCrisisReply(response)) {
         const t = todayInTZ('Africa/Johannesburg');
         const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
-        const daily = await runDailyWorkflows(stored, (part, prof) => answerIntent(part, email, prof), todayISO);
+        // v35: email rides along so board/inbox conditions can check the world.
+        const daily = await runDailyWorkflows(stored, (part, prof) => answerIntent(part, email, prof), todayISO, email);
         if (daily) {
           response = `${response}\n\n${daily.report}`;
           // Step side-effects and lastRun stamps ride into the final save.

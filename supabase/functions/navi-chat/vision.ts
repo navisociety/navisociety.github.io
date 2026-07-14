@@ -110,6 +110,16 @@ async function listItems(email: string): Promise<VisionItem[] | null> {
   }
 }
 
+/**
+ * v35: how many items are on the board — the async source behind the
+ * "my vision board is empty" workflow condition. Null when unreachable.
+ */
+export async function visionItemCount(email: string): Promise<number | null> {
+  if (!email) return null;
+  const items = await listItems(email);
+  return items === null ? null : items.length;
+}
+
 /** Pin a text goal onto the board. True on success. */
 async function addText(email: string, text: string, position: number): Promise<boolean> {
   if (!SUPABASE_URL || !SERVICE_KEY) return false;

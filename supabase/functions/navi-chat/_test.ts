@@ -1762,7 +1762,7 @@ Deno.test('v28: tryReview signs in the anonymous and leaves ordinary chat alone'
 // ── v29: the executive round — conditions, topic triggers, mission-aware
 // steps, mission queue, sparklines ───────────────────────────────────────────
 
-Deno.test('v29: evalCondition covers the closed vocabulary and refuses the rest', () => {
+Deno.test('v29: evalCondition covers the closed vocabulary and refuses the rest', async () => {
   const today = '2026-07-09';
   const p: Profile = {
     habits: [{ name: 'pray', created: '2026-07-01', lastDone: today, streak: 3, best: 3, total: 3 }],
@@ -1770,17 +1770,17 @@ Deno.test('v29: evalCondition covers the closed vocabulary and refuses the rest'
     lastMood: 'low',
     mission: { goal: 'get fit', steps: ['s1'], done: 0, created: '2026-07-01T08:00:00Z', touched: '2026-07-02T08:00:00Z' },
   };
-  eq(evalCondition("i haven't logged my pray habit", p, today), false, 'logged today, so not-logged is false');
-  eq(evalCondition('i logged my pray habit', p, today), true, 'positive form');
-  eq(evalCondition("i haven't logged my run habit", p, today), true, 'untracked habit counts as not logged');
-  eq(evalCondition('a reminder is due', p, today), true, 'undated reminder is due');
-  eq(evalCondition('a reminder is due', {}, today), false, 'no reminders, nothing due');
-  eq(evalCondition('my mood is down', p, today), true, 'mood aliases map (down → low)');
-  eq(evalCondition('my mood is good', p, today), false, 'mood mismatch');
-  eq(evalCondition('my mission is idle', p, today), true, 'untouched 7 days is idle');
-  eq(evalCondition('i have a mission', p, today), true, 'mission existence');
-  eq(evalCondition('i have a mission', {}, today), false, 'no mission');
-  eq(evalCondition('mercury is in retrograde', p, today), null, 'unknown conditions stay unknown');
+  eq(await evalCondition("i haven't logged my pray habit", p, today), false, 'logged today, so not-logged is false');
+  eq(await evalCondition('i logged my pray habit', p, today), true, 'positive form');
+  eq(await evalCondition("i haven't logged my run habit", p, today), true, 'untracked habit counts as not logged');
+  eq(await evalCondition('a reminder is due', p, today), true, 'undated reminder is due');
+  eq(await evalCondition('a reminder is due', {}, today), false, 'no reminders, nothing due');
+  eq(await evalCondition('my mood is down', p, today), true, 'mood aliases map (down → low)');
+  eq(await evalCondition('my mood is good', p, today), false, 'mood mismatch');
+  eq(await evalCondition('my mission is idle', p, today), true, 'untouched 7 days is idle');
+  eq(await evalCondition('i have a mission', p, today), true, 'mission existence');
+  eq(await evalCondition('i have a mission', {}, today), false, 'no mission');
+  eq(await evalCondition('mercury is in retrograde', p, today), null, 'unknown conditions stay unknown');
   eq(parseConditionStep('when my mood is low: encourage me'), { cond: 'my mood is low', body: 'encourage me' }, 'condition step splits at the colon');
   eq(parseConditionStep('a verse about hope'), null, 'ordinary steps are not conditions');
 });
@@ -1964,22 +1964,22 @@ Deno.test('v30: tryVision — sign-in gate, mission pin needs a mission, chatter
   }
 });
 
-Deno.test('v30: evalCondition — negations and streak thresholds join the vocabulary', () => {
+Deno.test('v30: evalCondition — negations and streak thresholds join the vocabulary', async () => {
   const t = '2026-07-09';
-  eq(evalCondition('no reminders are due', {}, t), true, 'no reminders at all');
-  eq(evalCondition('no reminders are due', { reminders: [{ text: 'x', created: t }] }, t), false, 'an undated reminder is due');
-  eq(evalCondition("my mood isn't low", { lastMood: 'good' }, t), true, 'mood negation holds');
-  eq(evalCondition('my mood is not low', { lastMood: 'low' }, t), false, 'mood negation fails on a low day');
-  eq(evalCondition("my mood isn't wobbly", {}, t), null, 'unknown mood words still teach, never guess');
-  eq(evalCondition('i have no mission', {}, t), true, 'no mission');
-  eq(evalCondition("i don't have a mission", { mission: { goal: 'g', steps: ['s'], done: 0, created: t } }, t), false, 'mission negation with one active');
+  eq(await evalCondition('no reminders are due', {}, t), true, 'no reminders at all');
+  eq(await evalCondition('no reminders are due', { reminders: [{ text: 'x', created: t }] }, t), false, 'an undated reminder is due');
+  eq(await evalCondition("my mood isn't low", { lastMood: 'good' }, t), true, 'mood negation holds');
+  eq(await evalCondition('my mood is not low', { lastMood: 'low' }, t), false, 'mood negation fails on a low day');
+  eq(await evalCondition("my mood isn't wobbly", {}, t), null, 'unknown mood words still teach, never guess');
+  eq(await evalCondition('i have no mission', {}, t), true, 'no mission');
+  eq(await evalCondition("i don't have a mission", { mission: { goal: 'g', steps: ['s'], done: 0, created: t } }, t), false, 'mission negation with one active');
   const streaky: Profile = { habits: [{ name: 'prayer', created: '2026-07-01', streak: 5, best: 5, total: 5 }] };
-  eq(evalCondition('my prayer streak is under 3', streaky, t), false, '5 is not under 3');
-  eq(evalCondition('my prayer streak is under 3', {}, t), true, 'an untracked habit has a streak of 0');
-  eq(evalCondition('my prayer streak is at least 5', streaky, t), true, 'at least = inclusive');
-  eq(evalCondition('my prayer streak is over 5', streaky, t), false, 'over = strict');
-  eq(evalCondition('my prayer streak is over 4', streaky, t), true, 'over holds above the bar');
-  eq(evalCondition('the sky is blue', {}, t), null, 'the vocabulary stays closed');
+  eq(await evalCondition('my prayer streak is under 3', streaky, t), false, '5 is not under 3');
+  eq(await evalCondition('my prayer streak is under 3', {}, t), true, 'an untracked habit has a streak of 0');
+  eq(await evalCondition('my prayer streak is at least 5', streaky, t), true, 'at least = inclusive');
+  eq(await evalCondition('my prayer streak is over 5', streaky, t), false, 'over = strict');
+  eq(await evalCondition('my prayer streak is over 4', streaky, t), true, 'over holds above the bar');
+  eq(await evalCondition('the sky is blue', {}, t), null, 'the vocabulary stays closed');
 });
 
 Deno.test('v30: queue editing — move to front reorders, honestly', async () => {
@@ -2574,4 +2574,85 @@ Deno.test('v34: isInboxDigestAsk is anchored; the digest fails honestly offline'
   if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
   const offline = await tryMail('summarise my inbox', EMAIL, {});
   if (!offline?.reply.includes("couldn't reach")) throw new Error('an unreachable digest is honest: ' + offline?.reply);
+});
+
+// ── v35: the awareness round ─────────────────────────────────────────────────
+
+const stubSources = (vision: number | null, unread: number | 'not-connected' | null) => {
+  const calls: string[] = [];
+  return {
+    calls,
+    sources: {
+      visionCount: (_e: string) => { calls.push('vision'); return Promise.resolve(vision); },
+      inboxUnread: (_e: string) => { calls.push('inbox'); return Promise.resolve(unread); },
+    },
+  };
+};
+
+Deno.test('v35: evalCondition looks at the world — board and inbox, lazily, honestly', async () => {
+  const t = '2026-07-14';
+
+  const empty = stubSources(0, 0);
+  eq(await evalCondition('my vision board is empty', {}, t, EMAIL, empty.sources), true, 'an empty board is empty');
+  eq(await evalCondition("my vision board isn't empty", {}, t, EMAIL, empty.sources), false, 'an empty board is not not-empty');
+  eq(await evalCondition('i have no new email', {}, t, EMAIL, empty.sources), true, 'zero unread is a clear inbox');
+  eq(await evalCondition('my inbox is clear', {}, t, EMAIL, empty.sources), true, 'clear-inbox form');
+  eq(await evalCondition('i have new email', {}, t, EMAIL, empty.sources), false, 'zero unread is no new email');
+
+  const busy = stubSources(3, 2);
+  eq(await evalCondition('my vision board is empty', {}, t, EMAIL, busy.sources), false, 'three items is not empty');
+  eq(await evalCondition('my vision board is not empty', {}, t, EMAIL, busy.sources), true, 'not-empty holds');
+  eq(await evalCondition('i have new email', {}, t, EMAIL, busy.sources), true, 'two unread is new email');
+  eq(await evalCondition('i have unread emails', {}, t, EMAIL, busy.sources), true, 'unread form');
+  eq(await evalCondition('i have no new emails', {}, t, EMAIL, busy.sources), false, 'a busy inbox is not clear');
+
+  const offline = stubSources(null, null);
+  eq(await evalCondition('my vision board is empty', {}, t, EMAIL, offline.sources), 'unreachable', 'an unreachable board is honest');
+  eq(await evalCondition('i have new email', {}, t, EMAIL, offline.sources), 'unreachable', 'an unreachable inbox is honest');
+
+  const unlinked = stubSources(0, 'not-connected');
+  eq(await evalCondition('i have new email', {}, t, EMAIL, unlinked.sources), 'not-connected', 'no Gmail link is its own verdict');
+  eq(await evalCondition('i have no new email', {}, t, EMAIL, unlinked.sources), 'not-connected', 'the negation needs Gmail too');
+
+  // Lazy: profile and unknown conditions never touch the world.
+  const spy = stubSources(0, 0);
+  await evalCondition('i have a mission', {}, t, EMAIL, spy.sources);
+  await evalCondition('mercury is in retrograde', {}, t, EMAIL, spy.sources);
+  eq(spy.calls, [], 'profile and unknown conditions never call a source');
+  eq(await evalCondition('my vision board is beautiful', {}, t, EMAIL, spy.sources), null, 'the vocabulary stays closed');
+});
+
+Deno.test('v35: world conditions steer workflow steps — run, skip, honest cannot-check', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = {
+    workflows: [{
+      name: 'aware',
+      steps: ['when my vision board is empty: encourage me', 'when i have new email: a verse about diligence'],
+      created: 'now',
+    }],
+  };
+
+  const emptyWorld = stubSources(0, 0);
+  const out1 = await tryAgent('run my aware workflow', EMAIL, profile, run, emptyWorld.sources);
+  if (!out1?.reply.includes('Step 1 — encourage me')) throw new Error('an empty board runs the step: ' + out1?.reply);
+  if (!out1?.reply.includes(`Step 2 — skipped ("when i have new email" isn't the case right now)`)) {
+    throw new Error('a clear inbox skips the mail step: ' + out1?.reply);
+  }
+  eq(ran, ['encourage me'], 'only the true condition executed');
+
+  const busyWorld = stubSources(3, 2);
+  const out2 = await tryAgent('run my aware workflow', EMAIL, profile, run, busyWorld.sources);
+  if (!out2?.reply.includes('skipped ("when my vision board is empty"')) throw new Error('a full board skips: ' + out2?.reply);
+  if (!out2?.reply.includes('Step 2 — a verse about diligence')) throw new Error('unread mail runs the step: ' + out2?.reply);
+
+  const offlineWorld = stubSources(null, null);
+  const out3 = await tryAgent('run my aware workflow', EMAIL, profile, run, offlineWorld.sources);
+  if (!out3?.reply.includes(`couldn't check "my vision board is empty"`)) throw new Error('unreachable is honest: ' + out3?.reply);
+  if (!out3?.reply.includes('every step was skipped')) throw new Error('all-skipped summary holds: ' + out3?.reply);
+
+  const unlinkedWorld = stubSources(0, 'not-connected');
+  const out4 = await tryAgent('run my aware workflow', EMAIL, profile, run, unlinkedWorld.sources);
+  if (!out4?.reply.includes('needs your Gmail')) throw new Error('a missing Gmail link is named: ' + out4?.reply);
+
+  eq(profile.workflows?.[0].steps.length, 2, 'the original profile is never mutated');
 });

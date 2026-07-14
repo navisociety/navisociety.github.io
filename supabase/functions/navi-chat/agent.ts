@@ -1,6 +1,16 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35 below)
+//
+// v35 additions (the awareness round):
+//   - CONDITION VOCABULARY 3.0 — the async seam. evalCondition is now async
+//     and takes injected ConditionSources; conditions can look OUTSIDE the
+//     profile: "my vision board is empty" / "isn't empty" (vision.ts
+//     visionItemCount) and "i have new email" / "i have no new email"
+//     (mail.ts inboxUnreadCount, the user's own Gmail). Sources are fetched
+//     LAZILY — only when their phrase matched. A source that can't answer
+//     yields an honest skip note ('unreachable' / 'not-connected'), never a
+//     guess. Profile conditions are untouched.
 //
 // v30 additions (the cross-platform round):
 //   - CONDITION VOCABULARY 2.0 — negations ("no reminders are due", "my mood
@@ -69,11 +79,34 @@
 import type { Mission, Profile, Workflow } from './memory.ts';
 import { stepsForGoal } from './plan.ts';
 import { todayInTZ } from './skills.ts';
+import { visionItemCount } from './vision.ts';
+import { inboxUnreadCount } from './mail.ts';
 
 export type AgentRunner = (
   part: string,
   profile: Profile,
 ) => Promise<{ reply: string; profile?: Profile }>;
+
+// v35: the async condition seam — conditions that look OUTSIDE the profile
+// (the vision board, the inbox). Injected so tests can stub the world; the
+// defaults read the real board and the real Gmail. A source that can't answer
+// returns null ('unreachable' to the caller) — a skipped step, never a guess.
+export type ConditionSources = {
+  visionCount: (email: string) => Promise<number | null>;
+  inboxUnread: (email: string) => Promise<number | 'not-connected' | null>;
+};
+
+const REAL_SOURCES: ConditionSources = {
+  visionCount: visionItemCount,
+  inboxUnread: inboxUnreadCount,
+};
+
+/**
+ * v35: what a condition evaluation can say. true/false run or skip the step;
+ * null is "not in the vocabulary" (teach); 'unreachable' and 'not-connected'
+ * are honest can't-check verdicts — the step is skipped and the note says why.
+ */
+export type ConditionVerdict = boolean | null | 'unreachable' | 'not-connected';
 
 const MAX_WORKFLOWS = 8;
 const MAX_STEPS = 5;
@@ -213,7 +246,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -241,15 +274,19 @@ function streakOf(profile: Profile, spoken: string): number {
 }
 
 /**
- * Evaluate a closed-vocabulary condition against the profile. Returns true /
- * false, or null for a condition NAVI doesn't understand — the caller skips
- * the step and teaches the vocabulary instead of guessing.
+ * Evaluate a closed-vocabulary condition. Profile conditions answer from the
+ * profile alone; v35 world conditions (vision board, inbox) go through the
+ * injected sources — lazily, only when their phrase actually matched. Returns
+ * true/false, null for a condition NAVI doesn't understand (the caller skips
+ * the step and teaches the vocabulary), or an honest can't-check verdict.
  */
-export function evalCondition(
+export async function evalCondition(
   cond: string,
   profile: Profile,
   todayISO: string,
-): boolean | null {
+  email = '',
+  sources: ConditionSources = REAL_SOURCES,
+): Promise<ConditionVerdict> {
   let m = cond.match(/^i haven'?t (?:logged|done|kept) my (.+?) habit(?: today)?$/);
   if (m) return !habitLoggedToday(profile, m[1], todayISO);
   m = cond.match(/^i(?:'ve| have)? (?:logged|did|done|kept) my (.+?) habit(?: today)?$/);
@@ -286,6 +323,31 @@ export function evalCondition(
   if (/^i have (?:a|an)(?: active)? mission$/.test(cond)) return !!profile.mission;
   // v30: the mission negation — "when i have no mission: …" nudges the restart.
   if (/^i (?:don'?t have a|have no)(?: active)? mission$/.test(cond)) return !profile.mission;
+
+  // v35: board-aware conditions — the board lives outside the profile, so
+  // these are the first conditions that LOOK at the world. Unreachable board
+  // → honest skip, never a guess.
+  if (/^my vision board is empty$/.test(cond)) {
+    const n = await sources.visionCount(email);
+    return n === null ? 'unreachable' : n === 0;
+  }
+  if (/^my vision board (?:isn'?t|is not) empty$|^(?:something|there) is on my vision board$/.test(cond)) {
+    const n = await sources.visionCount(email);
+    return n === null ? 'unreachable' : n > 0;
+  }
+  // v35: inbox-aware conditions — unread mail through the user's own Gmail.
+  if (/^i have (?:new|unread) e?mails?$|^there(?:'s| is| are) (?:new|unread) e?mails?(?: in my inbox)?$/.test(cond)) {
+    const n = await sources.inboxUnread(email);
+    if (n === null) return 'unreachable';
+    if (n === 'not-connected') return 'not-connected';
+    return n > 0;
+  }
+  if (/^i have no (?:new|unread) e?mails?$|^no (?:new|unread) e?mails?$|^my inbox is clear$/.test(cond)) {
+    const n = await sources.inboxUnread(email);
+    if (n === null) return 'unreachable';
+    if (n === 'not-connected') return 'not-connected';
+    return n === 0;
+  }
   return null;
 }
 
@@ -645,6 +707,8 @@ async function runWorkflow(
   profile: Profile,
   run: AgentRunner,
   topic?: string,
+  email = '',
+  sources?: ConditionSources,
 ): Promise<{ reply: string; profile?: Profile }> {
   let prof = profile;
   let changed = false;
@@ -664,10 +728,22 @@ async function runWorkflow(
     // profile as it stands NOW (earlier steps' changes included).
     const cond = parseConditionStep(step);
     if (cond) {
-      const holds = evalCondition(cond.cond, prof, todayISO);
+      const holds = await evalCondition(cond.cond, prof, todayISO, email, sources);
       if (holds === null) {
         skipped++;
         blocks.push(`Step ${i + 1} — skipped: I don't know the condition "${cond.cond}". I understand: ${KNOWN_CONDITIONS}.`);
+        continue;
+      }
+      // v35: world conditions can honestly fail to answer — skip, say why,
+      // never guess.
+      if (holds === 'unreachable') {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: I couldn't check "${cond.cond}" just now (the source wasn't reachable), so I played it safe.`);
+        continue;
+      }
+      if (holds === 'not-connected') {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: "${cond.cond}" needs your Gmail, and it isn't connected. Open Email in the Tools menu and tap Connect Gmail.`);
         continue;
       }
       if (!holds) {
@@ -827,6 +903,7 @@ export async function tryAgent(
   email: string,
   profile: Profile,
   run: AgentRunner,
+  sources?: ConditionSources, // v35: tests stub the world; production omits it
 ): Promise<{ reply: string; profile?: Profile } | null> {
   const t = tidy(message);
   if (!t) return null;
@@ -1255,7 +1332,7 @@ export async function tryAgent(
         reply: `"${wf.name}" has a * slot in its steps, so it needs a topic each run. Say it like:\nrun my ${wf.name} workflow on grace`,
       };
     }
-    return await runWorkflow(wf, profile, run, toRun.topic);
+    return await runWorkflow(wf, profile, run, toRun.topic, email, sources);
   }
 
   // ── Trigger phrases — an exact match runs the whole routine ───────────────
@@ -1268,7 +1345,7 @@ export async function tryAgent(
           reply: `That's the trigger for "${fired.name}", but it has a * slot, so it needs a topic. Run it like:\nrun my ${fired.name} workflow on grace`,
         };
       }
-      return await runWorkflow(fired, profile, run);
+      return await runWorkflow(fired, profile, run, undefined, email, sources);
     }
 
     // v29: open triggers — "study *" fires on "study <anything>", and the
@@ -1279,7 +1356,7 @@ export async function tryAgent(
       if (!t.startsWith(prefix)) continue;
       const topic = t.slice(prefix.length).trim();
       if (!topic || topic.length > 60 || CRISIS_RX.test(topic)) continue;
-      return await runWorkflow(w, profile, run, topic);
+      return await runWorkflow(w, profile, run, topic, email, sources);
     }
   }
 
@@ -1296,6 +1373,8 @@ export async function runDailyWorkflows(
   profile: Profile,
   run: AgentRunner,
   todayISO: string,
+  email = '', // v35: world conditions inside daily workflows need the account
+  sources?: ConditionSources,
 ): Promise<{ report: string; profile: Profile } | null> {
   // v27: slotted workflows never auto-run — there's no topic to fill the * with.
   const due = (profile.workflows ?? []).filter((w) =>
@@ -1305,7 +1384,7 @@ export async function runDailyWorkflows(
   let prof = profile;
   const reports: string[] = [];
   for (const wf of due) {
-    const out = await runWorkflow(wf, prof, run);
+    const out = await runWorkflow(wf, prof, run, undefined, email, sources);
     if (out.profile) prof = out.profile;
     reports.push(`— Your daily "${wf.name}" workflow —\n\n${out.reply}`);
     prof = {

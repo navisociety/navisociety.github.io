@@ -573,6 +573,29 @@ async function searchInbox(g: GmailToken, query: string, max: number): Promise<I
   }
 }
 
+/**
+ * v35: the unread inbox count — the async source behind the "i have new
+ * email" workflow condition. 'not-connected' when Gmail isn't linked, null
+ * when unreachable. Reads resultSizeEstimate off one messages.list call.
+ */
+export async function inboxUnreadCount(email: string): Promise<number | 'not-connected' | null> {
+  if (!email) return null;
+  const g = await gmailToken(email);
+  if (g === null) return null;
+  if (g === 'not-connected') return 'not-connected';
+  try {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=${encodeURIComponent('in:inbox is:unread')}`,
+      { headers: { Authorization: `Bearer ${g.token}` }, signal: AbortSignal.timeout(6000) },
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    return typeof d.resultSizeEstimate === 'number' ? d.resultSizeEstimate : 0;
+  } catch {
+    return null;
+  }
+}
+
 /** The bare address out of a From header ("Sam <sam@x.com>" → sam@x.com), or ''. */
 function fromAddress(from: string): string {
   const angled = from.match(/<([^>]+)>/);

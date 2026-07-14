@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-14, at **v34** (the slash-command round).
+Last updated: 2026-07-14, at **v35** (the awareness round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -91,6 +91,19 @@ the slash form is parsed client-side for literal addresses (Dian asked for
 this format explicitly — the one UI exception since the lock), and the
 edge-side parser covers "me" + workflow steps.
 
+v35 additions: THE ASYNC CONDITION SEAM. evalCondition (agent.ts) is now
+async: `evalCondition(cond, profile, todayISO, email?, sources?)` returning
+`ConditionVerdict = boolean | null | 'unreachable' | 'not-connected'`.
+Sources (`ConditionSources`: visionCount from vision.ts, inboxUnread from
+mail.ts) are injected — tests stub them, production defaults to the real
+board/Gmail — and fetched LAZILY, only when a world phrase matched, so
+profile conditions cost nothing new. runWorkflow/tryAgent/runDailyWorkflows
+all grew optional trailing `email`/`sources` params (index.ts's
+runDailyWorkflows call now passes email). The two can't-check verdicts skip
+the step with an honest note (unreachable → "played it safe";
+not-connected → points at the Email tool's Connect button) — never a guess,
+and never mistaken for the teach-the-vocabulary null.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -101,7 +114,25 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v33) · mail.ts (v32→v34)
+### agent.ts — workflows & missions (v25→v35) · mail.ts (v32→v35)
+
+**v35 — the awareness round** (agent.ts + one helper each in vision.ts/mail.ts):
+- **World conditions** (roadmap #12 + #18 — the async evalCondition seam):
+  workflow steps can now open with "when my vision board is empty:",
+  "when my vision board isn't empty:", "when i have new email:" (also
+  "unread"), or "when i have no new email:" / "when my inbox is clear:".
+  The board answers via vision.ts `visionItemCount`; the inbox via mail.ts
+  `inboxUnreadCount` (one messages.list `is:unread` call, resultSizeEstimate,
+  through the user's OWN Gmail token). Both are checked live mid-run, per
+  step, profile changes threaded as before.
+- **Honest can't-check verdicts**: 'unreachable' (source down → step skipped,
+  "played it safe") and 'not-connected' (no Gmail link → step skipped, points
+  at the Connect button). Distinct from null, which still teaches the closed
+  vocabulary (KNOWN_CONDITIONS now lists the four new phrases).
+- **The seam itself**: `ConditionSources` injected through tryAgent /
+  runDailyWorkflows (optional trailing params — production omits them, tests
+  stub the world). Lazy evaluation: a source is only fetched when its phrase
+  matched, so v29/v30 profile conditions are exactly as cheap as before.
 
 **v34 — the slash-command round** (mail.ts + the one sanctioned App.tsx touch):
 - **The /email shorthand**: `/email/recipient/subject/body` — three parts cut
@@ -425,9 +456,8 @@ With the v29/v30 backlog cleared, the next rungs for the execution line:
     destructive/irreversible: TWO-STEP CONFIRM (offer stamp on the profile +
     fresh-bare-yes window + re-read at execute), and each new stamp must slot
     into the pipeline order so only ONE offer can consume a bare "yes".
-12. **Board-aware conditions** — "when my vision board is empty: …" needs an
-    async evalCondition seam (today it's sync); only worth it with a second
-    async condition source.
+12. ~~**Board-aware conditions**~~ — SHIPPED in v35 (the async evalCondition
+    seam; "when my vision board is empty / isn't empty: …").
 13. ~~**Owner analytics on gaps**~~ — SHIPPED in v31 (tryGapsManage: dismiss
     gap N / clear my learning list, owner-only).
 14. ~~**Workflow reordering / renaming**~~ — SHIPPED in v32 (move step N
@@ -448,9 +478,8 @@ With v32 the execution line has its first real-world actuator. Next rungs:
 
 Post-v33 candidates, in rough order of value:
 
-18. **Inbox-aware conditions** — "when i have new email: …" workflow steps
-    share the async seam problem with #12 (evalCondition is sync today);
-    two async condition sources now exist, so the seam may be worth it.
+18. ~~**Inbox-aware conditions**~~ — SHIPPED in v35 ("when i have new email /
+    no new email: …" over the user's own Gmail; not-connected skips honestly).
 19. **Reply chains** — the v33 reply drafts a fresh `Re:` mail; real
     In-Reply-To/References threading needs the source Message-ID header
     (one more metadataHeader in searchInbox), a threaded buildMime, AND
@@ -466,10 +495,26 @@ Post-v34 candidates:
 21. **Slash-form sends from chat** — "/email/…" currently only DRAFTS.
     A trailing `/send` segment could stamp the v32 offer in the same turn
     (like the "send an email to …" verb already does) — cheap, symmetrical,
-    still confirm-gated.
+    still confirm-gated. (NOTE: Dian declared the email tool COMPLETE after
+    v34 — don't build #21/#22 without being asked.)
 22. **Digest depth** — the digest reads 5 snippets; "summarise the last
     email from sam" (one mail, format=full body through summarize) is the
-    natural next read — still zero external LLM, still read-only.
+    natural next read — still zero external LLM, still read-only. (Same
+    note as #21: email tool declared complete.)
+
+Post-v35 candidates (the execution line beyond email):
+
+23. **More world conditions on the seam** — the seam is built; each new
+    source is now ~10 lines: "when i have chats older than N days:"
+    (chats.ts counts), "when a booked send is waiting:" (profile-only,
+    could even be sync). Add sources sparingly; every one is a live network
+    call inside a workflow run.
+24. **Condition-aware briefing line** — "brief me" could append one line of
+    world state (board count, unread count) — read-only, but it makes the
+    briefing a network call; weigh against the instant-reply feel.
+25. **Workflow dry-run** — "what would my aware workflow do right now?"
+    evaluates every condition and reports run/skip WITHOUT executing steps —
+    pure read, great with world conditions, no new safety surface.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -489,8 +534,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v31 | `9f2ba3b` | stewardship round: chat-sessions bridge with two-step confirm (chats.ts), gaps curation (dismiss/clear), workflow show + step editing |
 | v32 | `c58829b` | real-tasks round: email bridge (mail.ts — draft/list/delete + REAL Gmail send behind the two-step confirm), workflow step reordering + renaming |
 | v33 | `2dfbdf8` | correspondence round: inbox read, reply-from-context (by sender name), booked sends (closed time vocabulary + session-start runDueSends) |
-| v34 | (see git) | slash-command round: /email/to/subject/body shorthand (client + server, splitIntents-guarded), inbox digests through the summarise engine |
+| v34 | `3271dfa` | slash-command round: /email/to/subject/body shorthand (client + server, splitIntents-guarded), inbox digests through the summarise engine |
+| v35 | (see git) | awareness round: async evalCondition seam — board-aware and inbox-aware workflow conditions with honest unreachable/not-connected skips |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → **196**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → **198**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
