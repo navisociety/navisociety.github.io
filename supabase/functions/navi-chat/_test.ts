@@ -64,7 +64,7 @@ import {
   parseMailDraft, isDraftListAsk, parseDraftDelete, parseDraftSend, tryMail,
   parseDraftSendLater, isInboxAsk, parseMailReply, isScheduledListAsk,
   parseScheduledCancel, parseSendWhen, runDueSends,
-  parseMailSlash, isMailSlashAsk, isInboxDigestAsk,
+  parseMailSlash, isMailSlashAsk, isInboxDigestAsk, isSendStep,
 } from './mail.ts';
 import type { Profile } from './memory.ts';
 
@@ -3245,4 +3245,123 @@ Deno.test('v41: deviceReceipts surfaces unread receipts once, then clears them',
   eq(got.profile.deviceTasks?.length, 2, 'only the receipts clear');
   eq(got.profile.deviceTasks?.map((x) => x.text), ['update', 'push the repo'], 'waiting work survives');
   eq(deviceReceipts(got.profile), null, 'read once — a second session-start stays quiet');
+});
+
+// ── v42: the trust round — run-time send confirm + run-report headline ──────
+
+Deno.test('v42: isSendStep knows the closed send vocabulary', () => {
+  eq(isSendStep('send an email to me about the day'), true, 'send verb');
+  eq(isSendStep('send an email to sam@x.com about plans saying see you at 6'), true, 'send with body');
+  eq(isSendStep('send draft 2'), true, 'numbered send');
+  eq(isSendStep('send draft 2 tomorrow morning'), true, 'a booking is a send too');
+  eq(isSendStep('draft an email to me about the day'), false, 'a draft is harmless');
+  eq(isSendStep('/email/me/subject/body'), false, 'the slash form only drafts');
+  eq(isSendStep('a verse about hope'), false, 'ordinary steps untouched');
+  eq(isSendStep('i want to send an email to my boss someday'), false, 'loose sentences untouched');
+});
+
+Deno.test('v42: a run with send steps is offered, not run — yes runs it, no parks it', async () => {
+  const mk = () => stubRunner();
+  let profile: Profile = { workflows: [
+    { name: 'mailer', steps: ['send an email to me about *', 'a verse about *'], created: 'now', trigger: 'mail me *' },
+  ] };
+
+  // The offer: nothing runs, the stamp rides.
+  let s = mk();
+  const offer = await tryAgent('run my mailer workflow on the harvest', EMAIL, profile, s.run);
+  if (!offer?.reply.includes('sends real email')) throw new Error('the offer names the danger: ' + offer?.reply);
+  eq(offer?.profile?.runSend?.name, 'mailer', 'stamp carries the name');
+  eq(offer?.profile?.runSend?.topic, 'the harvest', 'stamp carries the topic');
+  eq(s.ran, [], 'NOTHING ran on the offer');
+
+  // "no" parks it — cleared, still nothing run.
+  s = mk();
+  const parked = await tryAgent('no', EMAIL, offer!.profile!, s.run);
+  if (!parked?.reply.includes('Parked')) throw new Error('no parks the run: ' + parked?.reply);
+  eq(parked?.profile?.runSend, undefined, 'stamp cleared on no');
+  eq(s.ran, [], 'nothing ran on no');
+
+  // A fresh "yes" runs it, topic and all (stubRunner never stamps mailSend,
+  // so the programmatic confirm is exercised in the next test).
+  s = mk();
+  const again = await tryAgent('run my mailer workflow on the harvest', EMAIL, profile, s.run);
+  const ranIt = await tryAgent('yes', EMAIL, again!.profile!, s.run);
+  eq(s.ran, ['send an email to me about the harvest', 'a verse about the harvest'], 'yes runs every step with the topic filled');
+  if (!ranIt?.reply.includes('complete')) throw new Error('the confirmed run reports: ' + ranIt?.reply);
+  eq(ranIt?.profile?.runSend, undefined, 'stamp consumed by the run');
+
+  // Stale offers refuse the bare yes, honestly.
+  s = mk();
+  const stale: Profile = { ...profile, runSend: { name: 'mailer', asked: new Date(Date.now() - 11 * 60 * 1000).toISOString() } };
+  const refused = await tryAgent('yes', EMAIL, stale, s.run);
+  if (!refused?.reply.includes('stale')) throw new Error('a stale offer refuses: ' + refused?.reply);
+  eq(refused?.profile?.runSend, undefined, 'stale stamp cleared');
+  eq(s.ran, [], 'nothing ran stale');
+
+  // A vanished workflow answers honestly.
+  s = mk();
+  const ghost: Profile = { runSend: { name: 'ghost', asked: new Date().toISOString() } };
+  const gone = await tryAgent('yes', EMAIL, ghost, s.run);
+  if (!gone?.reply.includes("isn't on the shelf")) throw new Error('a deleted workflow is honest: ' + gone?.reply);
+
+  // Bare yes/no with no stamp stays conversation.
+  s = mk();
+  eq(await tryAgent('yes', EMAIL, {}, s.run), null, 'bare yes with nothing pending is not ours');
+  eq(await tryAgent('no', EMAIL, {}, s.run), null, 'bare no with nothing pending is not ours');
+
+  // The trigger path gates too — a trigger is live, so it offers.
+  s = mk();
+  const trig = await tryAgent('mail me the harvest', EMAIL, profile, s.run);
+  if (!trig?.reply.includes('sends real email')) throw new Error('triggers gate sends: ' + trig?.reply);
+  eq(trig?.profile?.runSend?.topic, 'the harvest', 'trigger topic rides the stamp');
+  eq(s.ran, [], 'the trigger ran nothing');
+});
+
+Deno.test('v42: a confirmed send step consumes its offer through the real yes-machinery', async () => {
+  // This runner stamps a fresh mailSend offer, exactly like the live engine
+  // does for "send an email to …". With no SUPABASE_URL in the test env the
+  // draft shelf is unreachable — mail.ts answers honestly and keeps its
+  // retry stamp, and runWorkflow must CLEAR it so no later bare "yes" fires.
+  const stamping = (part: string, p: Profile) => Promise.resolve({
+    reply: `[drafted: ${part}]`,
+    profile: { ...p, mailSend: { id: 'row1', to: EMAIL, subject: 'the day', asked: new Date().toISOString() } },
+  });
+  const profile: Profile = {
+    workflows: [{ name: 'mailer', steps: ['send an email to me about the day'], created: 'now' }],
+    runSend: { name: 'mailer', asked: new Date().toISOString() },
+  };
+  const out = await tryAgent('yes', EMAIL, profile, stamping);
+  if (!out?.reply.includes('[drafted: send an email to me about the day]')) throw new Error('the step executed: ' + out?.reply);
+  if (!out?.reply.includes('cleared that pending send')) throw new Error('the dangling stamp is named and cleared: ' + out?.reply);
+  eq(out?.profile?.mailSend, undefined, 'no mailSend stamp survives the run');
+  eq(out?.profile?.runSend, undefined, 'no runSend stamp survives the run');
+});
+
+Deno.test('v42: scheduled runs hold send steps back; the report headline counts', async () => {
+  const { run, ran } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'morning', steps: ['send an email to me about the day', 'a verse about peace'], created: 'now', daily: true },
+  ] };
+  const due = await runDailyWorkflows(profile, run, '2026-07-15');
+  if (!due) throw new Error('the daily workflow was due');
+  eq(ran, ['a verse about peace'], 'the send step never executed');
+  if (!due.report.includes('held back')) throw new Error('the hold is honest: ' + due.report);
+  if (!due.report.includes('a scheduled run never sends')) throw new Error('the reason is named: ' + due.report);
+  if (!due.report.includes('(1 of 2 steps ran)')) throw new Error('the #27 headline counts: ' + due.report);
+  if (!due.report.includes('1 send step held for your yes')) throw new Error('the footer counts the hold: ' + due.report);
+});
+
+Deno.test('v42: previews and creation name send steps before anything real happens', async () => {
+  const { run } = stubRunner();
+  const created = await tryAgent('create a workflow called mailer: send an email to me about the week, then a verse about hope', EMAIL, {}, run);
+  if (!created?.reply.includes('Heads up: this workflow sends real email')) throw new Error('creation warns: ' + created?.reply);
+
+  const preview = await tryAgent('preview my mailer workflow', EMAIL, created!.profile!, run);
+  if (!preview?.reply.includes('sends real email — the run itself will ask')) throw new Error('the preview tags the send step: ' + preview?.reply);
+  eq(preview?.profile, undefined, 'previews still change nothing');
+
+  const help = await tryAgent('what are workflows', EMAIL, {}, run);
+  if (!help?.reply.includes('send steps back entirely')) throw new Error('help teaches the send law: ' + help?.reply);
+  if (!help?.reply.includes('run backup on my pc')) throw new Error('help covers devices now: ' + help?.reply);
+  if (!help?.reply.includes('every month on the 15th')) throw new Error('help covers monthly schedules: ' + help?.reply);
 });

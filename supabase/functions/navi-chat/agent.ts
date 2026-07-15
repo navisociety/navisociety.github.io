@@ -1,6 +1,22 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v41 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v42 below)
+//
+// v42 additions (the trust round — roadmap #17, built at Dian's explicit ask):
+//   - RUN-TIME SEND CONFIRM — a workflow whose steps SEND email ("send an
+//     email to me about *", "send draft 2") never runs unconfirmed. The RUN
+//     itself is offered ("one of its steps sends real email — yes?"), stamped
+//     on Profile.runSend (10-minute window), and a fresh "yes" re-runs it
+//     with sends enabled: each send step drafts through the normal engines,
+//     then its offer stamp is consumed through mail.ts's own yes-machinery
+//     (draft re-read, honest failures, the user's own Gmail) — the exact path
+//     a spoken yes takes. Scheduled runs NEVER send: daily/weekly/monthly
+//     runs hold send steps back with an honest note. tryAgent runs first in
+//     the pipeline, so this stamp outranks chat cleanup, which outranks the
+//     plain mail send — one offer per bare "yes", always deterministic.
+//   - RUN-REPORT HEADLINE (#27 reshaped) — every scheduled report header now
+//     carries "(N of M steps ran)", computed FROM the run itself — zero extra
+//     condition fetches, unlike the pre-run preview the roadmap feared.
 //
 // v41 additions (the rhythm round):
 //   - MONTHLY WORKFLOWS — "run my budget workflow every month [on the 15th]"
@@ -124,11 +140,11 @@
 // the whole message, bare "done"/"what's next" are only intercepted while a
 // mission is actually active, and crisis language is never treated as a goal.
 
-import type { Mission, Profile, Workflow, WorkflowRun } from './memory.ts';
+import type { Mission, Profile, RunSend, Workflow, WorkflowRun } from './memory.ts';
 import { stepsForGoal } from './plan.ts';
 import { hourInTZ, todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
-import { inboxUnreadCount } from './mail.ts';
+import { inboxUnreadCount, isSendStep, tryMail } from './mail.ts';
 import { chatsIdleCount } from './chats.ts';
 
 export type AgentRunner = (
@@ -250,6 +266,40 @@ const MONTHLY_ON_DAY_FIRST_RX = new RegExp(
 const MONTHLY_OFF_RX = new RegExp(
   `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:(?:every|each) month|monthly)$`,
 );
+
+// ── v42: the run-time send confirm ──────────────────────────────────────────
+// A workflow whose steps SEND real email never runs unconfirmed. Same bare
+// yes/no shapes as mail.ts and chats.ts; "run it" is the run-flavoured yes.
+const RUN_CONFIRM_WINDOW_MS = 10 * 60 * 1000;
+const RUN_YES_RX = /^(?:yes|yes please|yep|yeah|do it|go ahead|run it|confirm)$/;
+const RUN_NO_RX = /^(?:no|nope|don'?t|never ?mind|cancel(?: the run)?)$/;
+
+/** The send steps of a workflow (condition prefixes read through). */
+function sendStepsOf(wf: Workflow): string[] {
+  return wf.steps.filter((s) => {
+    const cond = parseConditionStep(s);
+    return isSendStep(cond ? cond.body : s);
+  });
+}
+
+// The offer: nothing runs, the stamp rides the profile, a fresh yes re-runs.
+function offerRunWithSends(
+  wf: Workflow,
+  topic: string | undefined,
+  profile: Profile,
+  sends: string[],
+): { reply: string; profile: Profile } {
+  const stamp: RunSend = topic
+    ? { name: wf.name, topic, asked: new Date().toISOString() }
+    : { name: wf.name, asked: new Date().toISOString() };
+  const what = sends.length === 1
+    ? `one of its steps sends real email ("${sends[0]}")`
+    : `${sends.length} of its steps send real email`;
+  return {
+    reply: `Hold on — ${what}, and a send can't be unsent, so nothing ran yet. Say "yes" within 10 minutes and I'll run "${wf.name}" sends and all; "no" parks it. (Scheduled auto-runs never send — only a live run with your yes does.)`,
+    profile: { ...profile, runSend: stamp },
+  };
+}
 
 // v41: "the 1st of every month" reads back the way people say it.
 function ordinal(n: number): string {
@@ -837,8 +887,10 @@ WORKFLOWS — saved routines I run on command:
 - start a step with a condition and it only runs when it's true: when i haven't logged my prayer habit: remind me to pray — negations work too (when no reminders are due / when my mood isn't low / when my prayer streak is under 3)
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
-- run my morning workflow every day (auto-runs on your first chat of the day)
-- list my workflows / delete my morning workflow
+- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when my pc has results waiting
+- run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
+- a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
+- list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
 - show my morning workflow (reads the steps back numbered), then edit in place: replace step 2 of my morning workflow with … / remove step 2 from my morning workflow / add a step to my morning workflow: …
 - preview my morning workflow (or "what would my morning workflow do right now?") — I check every condition against the live world and report what would run and what would skip, without executing anything
 
@@ -855,6 +907,9 @@ BEYOND THE CHAT — I execute on your other tools too:
 - add … to my vision board / what's on my vision board / remove … from my vision board (put my mission on my vision board pins the active goal)
 - a reminder that's waited 3+ days gets offered a promotion: "make that reminder a habit" or "make that reminder a mission step"
 - how many chats do i have / clean up my old chats — I count what's been idle 30+ days and ALWAYS ask before deleting anything
+- email: draft an email to me about … / check my inbox / summarise my inbox / reply to the last email from sam / send draft 2 tomorrow morning — real sends ALWAYS take a spoken yes
+- devices: add a task for my laptop: push the repo / what's waiting on my laptop / run backup on my pc (the runner on that device executes only names it already knows) / any results from my pc
+- export my reminders as a calendar — an .ics block your calendar app imports
 
 And anytime you want the full picture — mission, habits, reminders, mood — just say "brief me".
 
@@ -950,11 +1005,13 @@ async function runWorkflow(
   email = '',
   sources?: ConditionSources,
   via: WorkflowRun['via'] = 'manual', // v39: who started this run
-): Promise<{ reply: string; profile?: Profile }> {
+  allowSend = false, // v42: true ONLY on the yes-confirmed re-run
+): Promise<{ reply: string; profile?: Profile; counts?: { executed: number; total: number } }> {
   let prof = profile;
   let changed = false;
   let executed = 0;
   let skipped = 0;
+  let held = 0; // v42: send steps a scheduled run held back
   const t = todayInTZ('Africa/Johannesburg');
   const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
   const onTopic = topic ? ` on "${topic}"` : '';
@@ -1005,6 +1062,53 @@ async function runWorkflow(
       continue;
     }
 
+    // v42: send steps. The manual and trigger paths are gated BEFORE
+    // runWorkflow (the run itself is offered), so an unconfirmed send step
+    // reaching here means a SCHEDULED run — and a scheduled run never sends.
+    if (isSendStep(step)) {
+      if (!allowSend) {
+        held++;
+        blocks.push(`Step ${i + 1} — held back: this step sends real email, and a scheduled run never sends without you. Say "run my ${wf.name} workflow" yourself and I'll ask first.`);
+        continue;
+      }
+      const drafted = await run(step, prof);
+      if (drafted.profile) {
+        prof = drafted.profile;
+        changed = true;
+      }
+      if (!drafted.reply) {
+        blocks.push(`Step ${i + 1} — ${step}:\nI couldn't execute this one.`);
+        continue;
+      }
+      let block = `Step ${i + 1} — ${step}:\n${drafted.reply}`;
+      // The step stamped the usual send offer — your yes to THIS RUN is the
+      // confirm, so consume it through the same machinery a spoken yes uses
+      // (draft re-read at execute, honest failures, the user's own Gmail).
+      if (prof.mailSend) {
+        const fired = await tryMail('yes', email, prof);
+        if (fired) {
+          block += `\n${fired.reply}`;
+          if (fired.profile) {
+            prof = fired.profile;
+            changed = true;
+          }
+        }
+        // mail.ts keeps its stamp on a retryable failure — but a stamp left
+        // dangling after the run would make some LATER bare "yes" send mail
+        // the user wasn't looking at. Clear it; the retry is by hand.
+        if (prof.mailSend) {
+          const c: Profile = { ...prof };
+          delete c.mailSend;
+          prof = c;
+          changed = true;
+          block += '\n(I cleared that pending send — say "send draft N" to retry it by hand.)';
+        }
+      }
+      executed++;
+      blocks.push(block);
+      continue;
+    }
+
     const out = await run(step, prof);
     if (out.profile) {
       prof = out.profile;
@@ -1017,21 +1121,31 @@ async function runWorkflow(
       blocks.push(`Step ${i + 1} — ${step}:\nI couldn't execute this one.`);
     }
   }
-  const attempted = wf.steps.length - skipped;
+  const attempted = wf.steps.length - skipped - held;
   const skipNote = skipped
     ? ` (${skipped} skipped by ${skipped === 1 ? 'its condition' : 'their conditions'})`
     : '';
+  const holdNote = held
+    ? ` (${held} send step${held === 1 ? '' : 's'} held for your yes)`
+    : '';
   blocks.push(
     attempted === 0
-      ? `Workflow "${wf.name}" finished — every step was skipped by its condition today.`
+      ? held
+        ? `Workflow "${wf.name}" finished — nothing ran${skipNote}${holdNote}.`
+        : `Workflow "${wf.name}" finished — every step was skipped by its condition today.`
       : executed === attempted
-        ? `Workflow "${wf.name}" complete — all ${executed} step${executed === 1 ? '' : 's'} executed${skipNote}.`
-        : `Workflow "${wf.name}" finished — ${executed} of ${attempted} steps executed${skipNote}.`,
+        ? `Workflow "${wf.name}" complete — all ${executed} step${executed === 1 ? '' : 's'} executed${skipNote}${holdNote}.`
+        : `Workflow "${wf.name}" finished — ${executed} of ${attempted} steps executed${skipNote}${holdNote}.`,
   );
   // v39: every real run leaves a receipt — the profile now always changes.
   prof = { ...prof, workflowLog: stampRun(prof.workflowLog, wf.name, todayISO, via) };
   changed = true;
-  return { reply: blocks.join('\n\n'), profile: changed ? prof : undefined };
+  return {
+    reply: blocks.join('\n\n'),
+    profile: changed ? prof : undefined,
+    // v42 (#27): the caller's headline — counted FROM the run, never guessed.
+    counts: { executed, total: wf.steps.length },
+  };
 }
 
 /**
@@ -1053,15 +1167,19 @@ async function previewWorkflow(
   for (let i = 0; i < wf.steps.length; i++) {
     const step = topic ? wf.steps[i].replaceAll('*', topic) : wf.steps[i];
     const cond = parseConditionStep(step);
+    // v42: send steps are named in the preview — the real run pauses for a yes.
+    const sendTag = isSendStep(cond ? cond.body : step)
+      ? ' [sends real email — the run itself will ask for your yes first]'
+      : '';
     if (!cond) {
       wouldRun++;
-      lines.push(`${i + 1}. would run — ${step}`);
+      lines.push(`${i + 1}. would run — ${step}${sendTag}`);
       continue;
     }
     const holds = await evalCondition(cond.cond, profile, todayISO, email, sources);
     if (holds === true) {
       wouldRun++;
-      lines.push(`${i + 1}. would run — ${cond.body} ("when ${cond.cond}" holds right now)`);
+      lines.push(`${i + 1}. would run — ${cond.body} ("when ${cond.cond}" holds right now)${sendTag}`);
     } else if (holds === false) {
       lines.push(`${i + 1}. would skip — "when ${cond.cond}" isn't the case right now`);
     } else if (holds === 'unreachable') {
@@ -1205,6 +1323,31 @@ export async function tryAgent(
 
   const workflows = profile.workflows ?? [];
   const queue = profile.missionQueue ?? [];
+
+  // ── v42: a pending run-with-sends offer consumes its yes/no FIRST ─────────
+  // tryAgent is the pipeline's first try*, so this stamp outranks a pending
+  // chat cleanup (tryChats) and a pending mail send (tryMail) on a bare yes —
+  // deterministic, never a race. Bare yes/no with no stamp falls through.
+  const pendingRun = profile.runSend;
+  if (pendingRun && (RUN_YES_RX.test(t) || RUN_NO_RX.test(t))) {
+    const cleared: Profile = { ...profile };
+    delete cleared.runSend;
+    if (RUN_NO_RX.test(t)) {
+      return { reply: `Parked — "${pendingRun.name}" didn't run and nothing was sent. It's still saved whenever you want it.`, profile: cleared };
+    }
+    const fresh = Date.now() - Date.parse(pendingRun.asked) <= RUN_CONFIRM_WINDOW_MS;
+    if (!fresh) {
+      return {
+        reply: `That run offer went stale — I won't put real email in the world on a bare "yes" this long after asking. Say "run my ${pendingRun.name} workflow" again and I'll ask fresh.`,
+        profile: cleared,
+      };
+    }
+    const wf = workflows.find((w) => w.name === pendingRun.name);
+    if (!wf) {
+      return { reply: `The "${pendingRun.name}" workflow isn't on the shelf anymore — nothing ran, nothing was sent.`, profile: cleared };
+    }
+    return await runWorkflow(wf, cleared, run, pendingRun.topic, email, sources, 'manual', true);
+  }
 
   // ── v29: mission queue commands — valid with or without an active mission ─
   const toQueue = parseMissionQueue(message);
@@ -1551,8 +1694,12 @@ export async function tryAgent(
     }
     const stepLines = wf.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
     const replaced = existing >= 0 ? ` (replaced the old "${created.name}")` : '';
+    // v42: name the send steps up front, so the run-time confirm never surprises.
+    const sendsNote = sendStepsOf(wf).length
+      ? '\n\nHeads up: this workflow sends real email, so every run will pause and ask for your yes first — and scheduled auto-runs will hold those steps back entirely.'
+      : '';
     return {
-      reply: `Saved "${created.name}"${replaced} — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines}\n\nSay "run my ${created.name} workflow" and I'll execute every step. Want it on a trigger? Say: when I say good morning, run my ${created.name} workflow.`,
+      reply: `Saved "${created.name}"${replaced} — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines}\n\nSay "run my ${created.name} workflow" and I'll execute every step. Want it on a trigger? Say: when I say good morning, run my ${created.name} workflow.${sendsNote}`,
       profile: { ...profile, workflows: nextList },
     };
   }
@@ -1685,6 +1832,9 @@ export async function tryAgent(
         reply: `"${wf.name}" has a * slot in its steps, so it needs a topic each run. Say it like:\nrun my ${wf.name} workflow on grace`,
       };
     }
+    // v42: send steps gate the run itself — offer first, run on the yes.
+    const sends = sendStepsOf(wf);
+    if (sends.length) return offerRunWithSends(wf, toRun.topic, profile, sends);
     return await runWorkflow(wf, profile, run, toRun.topic, email, sources);
   }
 
@@ -1698,6 +1848,9 @@ export async function tryAgent(
           reply: `That's the trigger for "${fired.name}", but it has a * slot, so it needs a topic. Run it like:\nrun my ${fired.name} workflow on grace`,
         };
       }
+      // v42: a trigger is spoken live, so the send confirm works here too.
+      const sends = sendStepsOf(fired);
+      if (sends.length) return offerRunWithSends(fired, undefined, profile, sends);
       return await runWorkflow(fired, profile, run, undefined, email, sources, 'trigger');
     }
 
@@ -1709,6 +1862,8 @@ export async function tryAgent(
       if (!t.startsWith(prefix)) continue;
       const topic = t.slice(prefix.length).trim();
       if (!topic || topic.length > 60 || CRISIS_RX.test(topic)) continue;
+      const sends = sendStepsOf(w);
+      if (sends.length) return offerRunWithSends(w, topic, profile, sends);
       return await runWorkflow(w, profile, run, topic, email, sources, 'trigger');
     }
   }
@@ -1747,7 +1902,10 @@ export async function runDailyWorkflows(
     const via = wf.daily ? 'daily' : wf.day ? 'weekly' : 'monthly';
     const out = await runWorkflow(wf, prof, run, undefined, email, sources, via);
     if (out.profile) prof = out.profile;
-    reports.push(`— Your ${wf.daily ? 'daily' : wf.day ?? 'monthly'} "${wf.name}" workflow —\n\n${out.reply}`);
+    // v42 (#27): a glanceable headline, counted from the run itself — the
+    // zero-cost cousin of the pre-run preview the roadmap weighed and feared.
+    const head = out.counts ? ` (${out.counts.executed} of ${out.counts.total} step${out.counts.total === 1 ? '' : 's'} ran)` : '';
+    reports.push(`— Your ${wf.daily ? 'daily' : wf.day ?? 'monthly'} "${wf.name}" workflow${head} —\n\n${out.reply}`);
     prof = {
       ...prof,
       workflows: (prof.workflows ?? []).map((w) =>

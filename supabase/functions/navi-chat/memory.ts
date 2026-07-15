@@ -70,6 +70,9 @@ export type Profile = {
   // back and asks; consumed on yes (the draft is re-read at execute time),
   // cancelled on no, refused stale. Managed by mail.ts.
   mailSend?: MailSend;
+  // v42: a pending run-with-sends offer — a workflow with send steps never
+  // runs unconfirmed. Managed by agent.ts (see RunSend below).
+  runSend?: RunSend;
   // v33: sends waiting for their moment ("send draft 2 tomorrow morning") —
   // confirmed at schedule time, fired by the first session after the time
   // passes (NAVI only speaks when spoken to). Cap 3. Managed by mail.ts.
@@ -90,6 +93,14 @@ export type DeviceTask = { device: string; text: string; created: string; auto?:
 
 // v39: one workflow run receipt — `via` says who started it. (+v41 monthly)
 export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' };
+
+// v42: one pending run-with-sends offer. A workflow whose steps SEND email
+// never runs unconfirmed — the run itself is offered ("this run wants to
+// send real email — yes?"), and a fresh bare "yes" (10 min) re-runs it with
+// sends enabled. `name`/`topic` are what to re-run; `asked` is when.
+// Consumed by tryAgent, which runs FIRST in the pipeline — so this stamp
+// outranks a pending chat cleanup, which outranks a pending mail send.
+export type RunSend = { name: string; topic?: string; asked: string };
 
 // v31: one pending chat cleanup. `cutoff` is the ISO timestamp a session's
 // updated_at must be OLDER than to be deleted; `count` is what NAVI counted

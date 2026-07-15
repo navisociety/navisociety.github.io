@@ -244,6 +244,19 @@ export function parseDraftSendLater(message: string): { n: number; when: string 
   return m ? { n: parseInt(m[1], 10), when: m[2].trim() } : null;
 }
 
+/**
+ * v42: true when this text asks to SEND (or book a send of) real email —
+ * "send an email to …", "send draft N", "send draft N tomorrow morning".
+ * agent.ts uses it to gate workflow runs behind the run-time confirm: a
+ * routine carrying a send step never runs (and a scheduled run never sends)
+ * without a fresh yes. Draft-only asks ("draft an email to …", "/email/…")
+ * are NOT send steps — they stay harmless everywhere.
+ */
+export function isSendStep(text: string): boolean {
+  if (parseMailDraft(text)?.wantSend) return true;
+  return parseDraftSend(text) !== null || parseDraftSendLater(text) !== null;
+}
+
 /** v33: true for a "check my inbox" / "any new emails" read ask. */
 export function isInboxAsk(message: string): boolean {
   const t = tidy(message);

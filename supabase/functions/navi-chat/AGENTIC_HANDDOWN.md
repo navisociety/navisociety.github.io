@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v41** (the rhythm round).
+Last updated: 2026-07-15, at **v42** (the trust round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -148,6 +148,20 @@ carries its own CRISIS_RX) so the crisis nodes own the message. The /write
 help node lives in index.ts NODES with its navi-model.ts mirror (the
 sanctioned v34 pattern — the mirror is the offline fallback, not UI).
 
+v42 additions: no new pipeline position — the run-time send confirm lives
+entirely inside tryAgent/runWorkflow (agent.ts) plus ONE mail.ts export
+(isSendStep). THE PRECEDENCE LAW GREW A LEVEL: tryAgent is the pipeline's
+first try*, so a pending Profile.runSend consumes a bare "yes"/"no" before
+tryChats' cleanup, which still outranks tryMail's send — one offer per bare
+yes, deterministic, three levels deep. The confirmed re-run enters
+runWorkflow with allowSend=true (a trailing param, default false); each
+send step drafts through answerIntent, then its mailSend stamp is consumed
+by calling tryMail('yes', …) programmatically — the same yes-machinery a
+spoken confirm uses — and ANY stamp still standing afterwards is cleared
+(an unreachable shelf keeps mail.ts's retry stamp; left dangling, a later
+unrelated bare "yes" would fire it). runWorkflow also now returns optional
+`counts` — runDailyWorkflows' #27 headline reads it, nobody else needs to.
+
 v41 additions: ONE new session-start position — deviceReceipts (tasks.ts)
 sits right after runDueSends inside the crisis guard. It is profile-only and
 FREE (the runner already wrote its results onto the deviceTasks row the
@@ -181,7 +195,38 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v41) · mail.ts (v32→v35) · tasks.ts (v39→v41) · compose.ts (v21→v40)
+### agent.ts — workflows & missions (v25→v42) · mail.ts (v32→v42) · tasks.ts (v39→v41) · compose.ts (v21→v40)
+
+**v42 — the trust round** (agent.ts + mail.ts isSendStep — roadmap #17 and
+#27, built at Dian's EXPLICIT "implement all those steps" direction, which
+also covered the runner setup on this PC and the help refresh):
+- **The run-time send confirm** (#17): a workflow whose steps SEND email
+  ("send an email to me about *", "send draft 2", "send draft 2 tomorrow
+  morning" — the closed isSendStep vocabulary; plain drafts stay harmless)
+  never runs unconfirmed. Manual runs AND live trigger runs are gated
+  BEFORE runWorkflow: the run itself is offered ("one of its steps sends
+  real email — yes?"), stamped on Profile.runSend (name/topic/asked,
+  10-minute window), nothing executes. A fresh "yes" re-runs with sends
+  enabled: the send step drafts normally, then its offer stamp is consumed
+  through mail.ts's own yes-machinery (draft re-read, honest failures, the
+  user's own Gmail), and any stamp still standing is cleared with a note —
+  no dangling send ever waits behind a later bare "yes". "No" parks it;
+  stale offers refuse honestly; a vanished workflow answers honestly.
+  SCHEDULED runs never send: daily/weekly/monthly runs hold send steps
+  back ("held back: … a scheduled run never sends without you"), counted
+  separately from condition skips. Previews tag send steps; creation warns
+  ("Heads up: this workflow sends real email …").
+- **The report headline** (#27, reshaped): every scheduled report header
+  now reads "— Your daily "X" workflow (2 of 4 steps ran) —", counted FROM
+  the run via runWorkflow's new `counts` return — zero extra condition
+  fetches, unlike the pre-run preview the roadmap weighed and feared.
+- **Help refresh** (the discovery debt): HELP_TEXT now teaches the v38-v42
+  surface — weekly/monthly schedules, world conditions (all five sources +
+  calendar/clock/device), the send law, run receipts, email commands,
+  device tasks + runner, and the ICS export.
+- **Runner setup**: this PC (device "pc") carries navi-runner/.env
+  (key pending), tasks.config.json (hello / pull the site / disk space),
+  and run-runner.cmd (`node --env-file` launcher, committed — it's generic).
 
 **v41 — the rhythm round** (agent.ts + one export in tasks.ts + one
 session-start wiring — the three natural rungs the v39/v40 hand-downs named,
@@ -757,14 +802,20 @@ NAVI_DEVICE) before its first real run — the chat half is live and tested.
 
 Post-v41 status: the deterministic execution line has now consumed every
 rung that doesn't need Dian or DDL. What remains, all gated:
-- #17 workflow steps that send (run-time confirm) — ONLY if Dian asks.
+- ~~#17 workflow steps that send~~ — SHIPPED in v42 (Dian asked: "implement
+  all those steps"). The run-time confirm, exactly as sketched.
 - #19 reply threading — blocked on a navi_emails DDL (management token
   out-of-band).
 - #21/#22 — email tool declared COMPLETE; don't touch unasked.
-- #27 preview-before-daily — doubles condition fetches; decide with Dian.
-- The runner's first real run — needs Dian's device setup.
-A genuinely new rung beyond these needs a new bridge table (Create/Share
-tools are still localStorage stand-ins) or a fresh direction from Dian.
+- ~~#27 preview-before-daily~~ — SHIPPED in v42, reshaped: a headline counted
+  FROM the run (zero extra fetches), not a doubled-fetch pre-run preview.
+- The runner's first real run — v42 set up this PC (config + launcher);
+  waiting ONLY on the service key landing in navi-runner/.env.
+
+Post-v42 status: #19 (DDL) and #21/#22 (declared complete) are the only
+named rungs left, both gated. A genuinely new rung needs a new bridge table
+(Create/Share tools are still localStorage stand-ins) or a fresh direction
+from Dian — ask, don't invent.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -791,8 +842,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v38 | `00445c4` | tempo round: weekly workflows (run every <weekday>, the v26 channel) + calendar/clock conditions (weekday/weekend/time-of-day, sync and free) |
 | v39 | `c92d992` | hands round: device task queue + name-only runner contract (tasks.ts, navi-runner/), ICS calendar export, workflow run receipts, briefing world line (#24) |
 | v40 | `5bfbfed`+`d906065` | muse round: /write slash command (free-text writing prompts, splitIntents-guarded) + new creative kinds (story/song/letter/speech/quote), generative story assembly, char-code variant seed |
-| v41 | (see git) | rhythm round: monthly workflows (every month on the Nth, 1-28 only), device-task conditions (tasks/results waiting, sync), runner receipts at session-start (free, read-once) |
+| v41 | `0538da0` | rhythm round: monthly workflows (every month on the Nth, 1-28 only), device-task conditions (tasks/results waiting, sync), runner receipts at session-start (free, read-once) |
+| v42 | (see git) | trust round: run-time send confirm (#17 — Profile.runSend, three-level yes precedence, scheduled runs never send), report headline (#27 reshaped, zero-cost), help refresh, runner set up on Dian's PC |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → **221**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → **226**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
