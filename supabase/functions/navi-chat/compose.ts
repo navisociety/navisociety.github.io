@@ -123,6 +123,19 @@ export const WRITE_USAGE =
   `• /write a letter to my future self\n` +
   `I can write stories, poems, songs, prayers, letters, speeches, quotes, affirmations, captions, apologies, thank-yous, and motivational pieces.`;
 
+// Asking ABOUT the command must teach it, deterministically — the fuzzy node
+// layer loses these asks to older writing/creativity nodes, so the anchored
+// intercept here (tryCompose runs before the nodes) owns them. Note that
+// "/write help" must be caught BEFORE parseWriteSlash, or "help" becomes a
+// story topic.
+const WRITE_HELP_RX =
+  /^(?:what(?:'s| is) (?:the )?\/write(?: command)?|how (?:do i|to) use \/write|\/write help|help (?:me )?with \/write)$/;
+
+function isWriteHelpAsk(message: string): boolean {
+  const t = message.toLowerCase().replace(/[.!?]+\s*$/, '').replace(/\s+/g, ' ').trim();
+  return WRITE_HELP_RX.test(t);
+}
+
 const MAX_PROMPT = 300;
 
 /**
@@ -382,6 +395,7 @@ function renderCompose(ask: ComposeAsk, profile: ComposeProfile, seed: number): 
  * a prayer about strength") and the v40 /write slash form.
  */
 export function tryCompose(message: string, profile: ComposeProfile = {}): string {
+  if (isWriteHelpAsk(message)) return WRITE_USAGE;
   const slash = parseWriteSlash(message);
   if (slash === 'malformed') return WRITE_USAGE;
   if (slash === 'crisis') return ''; // the crisis nodes own this message

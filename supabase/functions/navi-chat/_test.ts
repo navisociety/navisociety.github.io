@@ -795,6 +795,9 @@ Deno.test('/write is taught when malformed and steps aside on crisis', () => {
   eq(tryCompose('/write'), WRITE_USAGE, 'malformed is taught, never dropped');
   eq(parseWriteSlash('/write a story about how i want to die'), 'crisis', 'crisis prompt detected');
   eq(tryCompose('/write a story about how i want to die'), '', 'crisis steps aside for the crisis nodes');
+  eq(tryCompose('what is /write?'), WRITE_USAGE, 'asking about the command teaches it');
+  eq(tryCompose('/write help'), WRITE_USAGE, 'help ask is usage, never a story about help');
+  eq(tryCompose('how do i use /write'), WRITE_USAGE, 'how-to ask teaches it');
 });
 
 Deno.test('tryCompose renders /write pieces and the new kinds', () => {
