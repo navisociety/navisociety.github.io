@@ -1,0 +1,6 @@
+{
+  "hello": "echo NAVI runner is alive on this phone",
+  "battery": "termux-battery-status",
+  "storage": "df -h /data | tail -1",
+  "device info": "uname -o -m"
+}
