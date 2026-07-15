@@ -1,6 +1,19 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v37 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v38 below)
+//
+// v38 additions (the tempo round):
+//   - WEEKLY WORKFLOWS — "run my sabbath workflow every sunday" schedules the
+//     v26 daily machinery onto ONE weekday (Workflow.day, SA time). Same
+//     session-start channel, same lastRun stamp, same slot refusal; "stop
+//     running my X workflow every sunday" (or the daily off form) clears the
+//     whole schedule. A workflow is daily OR weekly, never both.
+//   - CALENDAR & CLOCK CONDITIONS — "when it's monday:", "when it isn't
+//     friday:", "when it's the weekend:", "when it's a weekday:", "when it's
+//     morning/afternoon/evening/night:" (+ negations). The day answers from
+//     todayISO, the hour from the SA clock (skills.ts hourInTZ) — sync, free,
+//     no source, and they light up in dry-run previews automatically.
+//     Segments: morning 5-11, afternoon 12-16, evening 17-21, night 22-4.
 //
 // v37 additions (the horizon round):
 //   - MISSION DRY-RUN — "what would finish my mission?" / "preview my mission"
@@ -101,7 +114,7 @@
 
 import type { Mission, Profile, Workflow } from './memory.ts';
 import { stepsForGoal } from './plan.ts';
-import { todayInTZ } from './skills.ts';
+import { hourInTZ, todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
 import { inboxUnreadCount } from './mail.ts';
 import { chatsIdleCount } from './chats.ts';
@@ -194,6 +207,17 @@ const DAILY_ON_RX = new RegExp(
 );
 const DAILY_OFF_RX = new RegExp(
   `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:every ?day|daily|every morning|each day)$`,
+);
+
+// v38: "run my sabbath workflow every sunday" — the weekly cousin of daily.
+// ON demands "every"/"each" (never "on <day>", which reads as a run topic);
+// OFF is looser because stop-verbs can't collide with a run ask.
+const DAY_NAMES = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday';
+const WEEKLY_ON_RX = new RegExp(
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? (?:every|each) (${DAY_NAMES})s?$`,
+);
+const WEEKLY_OFF_RX = new RegExp(
+  `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:(?:every|each|on) )?(?:${DAY_NAMES})s?$`,
 );
 
 // "when i say good morning, run my morning workflow"
@@ -298,7 +322,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -313,6 +337,23 @@ function habitLoggedToday(profile: Profile, spoken: string, today: string): bool
     (x) => x.name === s || x.name.includes(s) || s.includes(x.name),
   );
   return !!h && h.lastDone === today;
+}
+
+// v38: the SA weekday for a yyyy-mm-dd date — calendar conditions and weekly
+// workflows both read it. todayISO is already SA time, so UTC parsing is safe.
+const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+function weekdayOf(todayISO: string): string {
+  const d = new Date(`${todayISO}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? '' : WEEKDAY_NAMES[d.getUTCDay()];
+}
+
+// v38: the closed clock vocabulary — morning 5-11, afternoon 12-16,
+// evening 17-21, night 22-4. Every hour belongs to exactly one segment.
+function segmentOf(hour: number): string {
+  if (hour >= 5 && hour < 12) return 'morning';
+  if (hour >= 12 && hour < 17) return 'afternoon';
+  if (hour >= 17 && hour < 22) return 'evening';
+  return 'night';
 }
 
 // v30: a habit's current streak for threshold conditions. A habit that isn't
@@ -338,6 +379,7 @@ export async function evalCondition(
   todayISO: string,
   email = '',
   sources: ConditionSources = REAL_SOURCES,
+  hourNow?: number, // v38: tests pin the clock; production reads SA time
 ): Promise<ConditionVerdict> {
   let m = cond.match(/^i haven'?t (?:logged|done|kept) my (.+?) habit(?: today)?$/);
   if (m) return !habitLoggedToday(profile, m[1], todayISO);
@@ -384,6 +426,27 @@ export async function evalCondition(
   if (/^no booked sends? (?:is|are) waiting$|^i have no booked sends?(?: waiting)?$/.test(cond)) {
     return (profile.mailScheduled ?? []).length === 0;
   }
+
+  // v38: calendar conditions — the day answers from todayISO alone (already
+  // SA time when the runners compute it). Sync, free, no source.
+  m = cond.match(new RegExp(`^(?:it'?s|it is|today is) (${DAY_NAMES})$`));
+  if (m) return weekdayOf(todayISO) === m[1];
+  m = cond.match(new RegExp(`^(?:it (?:isn'?t|is not)|it'?s not|today (?:isn'?t|is not)) (${DAY_NAMES})$`));
+  if (m) return weekdayOf(todayISO) !== m[1];
+  if (/^(?:it'?s|it is|today is) (?:the )?weekend$|^(?:it (?:isn'?t|is not)|it'?s not|today (?:isn'?t|is not)) a weekday$/.test(cond)) {
+    const dow = weekdayOf(todayISO);
+    return dow === 'saturday' || dow === 'sunday';
+  }
+  if (/^(?:it'?s|it is|today is) a weekday$|^(?:it (?:isn'?t|is not)|it'?s not|today (?:isn'?t|is not)) (?:the )?weekend$/.test(cond)) {
+    const dow = weekdayOf(todayISO);
+    return dow !== '' && dow !== 'saturday' && dow !== 'sunday';
+  }
+  // v38: clock conditions — the hour comes from the SA clock (or the pinned
+  // test hour). Segments are closed and exhaustive, so this never guesses.
+  m = cond.match(/^(?:it'?s|it is) (morning|afternoon|evening|night)(?: ?time)?$/);
+  if (m) return segmentOf(hourNow ?? hourInTZ('Africa/Johannesburg')) === m[1];
+  m = cond.match(/^(?:it (?:isn'?t|is not)|it'?s not) (morning|afternoon|evening|night)(?: ?time)?$/);
+  if (m) return segmentOf(hourNow ?? hourInTZ('Africa/Johannesburg')) !== m[1];
 
   // v35: board-aware conditions — the board lives outside the profile, so
   // these are the first conditions that LOOK at the world. Unreachable board
@@ -554,13 +617,20 @@ export function parseWorkflowDelete(message: string): string | null {
   return m ? (m[1] ?? m[2]).trim() : null;
 }
 
-/** The workflow name from a "run my X workflow every day" ask, or null. */
-export function parseDailySet(message: string): { name: string; daily: boolean } | null {
+/**
+ * The workflow name from a "run my X workflow every day" ask, or null.
+ * v38: `daily: true` means a schedule was asked FOR — with `day` set it's a
+ * weekly schedule ("every sunday"), without it the classic every-day one.
+ * `daily: false` is any off ask; off clears whichever schedule is set.
+ */
+export function parseDailySet(message: string): { name: string; daily: boolean; day?: string } | null {
   const t = tidy(message);
   if (!t || t.length > 100) return null;
+  const weekly = t.match(WEEKLY_ON_RX);
+  if (weekly) return { name: weekly[1].trim(), daily: true, day: weekly[2] };
   const on = t.match(DAILY_ON_RX);
   if (on) return { name: on[1].trim(), daily: true };
-  const off = t.match(DAILY_OFF_RX);
+  const off = t.match(DAILY_OFF_RX) ?? t.match(WEEKLY_OFF_RX);
   if (off) return { name: off[1].trim(), daily: false };
   return null;
 }
@@ -768,7 +838,7 @@ function nameList(workflows: Workflow[]): string {
   return workflows
     .map((w) => {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
-      const daily = w.daily ? ' — runs daily' : '';
+      const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : '';
       return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}`;
     })
     .join('\n');
@@ -1230,7 +1300,9 @@ export async function tryAgent(
         : { reply: `No workflows saved yet, so there's nothing called "${shown}" to show. Create one:\ncreate a workflow called ${shown}: a verse about strength, then list my reminders` };
     }
     const trig = wf.trigger ? `\nTrigger: "${wf.trigger}"` : '';
-    const daily = wf.daily ? '\nRuns daily on your first chat of the day.' : '';
+    const daily = wf.daily
+      ? '\nRuns daily on your first chat of the day.'
+      : wf.day ? `\nRuns every ${wf.day}, on your first chat that day.` : '';
     return {
       reply: `"${wf.name}" — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}${trig}${daily}\n\nEdit it in place: "replace step 2 of my ${wf.name} workflow with …", "remove step 2 from my ${wf.name} workflow", or "add a step to my ${wf.name} workflow: …".`,
     };
@@ -1353,7 +1425,7 @@ export async function tryAgent(
     const wf = workflows[idx];
     const next = { ...wf, name: renamed.to };
     const trig = wf.trigger ? ` Its trigger ("${wf.trigger}") still works.` : '';
-    const daily = wf.daily ? ' It still runs daily.' : '';
+    const daily = wf.daily ? ' It still runs daily.' : wf.day ? ` It still runs every ${wf.day}.` : '';
     return {
       reply: `Done — "${renamed.from}" is now "${renamed.to}".${trig}${daily} Say "run my ${renamed.to} workflow" to use it.`,
       profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
@@ -1464,23 +1536,28 @@ export async function tryAgent(
         reply: `I don't have a workflow called "${dailySet.name}". ${workflows.length ? `You have: ${workflows.map((w) => w.name).join(', ')}.` : 'Create it first: create a workflow called ' + dailySet.name + ': …'}`,
       };
     }
-    // v27: a daily auto-run has no topic to fill a * slot with.
+    // v27: a scheduled auto-run has no topic to fill a * slot with.
     if (dailySet.daily && hasSlot(workflows[idx])) {
       return {
-        reply: `"${dailySet.name}" has a * slot, so it needs a topic each time — a daily auto-run wouldn't know what to fill in. Run it whenever you like with "run my ${dailySet.name} workflow on <topic>".`,
+        reply: `"${dailySet.name}" has a * slot, so it needs a topic each time — a scheduled auto-run wouldn't know what to fill in. Run it whenever you like with "run my ${dailySet.name} workflow on <topic>".`,
       };
     }
+    // v38: one schedule per workflow — weekly replaces daily and vice versa;
+    // off clears whichever is set (and the lastRun stamp with it).
     const nextList = workflows.map((w, i) => {
       if (i !== idx) return w;
       const next = { ...w };
-      if (dailySet.daily) next.daily = true;
-      else { delete next.daily; delete next.lastRun; }
+      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.lastRun; }
+      else if (dailySet.day) { next.day = dailySet.day; delete next.daily; }
+      else { next.daily = true; delete next.day; }
       return next;
     });
     return {
       reply: dailySet.daily
-        ? `Done — "${dailySet.name}" now runs itself every day, on your first chat of the day. You show up, I handle the routine.`
-        : `Okay — "${dailySet.name}" is off the daily schedule. It's still saved; run it anytime with "run my ${dailySet.name} workflow".`,
+        ? dailySet.day
+          ? `Done — "${dailySet.name}" now runs itself every ${dailySet.day}, on your first chat that day. You show up, I handle the routine.`
+          : `Done — "${dailySet.name}" now runs itself every day, on your first chat of the day. You show up, I handle the routine.`
+        : `Okay — "${dailySet.name}" is off the schedule. It's still saved; run it anytime with "run my ${dailySet.name} workflow".`,
       profile: { ...profile, workflows: nextList },
     };
   }
@@ -1535,6 +1612,8 @@ export async function tryAgent(
  * combined report plus the updated profile (lastRun stamped, step side-effects
  * threaded), or null when nothing is due. index.ts appends the report to the
  * first reply of the day's first session — reminders-style surfacing, scaled up.
+ * v38: weekly workflows (Workflow.day) ride the same channel — due only when
+ * todayISO falls on their weekday, stamped with the same lastRun.
  */
 export async function runDailyWorkflows(
   profile: Profile,
@@ -1544,8 +1623,9 @@ export async function runDailyWorkflows(
   sources?: ConditionSources,
 ): Promise<{ report: string; profile: Profile } | null> {
   // v27: slotted workflows never auto-run — there's no topic to fill the * with.
+  const dow = weekdayOf(todayISO);
   const due = (profile.workflows ?? []).filter((w) =>
-    w.daily && w.lastRun !== todayISO && !hasSlot(w));
+    (w.daily || (w.day && w.day === dow)) && w.lastRun !== todayISO && !hasSlot(w));
   if (!due.length) return null;
 
   let prof = profile;
@@ -1553,7 +1633,7 @@ export async function runDailyWorkflows(
   for (const wf of due) {
     const out = await runWorkflow(wf, prof, run, undefined, email, sources);
     if (out.profile) prof = out.profile;
-    reports.push(`— Your daily "${wf.name}" workflow —\n\n${out.reply}`);
+    reports.push(`— Your ${wf.daily ? 'daily' : wf.day} "${wf.name}" workflow —\n\n${out.reply}`);
     prof = {
       ...prof,
       workflows: (prof.workflows ?? []).map((w) =>

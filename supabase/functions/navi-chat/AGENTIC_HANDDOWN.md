@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v37** (the horizon round).
+Last updated: 2026-07-15, at **v38** (the tempo round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -126,6 +126,17 @@ pure count over listSessions; a condition can never delete). Any test that
 stubs ConditionSources must stub all three sources (stubSources in _test.ts
 took a third optional param).
 
+v38 additions: no new wiring at all, and (unlike v35-v37) not even a new
+source — everything is sync and free. Weekly workflows ride the EXISTING
+runDailyWorkflows call (the due filter now also admits `Workflow.day ===
+today's weekday`); the WEEKLY_ON/OFF regexes live beside DAILY_ON/OFF and
+parseDailySet grew an optional `day` field (so isAgentAsk covers the anonymous
+sign-in prompt for free). The calendar conditions answer from todayISO alone;
+the clock conditions read skills.ts `hourInTZ('Africa/Johannesburg')` through
+an optional trailing `hourNow` param on evalCondition (tests pin it, callers
+omit it). ONE parsing rule mattered: weekly-ON demands "every"/"each" — never
+"on <day>", because "run my study workflow on friday" must stay a topic run.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -136,7 +147,23 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v37) · mail.ts (v32→v35)
+### agent.ts — workflows & missions (v25→v38) · mail.ts (v32→v35)
+
+**v38 — the tempo round** (agent.ts + one helper in skills.ts):
+- **Weekly workflows**: "run my sabbath workflow every sunday" schedules the
+  v26 daily machinery onto ONE weekday (`Workflow.day`, SA time) — same
+  session-start channel, same `lastRun` stamp, same slotted-workflow refusal.
+  A workflow is daily OR weekly, never both (setting one clears the other);
+  "stop running my X workflow every sunday" (or the daily off form) clears
+  the whole schedule. The list/show/rename replies all name the day.
+- **Calendar & clock conditions**: "when it's monday:" (any weekday),
+  "when it isn't friday:", "when it's the weekend:", "when it's a weekday:",
+  "when it's morning/afternoon/evening/night:" (+ negations, "today is"
+  forms, and an optional " time" suffix on the clock words). The day answers
+  from todayISO, the hour from the SA clock (skills.ts `hourInTZ`) — sync,
+  free, no source, no network; they light up in v36 dry-run previews
+  automatically. Segments: morning 5-11, afternoon 12-16, evening 17-21,
+  night 22-4 — closed and exhaustive, so the verdict is never a guess.
 
 **v37 — the horizon round** (agent.ts + one helper in chats.ts):
 - **Mission dry-run** (roadmap #26): "what would finish my mission?" /
@@ -574,12 +601,23 @@ Post-v36 candidates:
     a one-line preview summary ("2 of 4 steps will run") — but it doubles the
     condition fetches per run; probably not worth it. Decide with Dian.
 
-Post-v37 status: the deterministic execution line is nearly saturated. What
+Post-v37 candidates:
+
+28. ~~**Weekly workflows + calendar/clock conditions**~~ — SHIPPED in v38
+    (the tempo round, under Dian's standing "keep developing agent.ts /
+    agentic features" direction): the v26 daily channel learned weekdays,
+    and the condition vocabulary learned the calendar and the clock — all
+    sync and free, no new sources on the seam.
+
+Post-v38 status: the deterministic execution line is nearly saturated. What
 remains open is #17 (workflow steps that send — only with a run-time confirm,
 only if Dian asks), #19 (reply threading — blocked on DDL via the Management
 API), #21/#22 (email tool declared COMPLETE — don't touch unasked), #24
 (briefing world-state line — costs a network call on every "brief me") and
-#27 (ask Dian). A genuinely new rung needs either a new bridge table (Create/
+#27 (ask Dian). Natural v39-shaped ideas that stay inside the rules: monthly
+cadence ("every 1st of the month" — same channel, one more due filter), or a
+"which workflows ran today" read — but check with Dian whether saturation
+means stop. A genuinely new rung needs either a new bridge table (Create/
 Share tools have no backend yet) or a decision from Dian.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
@@ -603,8 +641,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v34 | `3271dfa` | slash-command round: /email/to/subject/body shorthand (client + server, splitIntents-guarded), inbox digests through the summarise engine |
 | v35 | `f76074c` | awareness round: async evalCondition seam — board-aware and inbox-aware workflow conditions with honest unreachable/not-connected skips |
 | v36 | `3d30ad9` | foresight round: workflow dry-run (preview / what-would, reply-only, live conditions) + sync booked-send conditions |
-| v37 | (see git) | horizon round: mission dry-run (the whole remaining tail, read-only) + chats-age conditions (the seam's third source) |
+| v37 | `4124524` | horizon round: mission dry-run (the whole remaining tail, read-only) + chats-age conditions (the seam's third source) |
+| v38 | (see git) | tempo round: weekly workflows (run every <weekday>, the v26 channel) + calendar/clock conditions (weekday/weekend/time-of-day, sync and free) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → **204**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → **208**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

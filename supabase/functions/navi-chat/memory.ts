@@ -101,7 +101,9 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // engine pipeline in order; `trigger` is an exact phrase that auto-runs it.
 // v26: `daily` workflows auto-run on the first session of each new SA day;
 // `lastRun` (yyyy-mm-dd) stops a second run the same day.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; lastRun?: string };
+// v38: `day` schedules a weekly auto-run on that SA weekday (lowercase name,
+// e.g. 'monday') — mutually exclusive with `daily`; both share `lastRun`.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; lastRun?: string };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.

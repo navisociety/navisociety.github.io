@@ -2824,3 +2824,105 @@ Deno.test('v37: chats-age conditions steer runs and previews like any world cond
   if (!preview?.reply.includes('1. would run — encourage me')) throw new Error('the dry-run sees the condition hold: ' + preview?.reply);
   eq(ran, [], 'the preview executed nothing');
 });
+
+// ── v38: the tempo round — weekly workflows + calendar/clock conditions ─────
+
+Deno.test('v38: parseDailySet learns weekdays; weekly schedules set, swap, and clear', async () => {
+  eq(parseDailySet('run my sabbath workflow every sunday'), { name: 'sabbath', daily: true, day: 'sunday' }, 'weekly on');
+  eq(parseDailySet('set my review routine each friday'), { name: 'review', daily: true, day: 'friday' }, 'each-day form');
+  eq(parseDailySet('run my sabbath workflow every sundays'), { name: 'sabbath', daily: true, day: 'sunday' }, 'plural day tolerated');
+  eq(parseDailySet('stop running my sabbath workflow every sunday'), { name: 'sabbath', daily: false }, 'weekly off');
+  eq(parseDailySet('stop running my sabbath workflow on sundays'), { name: 'sabbath', daily: false }, 'off with "on"');
+  eq(parseDailySet('run my morning workflow every day'), { name: 'morning', daily: true }, 'daily on unchanged');
+  eq(parseDailySet('run my errands every monday'), null, 'no workflow word, no schedule');
+  eq(parseDailySet('run my study workflow on friday'), null, '"on <day>" is a run topic, never a schedule');
+
+  const { run } = stubRunner();
+  let profile: Profile = { workflows: [
+    { name: 'sabbath', steps: ['a verse about rest'], created: 'now' },
+    { name: 'topical', steps: ['a verse about *'], created: 'now' },
+  ] };
+  const on = await tryAgent('run my sabbath workflow every sunday', EMAIL, profile, run);
+  eq(on?.profile?.workflows?.[0].day, 'sunday', 'weekday stored');
+  eq(on?.profile?.workflows?.[0].daily, undefined, 'weekly is not daily');
+  if (!on?.reply.includes('every sunday')) throw new Error('confirm must name the day: ' + on?.reply);
+  profile = on!.profile!;
+
+  const listed = await tryAgent('list my workflows', EMAIL, profile, run);
+  if (!listed?.reply.includes('runs every sunday')) throw new Error('list must show the weekly schedule: ' + listed?.reply);
+  const shown = await tryAgent('show my sabbath workflow', EMAIL, profile, run);
+  if (!shown?.reply.includes('Runs every sunday')) throw new Error('show must show the weekly schedule: ' + shown?.reply);
+
+  // The schedule is exclusive: daily replaces weekly, weekly replaces daily.
+  const daily = await tryAgent('run my sabbath workflow every day', EMAIL, profile, run);
+  eq(daily?.profile?.workflows?.[0].daily, true, 'daily replaces weekly');
+  eq(daily?.profile?.workflows?.[0].day, undefined, 'the weekday is gone');
+  const weekly = await tryAgent('run my sabbath workflow every monday', EMAIL, daily!.profile!, run);
+  eq(weekly?.profile?.workflows?.[0].day, 'monday', 'weekly replaces daily');
+  eq(weekly?.profile?.workflows?.[0].daily, undefined, 'daily flag is gone');
+
+  const off = await tryAgent('stop running my sabbath workflow every monday', EMAIL, weekly!.profile!, run);
+  eq(off?.profile?.workflows?.[0].day, undefined, 'off clears the weekday');
+  eq(off?.profile?.workflows?.[0].lastRun, undefined, 'off clears the stamp');
+
+  const slotted = await tryAgent('run my topical workflow every friday', EMAIL, profile, run);
+  if (!slotted?.reply.includes('* slot')) throw new Error('slotted workflows refuse a weekly schedule: ' + slotted?.reply);
+  eq(slotted?.profile, undefined, 'the refusal changes nothing');
+});
+
+Deno.test('v38: evalCondition tells the day — weekdays, weekends, negations, from todayISO', async () => {
+  const spy = stubSources(0, 0, 0);
+  const MON = '2026-07-13', FRI = '2026-07-17', SAT = '2026-07-18', SUN = '2026-07-19';
+  eq(await evalCondition("it's monday", {}, MON, EMAIL, spy.sources), true, 'monday is monday');
+  eq(await evalCondition('today is friday', {}, FRI, EMAIL, spy.sources), true, 'today-is form');
+  eq(await evalCondition('it is friday', {}, MON, EMAIL, spy.sources), false, 'monday is not friday');
+  eq(await evalCondition("it isn't friday", {}, MON, EMAIL, spy.sources), true, 'negation holds');
+  eq(await evalCondition("today isn't monday", {}, MON, EMAIL, spy.sources), false, 'negation fails on the day itself');
+  eq(await evalCondition("it's the weekend", {}, SAT, EMAIL, spy.sources), true, 'saturday is the weekend');
+  eq(await evalCondition("it's the weekend", {}, SUN, EMAIL, spy.sources), true, 'sunday too');
+  eq(await evalCondition("it's the weekend", {}, FRI, EMAIL, spy.sources), false, 'friday is not the weekend');
+  eq(await evalCondition("it's a weekday", {}, FRI, EMAIL, spy.sources), true, 'friday is a weekday');
+  eq(await evalCondition("it isn't the weekend", {}, MON, EMAIL, spy.sources), true, 'weekend negation is the weekday');
+  eq(await evalCondition("it's not a weekday", {}, SUN, EMAIL, spy.sources), true, 'weekday negation is the weekend');
+  eq(await evalCondition("it's caturday", {}, SAT, EMAIL, spy.sources), null, 'the vocabulary stays closed');
+  eq(spy.calls, [], 'calendar conditions never touch a source');
+});
+
+Deno.test('v38: evalCondition tells the time of day — pinned clock, closed segments', async () => {
+  const spy = stubSources(0, 0, 0);
+  const t = '2026-07-15';
+  const at = (cond: string, h: number) => evalCondition(cond, {}, t, EMAIL, spy.sources, h);
+  eq(await at("it's morning", 9), true, '9am is morning');
+  eq(await at("it's morning", 13), false, '1pm is not morning');
+  eq(await at('it is afternoon', 13), true, '1pm is afternoon');
+  eq(await at("it's evening", 19), true, '7pm is evening');
+  eq(await at("it's night", 23), true, '11pm is night');
+  eq(await at("it's night", 3), true, '3am is still night');
+  eq(await at("it's night", 12), false, 'noon is not night');
+  eq(await at("it's morning time", 6), true, 'the "time" suffix parses');
+  eq(await at("it isn't evening", 9), true, 'clock negation holds');
+  eq(await at("it's not morning", 9), false, 'clock negation fails in the morning');
+  eq(await at("it's teatime", 16), null, 'the vocabulary stays closed');
+  eq(spy.calls, [], 'clock conditions never touch a source');
+});
+
+Deno.test('v38: runDailyWorkflows runs weekly workflows on their day only', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'sabbath', steps: ['a verse about rest'], created: 'now', day: 'sunday' },
+    { name: 'morning', steps: ['a verse about strength'], created: 'now', daily: true },
+  ] };
+
+  const monday = await runDailyWorkflows(profile, run, '2026-07-13');
+  if (!monday) throw new Error('the daily workflow is still due on a monday');
+  eq(ran.splice(0), ['a verse about strength'], 'only the daily ran on monday');
+  if (monday.report.includes('sabbath')) throw new Error('the weekly workflow must wait for its day');
+
+  const sunday = await runDailyWorkflows(profile, run, '2026-07-19');
+  if (!sunday) throw new Error('sunday runs both');
+  eq(ran.splice(0), ['a verse about rest', 'a verse about strength'], 'both ran on sunday, in list order');
+  if (!sunday.report.includes('Your sunday "sabbath" workflow')) throw new Error('the weekly header names its day: ' + sunday.report);
+  eq(sunday.profile.workflows?.find((w) => w.name === 'sabbath')?.lastRun, '2026-07-19', 'lastRun stamped');
+
+  eq(await runDailyWorkflows(sunday.profile, run, '2026-07-19'), null, 'never twice the same day');
+});

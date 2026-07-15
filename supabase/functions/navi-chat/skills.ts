@@ -324,6 +324,13 @@ export function todayInTZ(tz: string): { y: number; m: number; d: number } {
   return { y, m, d };
 }
 
+/** v38: the current hour (0-23) in a timezone — the clock conditions read it. */
+export function hourInTZ(tz: string): number {
+  return Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: 'numeric', hourCycle: 'h23' }).format(new Date()),
+  );
+}
+
 /** "How many days until Christmas / 25 December / March 3" — counted in SA time. */
 export function tryDaysUntil(message: string, tz: string = NAVI_TZ): string | null {
   const t = message.toLowerCase();
