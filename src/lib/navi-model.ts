@@ -3222,6 +3222,15 @@ const KNOWLEDGE: KNode[] = [
     priority: 2,
   },
 
+  // ── Creative writing (v40) ─────────────────────────────────────────────────
+  {
+    triggers: ['/write', 'creative writing', 'what can you write', 'writing prompt', 'help me write', 'write something', 'write for me'],
+    responses: [
+      'I love to write! Type /write followed by any prompt — like /write a poem about hope, /write a story about a lion who lost his roar, or /write a letter to my future self. I can write stories, poems, songs, prayers, letters, speeches, quotes, affirmations, captions, apologies, thank-yous, and motivational pieces. You can also just ask — "write me a prayer about strength" works too.',
+    ],
+    priority: 2,
+  },
+
   // ── Bible (v12) — full KJV lives in navi_bible_verses (server-side, via the
   // navi-chat edge function); these nodes cover meta-questions. ──────────────
   {

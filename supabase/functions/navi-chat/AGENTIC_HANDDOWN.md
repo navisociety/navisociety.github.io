@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v39** (the hands round).
+Last updated: 2026-07-15, at **v40** (the muse round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -136,6 +136,18 @@ returns a profile (the workflowLog receipt) — anything asserting "no profile
 change" after a run must assert on the mission/steps instead. navi-runner/
 is local plumbing like navi-brain/ (never bundled, never CI).
 
+v40 additions: no new pipeline position — the /write slash command and the
+new creative kinds are all branches inside compose.ts, and tryCompose was
+ALREADY wired in both paths (main path engine block + answerIntent), so
+workflow steps get "/write a poem about *" for free. ONE guard was added at
+splitIntents: `isWriteSlashAsk(message)` joins isMailSlashAsk — a writing
+prompt is free text, an "and"/"then" inside it is prompt, never a second ask
+(the v34 golden rule again). A malformed "/write" is TAUGHT (WRITE_USAGE),
+never dropped into conversation; a crisis prompt steps aside (compose.ts now
+carries its own CRISIS_RX) so the crisis nodes own the message. The /write
+help node lives in index.ts NODES with its navi-model.ts mirror (the
+sanctioned v34 pattern — the mirror is the offline fallback, not UI).
+
 v38 additions: no new wiring at all, and (unlike v35-v37) not even a new
 source — everything is sync and free. Weekly workflows ride the EXISTING
 runDailyWorkflows call (the due filter now also admits `Workflow.day ===
@@ -157,7 +169,30 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v39) · mail.ts (v32→v35) · tasks.ts (v39)
+### agent.ts — workflows & missions (v25→v39) · mail.ts (v32→v35) · tasks.ts (v39) · compose.ts (v21→v40)
+
+**v40 — the muse round** (all compose.ts + one splitIntents guard — built under
+Dian's "/write feature + improve creative writing" direction):
+- **The /write slash command**: "/write <prompt>" ("/write/<prompt>" also
+  works) turns any writing prompt into a piece. A named kind is honoured
+  ("/write a poem about hope"); no kind defaults to a STORY ("/write about
+  the ocean at night" — the classic writing-prompt answer); "to <someone>"
+  with no kind is a LETTER ("/write to my future self"). Topic/recipient ride
+  the same about/on + for/to slots as the conversational parser, but the
+  prompt allows longer topics (80 chars vs. 6 words). Bare "/write" is taught
+  WRITE_USAGE; crisis prompts return '' so the crisis nodes answer;
+  isWriteSlashAsk keeps prompts out of splitIntents.
+- **New creative kinds** (conversational asks get them too — "write me a
+  short story about a lion" now composes): story, song (verse/chorus lyrics),
+  letter, speech, quote. Compound kinds keep their old owners (KIND_RX order:
+  "thank-you letter" is thanks, "motivational quote" is motivation), and
+  "give me a quote from the bible" stays on the Bible path (explicit guard).
+- **Generative stories**: assembled from opening/middle/closing banks
+  (4 × 4 × 4 = 64 stories), each part pronoun-free outside the opening so
+  any combination reads as one piece. Poem bank deepened 3 → 6.
+- **Better variety**: the variant seed is now a char-code sum (seedOf), not
+  the message length — same-length asks about different topics rotate the
+  banks. Still fully deterministic: same ask, same piece, zero external LLM.
 
 **v39 — the hands round** (tasks.ts NEW, navi-runner/ NEW, agent.ts, brief.ts —
 built under Dian's "task execution on devices" direction, all three
@@ -705,8 +740,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v36 | `3d30ad9` | foresight round: workflow dry-run (preview / what-would, reply-only, live conditions) + sync booked-send conditions |
 | v37 | `4124524` | horizon round: mission dry-run (the whole remaining tail, read-only) + chats-age conditions (the seam's third source) |
 | v38 | `00445c4` | tempo round: weekly workflows (run every <weekday>, the v26 channel) + calendar/clock conditions (weekday/weekend/time-of-day, sync and free) |
-| v39 | (see git) | hands round: device task queue + name-only runner contract (tasks.ts, navi-runner/), ICS calendar export, workflow run receipts, briefing world line (#24) |
+| v39 | `c92d992` | hands round: device task queue + name-only runner contract (tasks.ts, navi-runner/), ICS calendar export, workflow run receipts, briefing world line (#24) |
+| v40 | (see git) | muse round: /write slash command (free-text writing prompts, splitIntents-guarded) + new creative kinds (story/song/letter/speech/quote), generative story assembly, char-code variant seed |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → **213**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → **217**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

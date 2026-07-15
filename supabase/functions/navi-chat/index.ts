@@ -69,7 +69,7 @@ import { tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
 import { addCuriosity } from './curiosity.ts';
 import { trySummarize, tryRewrite } from './understand.ts';
-import { tryCompose } from './compose.ts';
+import { tryCompose, isWriteSlashAsk } from './compose.ts';
 import { tryPlan } from './plan.ts';
 import { tryEpisodic, updateTopics } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
@@ -3264,6 +3264,15 @@ const KNOWLEDGE: KNode[] = [
     priority: 2,
   },
 
+  // ── Creative writing (v40) ─────────────────────────────────────────────────
+  {
+    triggers: ['/write', 'creative writing', 'what can you write', 'writing prompt', 'help me write', 'write something', 'write for me'],
+    responses: [
+      'I love to write! Type /write followed by any prompt — like /write a poem about hope, /write a story about a lion who lost his roar, or /write a letter to my future self. I can write stories, poems, songs, prayers, letters, speeches, quotes, affirmations, captions, apologies, thank-yous, and motivational pieces. You can also just ask — "write me a prayer about strength" works too.',
+    ],
+    priority: 2,
+  },
+
   // ── Bible (v12) — full KJV lives in navi_bible_verses; these nodes cover
   // meta-questions the verse pipeline doesn't intercept. ─────────────────────
   {
@@ -4356,8 +4365,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // message falls through to the normal single-ask pipeline untouched.
     // v34: a /email shorthand message is ONE command — its free-text body may
     // carry "and"/"then", so it must never enter the multi-intent split.
+    // v40: same rule for /write — an "and" inside a writing prompt is prompt.
     {
-      const intents = isMailSlashAsk(message) ? [] : splitIntents(message);
+      const intents = (isMailSlashAsk(message) || isWriteSlashAsk(message)) ? [] : splitIntents(message);
       if (intents.length >= 2) {
         let prof = stored;
         const replies: string[] = [];

@@ -35,7 +35,7 @@ import { detectComparison, splitCompound, tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
 import { addCuriosity } from './curiosity.ts';
 import { trySummarize, tryRewrite, rewriteMode } from './understand.ts';
-import { parseCompose, tryCompose } from './compose.ts';
+import { parseCompose, tryCompose, parseWriteSlash, isWriteSlashAsk, WRITE_USAGE } from './compose.ts';
 import { parsePlanGoal, stepsForGoal, tryPlan } from './plan.ts';
 import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
@@ -755,7 +755,10 @@ Deno.test('parseCompose reads kind, topic, and recipient', () => {
   eq(a?.kind, 'apology', 'apology kind');
   eq(a?.recipient, 'my brother', 'apology recipient');
   eq(parseCompose('i want to write a book someday'), null, 'not a command');
-  eq(parseCompose('write me a letter to the president'), null, 'unknown kind');
+  // v40: letter became a real kind.
+  const l = parseCompose('write me a letter to the president');
+  eq(l?.kind, 'letter', 'letter kind (v40)');
+  eq(l?.recipient, 'the president', 'letter recipient');
 });
 
 Deno.test('tryCompose produces the piece with the topic woven in', () => {
@@ -766,6 +769,56 @@ Deno.test('tryCompose produces the piece with the topic woven in', () => {
   const moti = tryCompose('write me a motivational message about the gym');
   if (!moti.includes('the gym')) throw new Error(`motivation: ${moti}`);
   eq(tryCompose('how do i write better lyrics'), '', 'question, not a command');
+});
+
+// ── v40: the muse round — /write + the new creative kinds ────────────────────
+
+Deno.test('parseWriteSlash reads kind, topic, and recipient from a /write prompt', () => {
+  const p = parseWriteSlash('/write a poem about hope');
+  eq(typeof p === 'object' && p ? p.kind : null, 'poem', 'named kind honoured');
+  eq(typeof p === 'object' && p ? p.topic : '', 'hope', 'topic extracted');
+  const s = parseWriteSlash('/write about the ocean at night');
+  eq(typeof s === 'object' && s ? s.kind : null, 'story', 'no kind defaults to story');
+  eq(typeof s === 'object' && s ? s.topic : '', 'the ocean at night', 'about-topic kept');
+  const free = parseWriteSlash('/write a dragon who was afraid of fire');
+  eq(typeof free === 'object' && free ? free.kind : null, 'story', 'bare prompt is a story');
+  eq(typeof free === 'object' && free ? free.topic : '', 'dragon who was afraid of fire', 'whole prompt is the topic');
+  const letter = parseWriteSlash('/write to my future self');
+  eq(typeof letter === 'object' && letter ? letter.kind : null, 'letter', 'to-someone with no kind is a letter');
+  eq(typeof letter === 'object' && letter ? letter.recipient : '', 'my future self', 'letter recipient');
+  eq(parseWriteSlash('write me a poem about hope'), null, 'no slash, not ours');
+});
+
+Deno.test('/write is taught when malformed and steps aside on crisis', () => {
+  eq(parseWriteSlash('/write'), 'malformed', 'bare command is malformed');
+  eq(parseWriteSlash('/write/'), 'malformed', 'empty slash form is malformed');
+  eq(tryCompose('/write'), WRITE_USAGE, 'malformed is taught, never dropped');
+  eq(parseWriteSlash('/write a story about how i want to die'), 'crisis', 'crisis prompt detected');
+  eq(tryCompose('/write a story about how i want to die'), '', 'crisis steps aside for the crisis nodes');
+});
+
+Deno.test('tryCompose renders /write pieces and the new kinds', () => {
+  const story = tryCompose('/write a story about a lion who lost his roar');
+  if (!story.startsWith(`Here's your story:`)) throw new Error(`story opener: ${story}`);
+  if (!story.toLowerCase().includes('a lion who lost his roar')) throw new Error(`story topic: ${story}`);
+  eq(tryCompose('/write a story about a lion who lost his roar'), story, 'deterministic: same ask, same piece');
+  const song = tryCompose('/write a song about new beginnings');
+  if (!song.includes('(Chorus)') || !song.toLowerCase().includes('new beginnings')) throw new Error(`song: ${song}`);
+  const poem = tryCompose('/write a poem about fire and faith');
+  if (!poem.startsWith(`Here's your poem:`) || !poem.toLowerCase().includes('fire and faith')) throw new Error(`poem with and: ${poem}`);
+  const speech = tryCompose('write me a speech about perseverance');
+  if (!speech.toLowerCase().includes('perseverance')) throw new Error(`speech: ${speech}`);
+  const quote = tryCompose('write me a quote about success');
+  if (!quote.toLowerCase().includes('success')) throw new Error(`quote: ${quote}`);
+  eq(parseCompose('give me a quote from the bible'), null, 'bible quotes stay on the Bible path');
+});
+
+Deno.test('isWriteSlashAsk guards prompts; ordinary conversation untouched', () => {
+  eq(isWriteSlashAsk('/write a story about fire and faith then hope'), true, 'slash ask detected');
+  eq(isWriteSlashAsk('  /write a poem'), true, 'leading space tolerated');
+  eq(isWriteSlashAsk('i write in my journal every day'), false, 'plain sentence is not ours');
+  eq(tryCompose('i write in my journal every day'), '', 'journal talk stays conversation');
+  eq(tryCompose('how do i write a cv'), '', 'question stays conversation');
 });
 
 // ── v21: Goal Planner ────────────────────────────────────────────────────────
