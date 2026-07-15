@@ -26,9 +26,14 @@
  *   3. node navi-runner/poll.js   (schedule it if you want it hands-free)
  */
 
-const { execSync } = require("child_process");
-const fs = require("fs");
-const path = require("path");
+// ESM on purpose: the repo's package.json declares "type": "module", so a
+// require() here throws before the first line runs (found the hard way on
+// the first real device setup, v42).
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+const __dirname = import.meta.dirname;
 
 const SUPABASE_URL = "https://irssegzkvxyewuxgqpwi.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
