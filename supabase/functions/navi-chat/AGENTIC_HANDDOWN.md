@@ -539,6 +539,10 @@ created, first mood) — is 7+ days old, and only when there's data to review.
 - Concurrent pushes cancel each other's Pages runs ("cancelled" ≠ failure).
 - The repo's root CLAUDE.md is STALE (describes a pre-edge-function
   architecture). Trust this file and the memory index over it.
+- The live function occasionally returns WORKER_RESOURCE_LIMIT (edge isolate
+  cold-start resource cap — index.ts is big). It's TRANSIENT: the same ask
+  succeeds on retry. Seen 3× during v39 live-verify; don't chase it as a
+  code bug, but if it grows more frequent the bundle may need a diet.
 
 ## 6. The roadmap — where to take agency & execution next
 
