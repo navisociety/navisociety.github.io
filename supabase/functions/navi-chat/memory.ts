@@ -74,7 +74,22 @@ export type Profile = {
   // confirmed at schedule time, fired by the first session after the time
   // passes (NAVI only speaks when spoken to). Cap 3. Managed by mail.ts.
   mailScheduled?: ScheduledSend[];
+  // v39: tasks queued for named devices ("add a task for my laptop: …").
+  // Cap 12 total. Auto tasks carry only a NAME the device's local runner may
+  // map to a command via its own allowlist — chat never carries commands.
+  // Managed by tasks.ts; results written back by navi-runner/poll.js.
+  deviceTasks?: DeviceTask[];
+  // v39: the last 10 workflow runs (name, SA date, and how it was started)
+  // so "which workflows ran today" has honest receipts. Managed by agent.ts.
+  workflowLog?: WorkflowRun[];
 };
+
+// v39: one queued device task. `auto` marks it for the runner; `result` is
+// the runner's receipt (set once, read-and-cleared by "any results from …").
+export type DeviceTask = { device: string; text: string; created: string; auto?: boolean; result?: string };
+
+// v39: one workflow run receipt — `via` says who started it.
+export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' };
 
 // v31: one pending chat cleanup. `cutoff` is the ISO timestamp a session's
 // updated_at must be OLDER than to be deleted; `count` is what NAVI counted

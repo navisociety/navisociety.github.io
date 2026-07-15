@@ -112,7 +112,7 @@
 // the whole message, bare "done"/"what's next" are only intercepted while a
 // mission is actually active, and crisis language is never treated as a goal.
 
-import type { Mission, Profile, Workflow } from './memory.ts';
+import type { Mission, Profile, Workflow, WorkflowRun } from './memory.ts';
 import { stepsForGoal } from './plan.ts';
 import { hourInTZ, todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
@@ -200,6 +200,10 @@ const DELETE_RX = new RegExp(
 );
 
 const LIST_RX = /^(?:please )?(?:list|show|show me|what are)(?: all)?(?: my| the)? (?:workflows|routines)$/;
+
+// v39: execution receipts — "which workflows ran today" reads the run log.
+const RAN_TODAY_RX =
+  /^(?:which|what) workflows? (?:ran|has run|have run)(?: so far)? today$|^what ran today$|^did any(?:thing| workflows?) run today$|^show(?: me)? today'?s (?:workflow )?runs$/;
 
 // v26: "run my morning workflow every day" / "make my morning workflow daily"
 const DAILY_ON_RX = new RegExp(
@@ -820,6 +824,7 @@ export function isAgentAsk(message: string): boolean {
     parseMissionStart(message) !== null ||
     parseMissionQueue(message) !== null ||
     LIST_RX.test(t) ||
+    RAN_TODAY_RX.test(t) ||
     MISSION_STATUS_RX.test(t) ||
     MISSION_PREVIEW_RX.test(t) ||
     MISSION_ABANDON_RX.test(t) ||
@@ -871,6 +876,16 @@ function missionPreview(mission: Mission): string {
 
 // ── Execution ───────────────────────────────────────────────────────────────
 
+// v39: one run receipt on the profile log (cap 10, oldest out) — "which
+// workflows ran today" reads these back. Stamped by every real run; the
+// v36 dry-run never stamps because it never comes through runWorkflow.
+const MAX_RUN_LOG = 10;
+function stampRun(log: WorkflowRun[] | undefined, name: string, date: string, via: WorkflowRun['via']): WorkflowRun[] {
+  const next = [...(log ?? []), { name, date, via }];
+  while (next.length > MAX_RUN_LOG) next.shift();
+  return next;
+}
+
 async function runWorkflow(
   wf: Workflow,
   profile: Profile,
@@ -878,6 +893,7 @@ async function runWorkflow(
   topic?: string,
   email = '',
   sources?: ConditionSources,
+  via: WorkflowRun['via'] = 'manual', // v39: who started this run
 ): Promise<{ reply: string; profile?: Profile }> {
   let prof = profile;
   let changed = false;
@@ -956,6 +972,9 @@ async function runWorkflow(
         ? `Workflow "${wf.name}" complete — all ${executed} step${executed === 1 ? '' : 's'} executed${skipNote}.`
         : `Workflow "${wf.name}" finished — ${executed} of ${attempted} steps executed${skipNote}.`,
   );
+  // v39: every real run leaves a receipt — the profile now always changes.
+  prof = { ...prof, workflowLog: stampRun(prof.workflowLog, wf.name, todayISO, via) };
+  changed = true;
   return { reply: blocks.join('\n\n'), profile: changed ? prof : undefined };
 }
 
@@ -1491,6 +1510,26 @@ export async function tryAgent(
     };
   }
 
+  // v39: execution receipts — read the run log back, today's slice only.
+  // Pure read; the log itself is stamped inside runWorkflow.
+  if (RAN_TODAY_RX.test(t)) {
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    const today = (profile.workflowLog ?? []).filter((r) => r.date === todayISO);
+    if (!today.length) {
+      return { reply: 'Nothing has run today — no workflow has fired yet, manual or scheduled.' };
+    }
+    const label: Record<WorkflowRun['via'], string> = {
+      manual: 'you ran it',
+      trigger: 'fired by its trigger phrase',
+      daily: 'daily auto-run',
+      weekly: 'weekly auto-run',
+    };
+    return {
+      reply: `Ran today (${today.length}):\n${today.map((r) => `- "${r.name}" — ${label[r.via]}`).join('\n')}`,
+    };
+  }
+
   const toDelete = parseWorkflowDelete(message);
   if (toDelete) {
     const idx = workflows.findIndex((w) => w.name === toDelete);
@@ -1589,7 +1628,7 @@ export async function tryAgent(
           reply: `That's the trigger for "${fired.name}", but it has a * slot, so it needs a topic. Run it like:\nrun my ${fired.name} workflow on grace`,
         };
       }
-      return await runWorkflow(fired, profile, run, undefined, email, sources);
+      return await runWorkflow(fired, profile, run, undefined, email, sources, 'trigger');
     }
 
     // v29: open triggers — "study *" fires on "study <anything>", and the
@@ -1600,7 +1639,7 @@ export async function tryAgent(
       if (!t.startsWith(prefix)) continue;
       const topic = t.slice(prefix.length).trim();
       if (!topic || topic.length > 60 || CRISIS_RX.test(topic)) continue;
-      return await runWorkflow(w, profile, run, topic, email, sources);
+      return await runWorkflow(w, profile, run, topic, email, sources, 'trigger');
     }
   }
 
@@ -1631,7 +1670,7 @@ export async function runDailyWorkflows(
   let prof = profile;
   const reports: string[] = [];
   for (const wf of due) {
-    const out = await runWorkflow(wf, prof, run, undefined, email, sources);
+    const out = await runWorkflow(wf, prof, run, undefined, email, sources, wf.daily ? 'daily' : 'weekly');
     if (out.profile) prof = out.profile;
     reports.push(`— Your ${wf.daily ? 'daily' : wf.day} "${wf.name}" workflow —\n\n${out.reply}`);
     prof = {

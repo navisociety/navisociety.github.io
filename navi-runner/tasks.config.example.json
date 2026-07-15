@@ -1,0 +1,5 @@
+{
+  "hello": "echo NAVI runner is alive on this device",
+  "backup": "echo define your real backup command here",
+  "pull the site": "git -C C:/Users/Prophet~1/navisociety.github.io pull"
+}

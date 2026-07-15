@@ -84,6 +84,7 @@ import { splitIntents } from './execute.ts';
 import { tryAgent, runDailyWorkflows, missionNudge } from './agent.ts';
 import { tryHabit, isHabitAsk } from './habit.ts';
 import { tryBriefing } from './brief.ts';
+import { tryTasks } from './tasks.ts';
 import { tryReview, reviewOffer } from './review.ts';
 import { tryVision } from './vision.ts';
 import { tryChats } from './chats.ts';
@@ -4193,6 +4194,12 @@ async function answerIntent(
   const mail = await tryMail(part, email, profile);
   if (mail) return { reply: mail.reply, profile: mail.profile };
 
+  // v39: device tasks — "add a task for my laptop: *" works as a workflow
+  // step (the topic slot fills the task text); queue changes ride the
+  // returned profile.
+  const tasks = tryTasks(part, email, profile);
+  if (tasks) return { reply: tasks.reply, profile: tasks.profile };
+
   const bible = await answerFromBible(part);
   if (bible) return { reply: bible };
   const devotion = await tryDevotion(part);
@@ -4296,12 +4303,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
+    // v39: device tasks — "add a task for my laptop: …" queues work for a
+    // named device; auto tasks for the runner; the calendar export. MUST run
+    // before the multi-intent split: a task body may carry "and"/"then"
+    // (the golden rule, same as tryAgent). Pure profile, saved immediately.
+    {
+      const tasksTurn = tryTasks(message, email, stored);
+      if (tasksTurn) {
+        if (email && tasksTurn.profile) await saveStoredProfile(email, tasksTurn.profile);
+        return new Response(JSON.stringify({ response: tasksTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // v27: daily briefing — "brief me" compiles mission, habits, reminders,
     // upcoming events, mood, and wins into one status report. Read-only over
     // the profile; runs after the agent layer so "mission status" keeps its
     // dedicated answer.
     {
-      const brief = tryBriefing(message, email, stored);
+      const brief = await tryBriefing(message, email, stored);
       if (brief) {
         return new Response(JSON.stringify({ response: brief.reply }), {
           status: 200,

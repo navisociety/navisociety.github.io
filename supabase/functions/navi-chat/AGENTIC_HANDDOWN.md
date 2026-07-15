@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v38** (the tempo round).
+Last updated: 2026-07-15, at **v39** (the hands round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -126,6 +126,16 @@ pure count over listSessions; a condition can never delete). Any test that
 stubs ConditionSources must stub all three sources (stubSources in _test.ts
 took a third optional param).
 
+v39 additions: ONE new pipeline position — tryTasks (tasks.ts) sits right
+after tryAgent and BEFORE tryBriefing/splitIntents on the main path (a task
+body may carry "and"/"then" — the golden rule), and right after tryMail in
+answerIntent (workflow steps can queue device tasks; the topic slot fills the
+text). tryBriefing is now ASYNC (the #24 world line) — its index.ts call
+gained an await. runWorkflow gained a trailing `via` param and now ALWAYS
+returns a profile (the workflowLog receipt) — anything asserting "no profile
+change" after a run must assert on the mission/steps instead. navi-runner/
+is local plumbing like navi-brain/ (never bundled, never CI).
+
 v38 additions: no new wiring at all, and (unlike v35-v37) not even a new
 source — everything is sync and free. Weekly workflows ride the EXISTING
 runDailyWorkflows call (the due filter now also admits `Workflow.day ===
@@ -147,7 +157,44 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v38) · mail.ts (v32→v35)
+### agent.ts — workflows & missions (v25→v39) · mail.ts (v32→v35) · tasks.ts (v39)
+
+**v39 — the hands round** (tasks.ts NEW, navi-runner/ NEW, agent.ts, brief.ts —
+built under Dian's "task execution on devices" direction, all three
+interpretations plus both v38 follow-ups):
+- **Device task queue** (tasks.ts): "add a task for my laptop: push the repo"
+  queues work for a named device on `Profile.deviceTasks` (cap 12 total,
+  refused honestly, never evicted); "show my laptop tasks" / "what's waiting
+  on my phone" / "show my device tasks" read it back; "done with task 2 on my
+  laptop" ticks off; "clear my laptop tasks" / "clear my device tasks" wipe.
+  Crisis-guarded, anonymous asks get the sign-in prompt (isTasksAsk).
+- **Auto tasks + the runner** (tasks.ts + navi-runner/poll.js): "run backup
+  on my pc" queues a NAME-only auto task. THE SAFETY CONTRACT: chat never
+  carries a command — the device's own tasks.config.json (gitignored, local)
+  maps names to commands, unknown names are refused with a receipt, and the
+  runner POLLS (run/schedule it yourself) so the no-server-push anti-goal
+  stands. Receipts ("ok — …" / "failed — …" / "refused — …") are read once
+  and cleared by "any results from my pc". Conservative parsing: names can't
+  open with a preposition, figure-of-speech devices (street/way/life…) are
+  stopworded — "run for your life on my street" stays conversation.
+- **Calendar export** (tasks.ts buildIcs): "export my reminders as a
+  calendar" / "export my calendar" returns an RFC-5545 VCALENDAR block —
+  dated reminders + life events as all-day VEVENTs, booked sends at their
+  exact moment — for the device's calendar app to import. Read-only, pure
+  text, honest when nothing is dated.
+- **Execution receipts** (agent.ts): every real workflow run stamps
+  `Profile.workflowLog` (cap 10, oldest out) with name/date/via
+  (manual/trigger/daily/weekly) — so runWorkflow now ALWAYS returns a
+  profile. "which workflows ran today" / "what ran today" reads today's
+  slice back, honestly empty when nothing fired. The v36 dry-run never
+  stamps (it never enters runWorkflow).
+- **Briefing world line** (brief.ts — roadmap #24 CLOSED): "brief me" now
+  ends with ONE live line ("OUT IN THE WORLD: vision board: 3 items ·
+  inbox: 2 unread.") through injected BriefSources (v35 seam pattern —
+  vision.ts visionItemCount + mail.ts inboxUnreadCount, fetched in
+  parallel, only on a real signed-in briefing ask). Honest at every stage:
+  not-connected and unreachable are named, never guessed. This is the
+  briefing's only network cost — accepted by Dian.
 
 **v38 — the tempo round** (agent.ts + one helper in skills.ts):
 - **Weekly workflows**: "run my sabbath workflow every sunday" schedules the
@@ -609,16 +656,27 @@ Post-v37 candidates:
     and the condition vocabulary learned the calendar and the clock — all
     sync and free, no new sources on the seam.
 
-Post-v38 status: the deterministic execution line is nearly saturated. What
-remains open is #17 (workflow steps that send — only with a run-time confirm,
-only if Dian asks), #19 (reply threading — blocked on DDL via the Management
-API), #21/#22 (email tool declared COMPLETE — don't touch unasked), #24
-(briefing world-state line — costs a network call on every "brief me") and
-#27 (ask Dian). Natural v39-shaped ideas that stay inside the rules: monthly
-cadence ("every 1st of the month" — same channel, one more due filter), or a
-"which workflows ran today" read — but check with Dian whether saturation
-means stop. A genuinely new rung needs either a new bridge table (Create/
-Share tools have no backend yet) or a decision from Dian.
+Post-v38 candidates:
+
+29. ~~**"Which workflows ran today"**~~ — SHIPPED in v39 (workflowLog
+    receipts + the read-back command).
+30. ~~**#24 briefing world-state line**~~ — SHIPPED in v39 (Dian accepted
+    the network cost when asked directly).
+31. ~~**Task execution on devices**~~ — SHIPPED in v39 as three pieces
+    (Dian chose "implement all 3" when offered the interpretations):
+    the device task queue, the name-only runner contract (navi-runner/),
+    and the ICS calendar export.
+
+Post-v39 status: still open are #17 (workflow steps that send — run-time
+confirm, only if Dian asks), #19 (reply threading — blocked on DDL),
+#21/#22 (email tool declared COMPLETE), #27 (preview-before-daily — ask).
+Natural next rungs on the v39 seams: monthly workflow cadence ("every 1st"),
+device tasks inside workflow conditions ("when my pc has results waiting:"),
+runner receipts at session-start (append like due sends — careful: that's a
+new session-start read). The runner itself still needs Dian's device setup
+(service key + tasks.config.json + NAVI_DEVICE) before its first real run —
+the chat half is live and tested. A genuinely new rung beyond these needs a
+new bridge table or a decision from Dian.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -642,8 +700,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v35 | `f76074c` | awareness round: async evalCondition seam — board-aware and inbox-aware workflow conditions with honest unreachable/not-connected skips |
 | v36 | `3d30ad9` | foresight round: workflow dry-run (preview / what-would, reply-only, live conditions) + sync booked-send conditions |
 | v37 | `4124524` | horizon round: mission dry-run (the whole remaining tail, read-only) + chats-age conditions (the seam's third source) |
-| v38 | (see git) | tempo round: weekly workflows (run every <weekday>, the v26 channel) + calendar/clock conditions (weekday/weekend/time-of-day, sync and free) |
+| v38 | `00445c4` | tempo round: weekly workflows (run every <weekday>, the v26 channel) + calendar/clock conditions (weekday/weekend/time-of-day, sync and free) |
+| v39 | (see git) | hands round: device task queue + name-only runner contract (tasks.ts, navi-runner/), ICS calendar export, workflow run receipts, briefing world line (#24) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → **208**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → **213**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

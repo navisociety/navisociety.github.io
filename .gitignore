@@ -9,3 +9,6 @@ navi-brain/.env
 navi-brain/.env.*
 *.local
 package-lock.json
+navi-runner/.env
+navi-runner/.env.*
+navi-runner/tasks.config.json

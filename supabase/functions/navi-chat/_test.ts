@@ -55,7 +55,8 @@ import {
   parseWorkflowPreview,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
-import { isBriefingAsk, buildBriefing, tryBriefing } from './brief.ts';
+import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
+import { tryTasks, isTasksAsk, buildIcs } from './tasks.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
 import { parseCleanupAsk, isChatCountAsk, tryChats } from './chats.ts';
@@ -1642,7 +1643,7 @@ Deno.test('v27: isBriefingAsk hits the briefing forms and nothing else', () => {
   }
 });
 
-Deno.test('v27: buildBriefing compiles mission, habits, reminders, events, and wins', () => {
+Deno.test('v27: buildBriefing compiles mission, habits, reminders, events, and wins', async () => {
   const today = '2026-07-09';
   const profile: Profile = {
     name: 'Dian',
@@ -1659,8 +1660,8 @@ Deno.test('v27: buildBriefing compiles mission, habits, reminders, events, and w
   if (b.includes('old thing')) throw new Error('past events must not appear');
   const empty = buildBriefing({}, today);
   if (!empty.includes('MISSION — none active')) throw new Error('empty profile still briefs honestly');
-  eq(tryBriefing('brief me', '', {})?.reply.includes('signed in'), true, 'anonymous is asked to sign in');
-  eq(tryBriefing('tell me about grace', EMAIL, {}), null, 'ordinary asks pass through');
+  eq((await tryBriefing('brief me', '', {}))?.reply.includes('signed in'), true, 'anonymous is asked to sign in');
+  eq(await tryBriefing('tell me about grace', EMAIL, {}), null, 'ordinary asks pass through');
 });
 
 // ── v28: the weekly review ───────────────────────────────────────────────────
@@ -1822,7 +1823,9 @@ Deno.test('v29: "my next mission step" in a workflow reads the mission, read-onl
   const out = await tryAgent('run my morning workflow', EMAIL, withMission, run);
   eq(ran, ['encourage me'], 'the mission step is read directly, never sent through the engines');
   if (!out?.reply.includes('s2')) throw new Error('current mission step must surface: ' + out?.reply);
-  eq(out?.profile, undefined, 'read-only — no profile change');
+  // v39: every run stamps a receipt on workflowLog, so the profile DOES come
+  // back — the read-only contract is about the mission, which must not move.
+  eq(out?.profile?.mission, withMission.mission, 'read-only — the mission never moves');
 
   const noMission = await tryAgent('run my morning workflow', EMAIL, { workflows }, run);
   if (!noMission?.reply.includes('No active mission')) throw new Error('honest when nothing is active: ' + noMission?.reply);
@@ -2925,4 +2928,157 @@ Deno.test('v38: runDailyWorkflows runs weekly workflows on their day only', asyn
   eq(sunday.profile.workflows?.find((w) => w.name === 'sabbath')?.lastRun, '2026-07-19', 'lastRun stamped');
 
   eq(await runDailyWorkflows(sunday.profile, run, '2026-07-19'), null, 'never twice the same day');
+});
+
+// ── v39: the hands round — device tasks, the runner contract, ICS, receipts ─
+
+Deno.test('v39: device task queue — add, list, tick off, clear, caps, guards', () => {
+  let profile: Profile = {};
+  const add = tryTasks('add a task for my laptop: push the repo', EMAIL, profile)!;
+  eq(add.profile?.deviceTasks?.length, 1, 'task queued');
+  eq(add.profile?.deviceTasks?.[0].device, 'laptop', 'device kept');
+  profile = add.profile!;
+  profile = tryTasks('add a task for my laptop: renew the domain', EMAIL, profile)!.profile!;
+  profile = tryTasks('queue a task on my phone: back up photos', EMAIL, profile)!.profile!;
+
+  const list = tryTasks('show my laptop tasks', EMAIL, profile)!;
+  if (!list.reply.includes('1. push the repo') || !list.reply.includes('2. renew the domain')) {
+    throw new Error('device list wrong: ' + list.reply);
+  }
+  if (list.reply.includes('back up photos')) throw new Error('other devices stay out of a device list');
+  const waiting = tryTasks("what's waiting on my phone", EMAIL, profile)!;
+  if (!waiting.reply.includes('back up photos')) throw new Error('waiting form reads the queue: ' + waiting.reply);
+  const all = tryTasks('show my device tasks', EMAIL, profile)!;
+  if (!all.reply.includes('laptop') || !all.reply.includes('phone')) throw new Error('all-devices list: ' + all.reply);
+
+  const done = tryTasks('done with task 1 on my laptop', EMAIL, profile)!;
+  if (!done.reply.includes('push the repo')) throw new Error('tick-off names the task: ' + done.reply);
+  eq(done.profile?.deviceTasks?.filter((x) => x.device === 'laptop').length, 1, 'one left on the laptop');
+  profile = done.profile!;
+
+  const badNum = tryTasks('done with task 9 on my laptop', EMAIL, profile)!;
+  if (!badNum.reply.includes('no task 9')) throw new Error('out-of-range answered with the list: ' + badNum.reply);
+  eq(badNum.profile, undefined, 'out-of-range changes nothing');
+
+  const cleared = tryTasks('clear my laptop tasks', EMAIL, profile)!;
+  eq(cleared.profile?.deviceTasks?.length, 1, 'only the phone task survives');
+
+  eq(tryTasks('add a task for my laptop: hurt myself', EMAIL, {}), null, 'crisis is never a task');
+  eq(tryTasks('i finished a task at work today', EMAIL, {}), null, 'plain sentences untouched');
+  eq(tryTasks('add a task for my laptop: x y z', '', {})?.reply.includes('signed in'), true, 'anonymous asked to sign in');
+  eq(isTasksAsk('add a task for my laptop: push'), true, 'isTasksAsk sees the ask');
+
+  const full: Profile = { deviceTasks: Array.from({ length: 12 }, (_, i) => ({ device: 'pc', text: `t${i}`, created: 'now' })) };
+  const over = tryTasks('add a task for my pc: one more', EMAIL, full)!;
+  if (!over.reply.includes('full')) throw new Error('the cap refuses honestly: ' + over.reply);
+  eq(over.profile, undefined, 'the cap never evicts');
+});
+
+Deno.test('v39: auto tasks carry a NAME for the runner; receipts read once and clear', () => {
+  let profile: Profile = {};
+  const queued = tryTasks('run backup on my pc', EMAIL, profile)!;
+  eq(queued.profile?.deviceTasks?.[0].auto, true, 'auto flag set');
+  eq(queued.profile?.deviceTasks?.[0].text, 'backup', 'only the name rides');
+  if (!queued.reply.includes('allowlist')) throw new Error('the reply states the safety contract: ' + queued.reply);
+  profile = queued.profile!;
+
+  const dupe = tryTasks("run 'backup' on my pc", EMAIL, profile)!;
+  if (!dupe.reply.includes('already queued')) throw new Error('dupe guard: ' + dupe.reply);
+  eq(dupe.profile, undefined, 'dupe changes nothing');
+
+  const early = tryTasks('any results from my pc', EMAIL, profile)!;
+  if (!early.reply.includes('still waiting')) throw new Error('no results yet is honest: ' + early.reply);
+  eq(early.profile, undefined, 'waiting receipts stay queued');
+
+  // The runner ran: it stamps a result on the task.
+  profile = { ...profile, deviceTasks: [{ ...profile.deviceTasks![0], result: 'ok — 2 files copied' }] };
+  const got = tryTasks('any results from my pc', EMAIL, profile)!;
+  if (!got.reply.includes('backup — ok — 2 files copied')) throw new Error('receipt read back: ' + got.reply);
+  eq(got.profile?.deviceTasks?.length, 0, 'receipts clear once read');
+
+  eq(tryTasks('run for your life on my street', EMAIL, {}), null, 'loose "run" sentences that fail the name shape stay conversation');
+});
+
+Deno.test('v39: buildIcs exports everything dated; the export ask wraps it', () => {
+  const profile: Profile = {
+    reminders: [{ text: 'call mom', created: 'now' }, { text: 'renew, the domain; now', created: 'now', due: '2026-08-01' }],
+    events: [{ text: 'exam', date: '2026-07-20' }],
+    mailScheduled: [{ id: 'd1', to: 'sam@x.com', subject: 'plans', sendAt: '2026-07-16T06:00:00.000Z', created: 'now' }],
+  };
+  const ics = buildIcs(profile, '2026-07-15T10:00:00.000Z')!;
+  for (const bit of [
+    'BEGIN:VCALENDAR', 'END:VCALENDAR',
+    'DTSTART;VALUE=DATE:20260801', 'SUMMARY:renew\\, the domain\\; now',
+    'DTSTART;VALUE=DATE:20260720', 'SUMMARY:exam',
+    'DTSTART:20260716T060000Z', 'SUMMARY:NAVI sends "plans" to sam@x.com',
+    'DTSTAMP:20260715T100000Z',
+  ]) {
+    if (!ics.includes(bit)) throw new Error(`ics missing ${bit}:\n` + ics);
+  }
+  if (ics.includes('call mom')) throw new Error('undated reminders stay out of the calendar');
+
+  const exported = tryTasks('export my reminders as a calendar', EMAIL, profile)!;
+  if (!exported.reply.includes('BEGIN:VCALENDAR') || !exported.reply.includes('navi.ics')) {
+    throw new Error('export ask returns the block + instructions: ' + exported.reply.slice(0, 200));
+  }
+  const nothing = tryTasks('export my calendar', EMAIL, {})!;
+  if (!nothing.reply.includes('Nothing dated')) throw new Error('empty export is honest: ' + nothing.reply);
+  eq(buildIcs({}), null, 'no dated data, no calendar');
+});
+
+Deno.test('v39: workflow runs leave receipts; "which workflows ran today" reads them', async () => {
+  const { run } = stubRunner();
+  const t = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
+  let profile: Profile = { workflows: [
+    { name: 'study', steps: ['a verse about *'], created: 'now', trigger: 'study *' },
+    { name: 'calm', steps: ['a verse about peace'], created: 'now', daily: true },
+  ] };
+
+  const none = await tryAgent('which workflows ran today', EMAIL, profile, run);
+  if (!none?.reply.includes('Nothing has run today')) throw new Error('empty log is honest: ' + none?.reply);
+
+  const manual = await tryAgent('run my calm workflow', EMAIL, profile, run);
+  eq(manual?.profile?.workflowLog?.length, 1, 'a manual run stamps one receipt');
+  eq(manual?.profile?.workflowLog?.[0], { name: 'calm', date: t, via: 'manual' }, 'receipt shape');
+  profile = manual!.profile!;
+
+  const triggered = await tryAgent('study grace', EMAIL, profile, run);
+  eq(triggered?.profile?.workflowLog?.[1].via, 'trigger', 'a trigger run says so');
+  profile = triggered!.profile!;
+
+  const daily = await runDailyWorkflows(profile, run, t);
+  if (!daily) throw new Error('the daily workflow was due');
+  const log = daily.profile.workflowLog!;
+  eq(log[log.length - 1].via, 'daily', 'a daily auto-run says so');
+  profile = daily.profile;
+
+  const report = await tryAgent('which workflows ran today', EMAIL, profile, run);
+  if (!report?.reply.includes('"calm" — you ran it')) throw new Error('manual receipt: ' + report?.reply);
+  if (!report?.reply.includes('"study" — fired by its trigger phrase')) throw new Error('trigger receipt: ' + report?.reply);
+  if (!report?.reply.includes('"calm" — daily auto-run')) throw new Error('daily receipt: ' + report?.reply);
+
+  const preview = await tryAgent('preview my calm workflow', EMAIL, profile, run);
+  eq(preview?.profile, undefined, 'a dry-run never stamps a receipt');
+
+  const capped: Profile = { ...profile, workflowLog: Array.from({ length: 10 }, (_, i) => ({ name: `w${i}`, date: '2026-01-01', via: 'manual' as const })) };
+  const eleventh = await tryAgent('run my calm workflow', EMAIL, capped, run);
+  eq(eleventh?.profile?.workflowLog?.length, 10, 'the log stays capped at 10');
+  eq(eleventh?.profile?.workflowLog?.[0].name, 'w1', 'oldest receipt evicted');
+});
+
+Deno.test('v39: the briefing looks at the world once — honest at every stage', async () => {
+  const src = (board: number | null, unread: number | 'not-connected' | null) => ({
+    visionCount: () => Promise.resolve(board),
+    inboxUnread: () => Promise.resolve(unread),
+  });
+  eq(await worldLine(EMAIL, src(3, 2)), 'OUT IN THE WORLD: vision board: 3 items · inbox: 2 unread.', 'counts read plainly');
+  eq(await worldLine(EMAIL, src(0, 0)), 'OUT IN THE WORLD: vision board: empty · inbox: clear.', 'zero is calm');
+  eq((await worldLine(EMAIL, src(null, 'not-connected'))).includes("didn't answer"), true, 'unreachable board is honest');
+  eq((await worldLine(EMAIL, src(1, 'not-connected'))).includes('Gmail not connected'), true, 'no link is honest');
+
+  const brief = await tryBriefing('brief me', EMAIL, { name: 'Dian' }, src(2, 0));
+  if (!brief?.reply.includes('OUT IN THE WORLD: vision board: 2 items · inbox: clear.')) {
+    throw new Error('the briefing carries the world line: ' + brief?.reply);
+  }
+  eq(await tryBriefing('what is grace', EMAIL, {}, src(9, 9)), null, 'non-briefing asks never fetch');
 });
