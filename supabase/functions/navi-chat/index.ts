@@ -84,7 +84,7 @@ import { splitIntents } from './execute.ts';
 import { tryAgent, runDailyWorkflows, missionNudge } from './agent.ts';
 import { tryHabit, isHabitAsk } from './habit.ts';
 import { tryBriefing } from './brief.ts';
-import { tryTasks } from './tasks.ts';
+import { deviceReceipts, tryTasks } from './tasks.ts';
 import { tryReview, reviewOffer } from './review.ts';
 import { tryVision } from './vision.ts';
 import { tryChats } from './chats.ts';
@@ -4740,6 +4740,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
           // A consumed (or emptied) schedule must not resurrect via the
           // base-spread merge — mirror the delete onto stored explicitly.
           if (!dueSends.profile.mailScheduled) delete stored.mailScheduled;
+        }
+
+        // v41: runner receipts greet the first reply of a session — the
+        // results are already on the profile row (the runner wrote them),
+        // so this read is free. Same read-once contract as "any results
+        // from my pc": surfacing the receipts clears them.
+        const receipts = deviceReceipts(stored);
+        if (receipts) {
+          response = `${response}\n\n${receipts.note}`;
+          Object.assign(stored, receipts.profile);
         }
 
         // v27: a mission idle 3+ days gets one gentle nudge per day, naming

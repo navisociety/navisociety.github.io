@@ -1,6 +1,18 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v38 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v41 below)
+//
+// v41 additions (the rhythm round):
+//   - MONTHLY WORKFLOWS — "run my budget workflow every month [on the 15th]"
+//     / "run my budget workflow on the 1st of every month" schedules the v26
+//     machinery onto ONE day of the month (Workflow.monthDay, 1-28 only so
+//     every month has it; 29-31 are refused honestly, no day defaults to the
+//     1st). Same session-start channel, same lastRun stamp, same slot
+//     refusal; a workflow is daily OR weekly OR monthly, never two at once.
+//   - DEVICE-TASK CONDITIONS — "when my pc has tasks waiting:", "when my pc
+//     has no tasks waiting:", "when my pc has results waiting:" (+ negation)
+//     read Profile.deviceTasks — sync, free, no source, and they light up in
+//     dry-run previews automatically. Results = the runner's receipts.
 //
 // v38 additions (the tempo round):
 //   - WEEKLY WORKFLOWS — "run my sabbath workflow every sunday" schedules the
@@ -224,6 +236,29 @@ const WEEKLY_OFF_RX = new RegExp(
   `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:(?:every|each|on) )?(?:${DAY_NAMES})s?$`,
 );
 
+// v41: "run my budget workflow every month [on the 15th]" — the monthly
+// cousin. Like weekly-ON it demands "every"/"each" (or the word "monthly");
+// "run my budget workflow on the 1st of every month" also carries "every
+// month", so a plain topic run can never reach here. The day group is
+// validated in tryAgent (1-28 only) so the refusal can answer honestly.
+const MONTHLY_ON_RX = new RegExp(
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? (?:(?:every|each) month|monthly)(?: on the (\\d{1,2})(?:st|nd|rd|th)?)?$`,
+);
+const MONTHLY_ON_DAY_FIRST_RX = new RegExp(
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? on the (\\d{1,2})(?:st|nd|rd|th)? of (?:every|each) month$`,
+);
+const MONTHLY_OFF_RX = new RegExp(
+  `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:(?:every|each) month|monthly)$`,
+);
+
+// v41: "the 1st of every month" reads back the way people say it.
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+}
+
 // "when i say good morning, run my morning workflow"
 // v29: the trigger may end in * (or <topic>) and the ask may carry an
 // "on it/that/*" tail — "when i say study *, run my study workflow on it".
@@ -326,7 +361,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -451,6 +486,22 @@ export async function evalCondition(
   if (m) return segmentOf(hourNow ?? hourInTZ('Africa/Johannesburg')) === m[1];
   m = cond.match(/^(?:it (?:isn'?t|is not)|it'?s not) (morning|afternoon|evening|night)(?: ?time)?$/);
   if (m) return segmentOf(hourNow ?? hourInTZ('Africa/Johannesburg')) !== m[1];
+
+  // v41: device-task conditions — the queue lives ON the profile, so this
+  // pair of pairs is sync and free. "tasks waiting" is anything not yet done
+  // (queued manual tasks + auto tasks the runner hasn't answered); "results
+  // waiting" is the runner's unread receipts. An unknown device honestly has
+  // nothing waiting — same rule as an untracked habit's streak of 0.
+  m = cond.match(/^my ([a-z][a-z0-9 _'-]{0,19}?) has (no )?tasks? waiting$/);
+  if (m) {
+    const n = (profile.deviceTasks ?? []).filter((x) => x.device === m![1] && !x.result).length;
+    return m[2] ? n === 0 : n > 0;
+  }
+  m = cond.match(/^my ([a-z][a-z0-9 _'-]{0,19}?) has (no )?results? waiting$/);
+  if (m) {
+    const n = (profile.deviceTasks ?? []).filter((x) => x.device === m![1] && x.auto && x.result).length;
+    return m[2] ? n === 0 : n > 0;
+  }
 
   // v35: board-aware conditions — the board lives outside the profile, so
   // these are the first conditions that LOOK at the world. Unreachable board
@@ -625,16 +676,21 @@ export function parseWorkflowDelete(message: string): string | null {
  * The workflow name from a "run my X workflow every day" ask, or null.
  * v38: `daily: true` means a schedule was asked FOR — with `day` set it's a
  * weekly schedule ("every sunday"), without it the classic every-day one.
+ * v41: with `monthDay` set it's a monthly schedule ("every month on the
+ * 15th"); a bare "every month" defaults to the 1st. The day is NOT range-
+ * checked here — tryAgent refuses 29-31 honestly (not every month has them).
  * `daily: false` is any off ask; off clears whichever schedule is set.
  */
-export function parseDailySet(message: string): { name: string; daily: boolean; day?: string } | null {
+export function parseDailySet(message: string): { name: string; daily: boolean; day?: string; monthDay?: number } | null {
   const t = tidy(message);
   if (!t || t.length > 100) return null;
+  const monthly = t.match(MONTHLY_ON_RX) ?? t.match(MONTHLY_ON_DAY_FIRST_RX);
+  if (monthly) return { name: monthly[1].trim(), daily: true, monthDay: monthly[2] ? parseInt(monthly[2], 10) : 1 };
   const weekly = t.match(WEEKLY_ON_RX);
   if (weekly) return { name: weekly[1].trim(), daily: true, day: weekly[2] };
   const on = t.match(DAILY_ON_RX);
   if (on) return { name: on[1].trim(), daily: true };
-  const off = t.match(DAILY_OFF_RX) ?? t.match(WEEKLY_OFF_RX);
+  const off = t.match(DAILY_OFF_RX) ?? t.match(WEEKLY_OFF_RX) ?? t.match(MONTHLY_OFF_RX);
   if (off) return { name: off[1].trim(), daily: false };
   return null;
 }
@@ -843,7 +899,7 @@ function nameList(workflows: Workflow[]): string {
   return workflows
     .map((w) => {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
-      const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : '';
+      const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : w.monthDay ? ` — runs monthly on the ${ordinal(w.monthDay)}` : '';
       return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}`;
     })
     .join('\n');
@@ -1321,7 +1377,9 @@ export async function tryAgent(
     const trig = wf.trigger ? `\nTrigger: "${wf.trigger}"` : '';
     const daily = wf.daily
       ? '\nRuns daily on your first chat of the day.'
-      : wf.day ? `\nRuns every ${wf.day}, on your first chat that day.` : '';
+      : wf.day
+      ? `\nRuns every ${wf.day}, on your first chat that day.`
+      : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.` : '';
     return {
       reply: `"${wf.name}" — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}${trig}${daily}\n\nEdit it in place: "replace step 2 of my ${wf.name} workflow with …", "remove step 2 from my ${wf.name} workflow", or "add a step to my ${wf.name} workflow: …".`,
     };
@@ -1444,7 +1502,7 @@ export async function tryAgent(
     const wf = workflows[idx];
     const next = { ...wf, name: renamed.to };
     const trig = wf.trigger ? ` Its trigger ("${wf.trigger}") still works.` : '';
-    const daily = wf.daily ? ' It still runs daily.' : wf.day ? ` It still runs every ${wf.day}.` : '';
+    const daily = wf.daily ? ' It still runs daily.' : wf.day ? ` It still runs every ${wf.day}.` : wf.monthDay ? ` It still runs monthly on the ${ordinal(wf.monthDay)}.` : '';
     return {
       reply: `Done — "${renamed.from}" is now "${renamed.to}".${trig}${daily} Say "run my ${renamed.to} workflow" to use it.`,
       profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
@@ -1524,6 +1582,7 @@ export async function tryAgent(
       trigger: 'fired by its trigger phrase',
       daily: 'daily auto-run',
       weekly: 'weekly auto-run',
+      monthly: 'monthly auto-run',
     };
     return {
       reply: `Ran today (${today.length}):\n${today.map((r) => `- "${r.name}" — ${label[r.via]}`).join('\n')}`,
@@ -1581,19 +1640,30 @@ export async function tryAgent(
         reply: `"${dailySet.name}" has a * slot, so it needs a topic each time — a scheduled auto-run wouldn't know what to fill in. Run it whenever you like with "run my ${dailySet.name} workflow on <topic>".`,
       };
     }
-    // v38: one schedule per workflow — weekly replaces daily and vice versa;
-    // off clears whichever is set (and the lastRun stamp with it).
+    // v41: 1-28 only, so the schedule exists in EVERY month — a 30th that
+    // February silently skips would be a broken promise, not a feature.
+    if (dailySet.monthDay && (dailySet.monthDay < 1 || dailySet.monthDay > 28)) {
+      return {
+        reply: `Not every month has a ${ordinal(dailySet.monthDay)}, so I only book monthly runs on the 1st through the 28th — that way it never silently skips a month. Pick a day in that range.`,
+      };
+    }
+    // v38: one schedule per workflow — weekly replaces daily and vice versa
+    // (v41: monthly joins the swap); off clears whichever is set (and the
+    // lastRun stamp with it).
     const nextList = workflows.map((w, i) => {
       if (i !== idx) return w;
       const next = { ...w };
-      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.lastRun; }
-      else if (dailySet.day) { next.day = dailySet.day; delete next.daily; }
-      else { next.daily = true; delete next.day; }
+      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.monthDay; delete next.lastRun; }
+      else if (dailySet.monthDay) { next.monthDay = dailySet.monthDay; delete next.daily; delete next.day; }
+      else if (dailySet.day) { next.day = dailySet.day; delete next.daily; delete next.monthDay; }
+      else { next.daily = true; delete next.day; delete next.monthDay; }
       return next;
     });
     return {
       reply: dailySet.daily
-        ? dailySet.day
+        ? dailySet.monthDay
+          ? `Done — "${dailySet.name}" now runs itself on the ${ordinal(dailySet.monthDay)} of every month, on your first chat that day. You show up, I handle the routine.`
+          : dailySet.day
           ? `Done — "${dailySet.name}" now runs itself every ${dailySet.day}, on your first chat that day. You show up, I handle the routine.`
           : `Done — "${dailySet.name}" now runs itself every day, on your first chat of the day. You show up, I handle the routine.`
         : `Okay — "${dailySet.name}" is off the schedule. It's still saved; run it anytime with "run my ${dailySet.name} workflow".`,
@@ -1653,6 +1723,8 @@ export async function tryAgent(
  * first reply of the day's first session — reminders-style surfacing, scaled up.
  * v38: weekly workflows (Workflow.day) ride the same channel — due only when
  * todayISO falls on their weekday, stamped with the same lastRun.
+ * v41: monthly workflows (Workflow.monthDay) too — due only when todayISO
+ * falls on their day of the month (1-28, so every month has one).
  */
 export async function runDailyWorkflows(
   profile: Profile,
@@ -1663,16 +1735,19 @@ export async function runDailyWorkflows(
 ): Promise<{ report: string; profile: Profile } | null> {
   // v27: slotted workflows never auto-run — there's no topic to fill the * with.
   const dow = weekdayOf(todayISO);
+  const dom = parseInt(todayISO.slice(8, 10), 10);
   const due = (profile.workflows ?? []).filter((w) =>
-    (w.daily || (w.day && w.day === dow)) && w.lastRun !== todayISO && !hasSlot(w));
+    (w.daily || (w.day && w.day === dow) || (w.monthDay && w.monthDay === dom)) &&
+    w.lastRun !== todayISO && !hasSlot(w));
   if (!due.length) return null;
 
   let prof = profile;
   const reports: string[] = [];
   for (const wf of due) {
-    const out = await runWorkflow(wf, prof, run, undefined, email, sources, wf.daily ? 'daily' : 'weekly');
+    const via = wf.daily ? 'daily' : wf.day ? 'weekly' : 'monthly';
+    const out = await runWorkflow(wf, prof, run, undefined, email, sources, via);
     if (out.profile) prof = out.profile;
-    reports.push(`— Your ${wf.daily ? 'daily' : wf.day} "${wf.name}" workflow —\n\n${out.reply}`);
+    reports.push(`— Your ${wf.daily ? 'daily' : wf.day ?? 'monthly'} "${wf.name}" workflow —\n\n${out.reply}`);
     prof = {
       ...prof,
       workflows: (prof.workflows ?? []).map((w) =>

@@ -56,7 +56,7 @@ import {
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
-import { tryTasks, isTasksAsk, buildIcs } from './tasks.ts';
+import { tryTasks, isTasksAsk, buildIcs, deviceReceipts } from './tasks.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
 import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
 import { parseCleanupAsk, isChatCountAsk, tryChats } from './chats.ts';
@@ -3137,4 +3137,112 @@ Deno.test('v39: the briefing looks at the world once — honest at every stage',
     throw new Error('the briefing carries the world line: ' + brief?.reply);
   }
   eq(await tryBriefing('what is grace', EMAIL, {}, src(9, 9)), null, 'non-briefing asks never fetch');
+});
+
+// ── v41: the rhythm round — monthly workflows, device conditions, receipts ──
+
+Deno.test('v41: parseDailySet learns months; monthly schedules set, swap, and clear', async () => {
+  eq(parseDailySet('run my budget workflow every month'), { name: 'budget', daily: true, monthDay: 1 }, 'bare monthly defaults to the 1st');
+  eq(parseDailySet('run my budget workflow every month on the 15th'), { name: 'budget', daily: true, monthDay: 15 }, 'monthly with a day');
+  eq(parseDailySet('run my budget workflow on the 1st of every month'), { name: 'budget', daily: true, monthDay: 1 }, 'day-first form');
+  eq(parseDailySet('make my budget routine monthly'), { name: 'budget', daily: true, monthDay: 1 }, 'the word monthly');
+  eq(parseDailySet('stop running my budget workflow every month'), { name: 'budget', daily: false }, 'monthly off');
+  eq(parseDailySet('run my budget workflow on grace'), null, 'a topic run is never a schedule');
+  eq(parseDailySet('i budget every month'), null, 'plain sentences untouched');
+
+  const { run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'budget', steps: ['list my reminders'], created: 'now' }] };
+  const on = await tryAgent('run my budget workflow every month on the 15th', EMAIL, profile, run);
+  eq(on?.profile?.workflows?.[0].monthDay, 15, 'monthDay stored');
+  eq(on?.profile?.workflows?.[0].daily, undefined, 'monthly is not daily');
+  if (!on?.reply.includes('15th of every month')) throw new Error('confirm must name the day: ' + on?.reply);
+
+  const listed = await tryAgent('list my workflows', EMAIL, on!.profile!, run);
+  if (!listed?.reply.includes('runs monthly on the 15th')) throw new Error('list must show the monthly schedule: ' + listed?.reply);
+  const shown = await tryAgent('show my budget workflow', EMAIL, on!.profile!, run);
+  if (!shown?.reply.includes('Runs on the 15th of every month')) throw new Error('show must show the monthly schedule: ' + shown?.reply);
+
+  // The schedule stays exclusive: weekly replaces monthly, monthly replaces daily.
+  const weekly = await tryAgent('run my budget workflow every friday', EMAIL, on!.profile!, run);
+  eq(weekly?.profile?.workflows?.[0].day, 'friday', 'weekly replaces monthly');
+  eq(weekly?.profile?.workflows?.[0].monthDay, undefined, 'monthDay is gone');
+  const monthly = await tryAgent('run my budget workflow every month', EMAIL, weekly!.profile!, run);
+  eq(monthly?.profile?.workflows?.[0].monthDay, 1, 'monthly replaces weekly');
+  eq(monthly?.profile?.workflows?.[0].day, undefined, 'weekday is gone');
+  const off = await tryAgent('stop running my budget workflow monthly', EMAIL, monthly!.profile!, run);
+  eq(off?.profile?.workflows?.[0].monthDay, undefined, 'off clears the schedule');
+
+  const late = await tryAgent('run my budget workflow every month on the 30th', EMAIL, profile, run);
+  if (!late?.reply.includes('1st through the 28th')) throw new Error('29-31 refused honestly: ' + late?.reply);
+  eq(late?.profile, undefined, 'a refused day changes nothing');
+
+  const slotted: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+  const refuse = await tryAgent('run my study workflow every month', EMAIL, slotted, run);
+  if (!refuse?.reply.includes('* slot')) throw new Error('slotted workflows refuse a monthly schedule: ' + refuse?.reply);
+});
+
+Deno.test('v41: runDailyWorkflows runs monthly workflows on their day only', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'budget', steps: ['list my reminders'], created: 'now', monthDay: 15 },
+  ] };
+  eq(await runDailyWorkflows(profile, run, '2026-07-14'), null, 'the monthly workflow waits for its day');
+  const due = await runDailyWorkflows(profile, run, '2026-07-15');
+  if (!due) throw new Error('the 15th is its day');
+  if (!due.report.includes('Your monthly "budget" workflow')) throw new Error('the monthly header says so: ' + due.report);
+  const log = due.profile.workflowLog!;
+  eq(log[log.length - 1].via, 'monthly', 'the receipt says monthly');
+  eq(due.profile.workflows?.[0].lastRun, '2026-07-15', 'lastRun stamped');
+  eq(await runDailyWorkflows(due.profile, run, '2026-07-15'), null, 'never twice the same day');
+});
+
+Deno.test('v41: device-task conditions read the queue and the receipts, sync and free', async () => {
+  const t = '2026-07-15';
+  const p: Profile = { deviceTasks: [
+    { device: 'pc', text: 'backup', created: 'now', auto: true, result: 'ok — done' },
+    { device: 'laptop', text: 'push the repo', created: 'now' },
+  ] };
+  eq(await evalCondition('my laptop has tasks waiting', p, t), true, 'a queued task is waiting');
+  eq(await evalCondition('my laptop has no tasks waiting', p, t), false, 'negation fails when one waits');
+  eq(await evalCondition('my pc has tasks waiting', p, t), false, 'a finished receipt is not a waiting task');
+  eq(await evalCondition('my pc has results waiting', p, t), true, 'the receipt is a waiting result');
+  eq(await evalCondition('my pc has no results waiting', p, t), false, 'negation sees the receipt');
+  eq(await evalCondition('my laptop has results waiting', p, t), false, 'no receipts on the laptop');
+  eq(await evalCondition('my phone has tasks waiting', {}, t), false, 'an unknown device honestly has nothing');
+  eq(await evalCondition('my phone has no tasks waiting', {}, t), true, 'and its negation holds');
+  eq(await evalCondition('my pc has homework waiting', p, t), null, 'the vocabulary stays closed');
+
+  // The pair lights up inside a real workflow run, step-level.
+  const { run, ran } = stubRunner();
+  const wf: Profile = { ...p, workflows: [{
+    name: 'aware',
+    steps: ['when my pc has results waiting: list my reminders', 'when my laptop has no tasks waiting: encourage me'],
+    created: 'now',
+  }] };
+  const out = await tryAgent('run my aware workflow', EMAIL, wf, run);
+  eq(ran, ['list my reminders'], 'the holding condition ran, the failing one skipped');
+  if (!out?.reply.includes('skipped')) throw new Error('the skip is reported: ' + out?.reply);
+});
+
+Deno.test('v41: deviceReceipts surfaces unread receipts once, then clears them', () => {
+  eq(deviceReceipts({}), null, 'no tasks, no note');
+  eq(deviceReceipts({ deviceTasks: [{ device: 'pc', text: 'backup', created: 'now', auto: true }] }), null, 'a waiting auto task is not a receipt');
+  eq(deviceReceipts({ deviceTasks: [{ device: 'laptop', text: 'push', created: 'now' }] }), null, 'manual tasks are not receipts');
+
+  const p: Profile = { deviceTasks: [
+    { device: 'pc', text: 'backup', created: 'now', auto: true, result: 'ok — 2 files copied' },
+    { device: 'pc', text: 'cleanup', created: 'now', auto: true, result: 'refused — not in the allowlist' },
+    { device: 'phone', text: 'sync', created: 'now', auto: true, result: 'ok — synced' },
+    { device: 'pc', text: 'update', created: 'now', auto: true },
+    { device: 'laptop', text: 'push the repo', created: 'now' },
+  ] };
+  const got = deviceReceipts(p)!;
+  if (!got.note.includes('From the runner on your pc:')) throw new Error('pc block missing: ' + got.note);
+  if (!got.note.includes('backup — ok — 2 files copied')) throw new Error('receipt text missing: ' + got.note);
+  if (!got.note.includes('cleanup — refused — not in the allowlist')) throw new Error('refusals ride too: ' + got.note);
+  if (!got.note.includes('From the runner on your phone:')) throw new Error('phone block missing: ' + got.note);
+  if (!got.note.includes('read and cleared')) throw new Error('the note states the contract: ' + got.note);
+  eq(got.profile.deviceTasks?.length, 2, 'only the receipts clear');
+  eq(got.profile.deviceTasks?.map((x) => x.text), ['update', 'push the repo'], 'waiting work survives');
+  eq(deviceReceipts(got.profile), null, 'read once — a second session-start stays quiet');
 });

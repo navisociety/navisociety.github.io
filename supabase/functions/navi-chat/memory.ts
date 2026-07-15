@@ -88,8 +88,8 @@ export type Profile = {
 // the runner's receipt (set once, read-and-cleared by "any results from …").
 export type DeviceTask = { device: string; text: string; created: string; auto?: boolean; result?: string };
 
-// v39: one workflow run receipt — `via` says who started it.
-export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' };
+// v39: one workflow run receipt — `via` says who started it. (+v41 monthly)
+export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' };
 
 // v31: one pending chat cleanup. `cutoff` is the ISO timestamp a session's
 // updated_at must be OLDER than to be deleted; `count` is what NAVI counted
@@ -118,7 +118,10 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // `lastRun` (yyyy-mm-dd) stops a second run the same day.
 // v38: `day` schedules a weekly auto-run on that SA weekday (lowercase name,
 // e.g. 'monday') — mutually exclusive with `daily`; both share `lastRun`.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; lastRun?: string };
+// v38: `day` schedules ONE weekday; v41: `monthDay` schedules ONE day of the
+// month (1-28 only, so every month has it). A workflow carries at most one of
+// daily/day/monthDay — setting one clears the others.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; lastRun?: string };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.

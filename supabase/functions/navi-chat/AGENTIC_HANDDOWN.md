@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v40** (the muse round).
+Last updated: 2026-07-15, at **v41** (the rhythm round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -148,6 +148,18 @@ carries its own CRISIS_RX) so the crisis nodes own the message. The /write
 help node lives in index.ts NODES with its navi-model.ts mirror (the
 sanctioned v34 pattern — the mirror is the offline fallback, not UI).
 
+v41 additions: ONE new session-start position — deviceReceipts (tasks.ts)
+sits right after runDueSends inside the crisis guard. It is profile-only and
+FREE (the runner already wrote its results onto the deviceTasks row the
+request loaded — no new network read); surfacing the receipts clears them,
+the same read-once contract as "any results from my pc", and the emptied
+list is an array (never an unset key), so Object.assign carries it into the
+final save with no mirroring needed. Everything else is agent.ts branches:
+monthly workflows ride the existing runDailyWorkflows call (the due filter
+now also admits `Workflow.monthDay === today's day-of-month`), and the
+device-task conditions are sync evalCondition reads over Profile.deviceTasks
+(no new source on the seam).
+
 v38 additions: no new wiring at all, and (unlike v35-v37) not even a new
 source — everything is sync and free. Weekly workflows ride the EXISTING
 runDailyWorkflows call (the due filter now also admits `Workflow.day ===
@@ -169,7 +181,34 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v39) · mail.ts (v32→v35) · tasks.ts (v39) · compose.ts (v21→v40)
+### agent.ts — workflows & missions (v25→v41) · mail.ts (v32→v35) · tasks.ts (v39→v41) · compose.ts (v21→v40)
+
+**v41 — the rhythm round** (agent.ts + one export in tasks.ts + one
+session-start wiring — the three natural rungs the v39/v40 hand-downs named,
+none needing a decision from Dian):
+- **Monthly workflows**: "run my budget workflow every month [on the 15th]" /
+  "run my budget workflow on the 1st of every month" / "make my budget
+  routine monthly" schedules the v26 machinery onto ONE day of the month
+  (`Workflow.monthDay`). 1-28 ONLY, so the schedule exists in every month —
+  29-31 are refused honestly ("not every month has a 30th"), and a bare
+  "every month" defaults to the 1st (the reply says so). Same session-start
+  channel, same lastRun stamp, same slotted refusal; the schedule stays
+  exclusive (daily OR weekly OR monthly — setting one clears the others,
+  any off form clears all). Receipts say `via: 'monthly'`; list/show/rename
+  all read the day back as an ordinal ("runs monthly on the 15th").
+- **Device-task conditions**: "when my pc has tasks waiting:" (+ "has no
+  tasks waiting") and "when my pc has results waiting:" (+ negation) —
+  sync, free evalCondition reads over Profile.deviceTasks, NO new source on
+  the v35 seam. "Tasks waiting" is anything not yet done (manual + unanswered
+  auto tasks); "results waiting" is the runner's unread receipts; an unknown
+  device honestly has nothing waiting (the untracked-habit rule). They light
+  up in v36 dry-run previews automatically.
+- **Runner receipts at session-start** (tasks.ts deviceReceipts): unread
+  runner results open the first reply of a session, grouped by device,
+  appended right after due sends inside the crisis guard. Profile-only and
+  free — the runner already wrote the results onto the row NAVI loaded.
+  Read-once stands: surfacing clears them, and "any results from my pc"
+  remains the explicit read for mid-session checks.
 
 **v40 — the muse round** (all compose.ts + one splitIntents guard — built under
 Dian's "/write feature + improve creative writing" direction):
@@ -709,13 +748,23 @@ Post-v38 candidates:
 Post-v39 status: still open are #17 (workflow steps that send — run-time
 confirm, only if Dian asks), #19 (reply threading — blocked on DDL),
 #21/#22 (email tool declared COMPLETE), #27 (preview-before-daily — ask).
-Natural next rungs on the v39 seams: monthly workflow cadence ("every 1st"),
-device tasks inside workflow conditions ("when my pc has results waiting:"),
-runner receipts at session-start (append like due sends — careful: that's a
-new session-start read). The runner itself still needs Dian's device setup
-(service key + tasks.config.json + NAVI_DEVICE) before its first real run —
-the chat half is live and tested. A genuinely new rung beyond these needs a
-new bridge table or a decision from Dian.
+~~Natural next rungs on the v39 seams~~ — ALL THREE SHIPPED in v41 (the
+rhythm round): monthly workflow cadence, device-task conditions, and runner
+receipts at session-start (which turned out to be FREE, not a new read — the
+receipts live on the profile row the request already loads). The runner
+itself still needs Dian's device setup (service key + tasks.config.json +
+NAVI_DEVICE) before its first real run — the chat half is live and tested.
+
+Post-v41 status: the deterministic execution line has now consumed every
+rung that doesn't need Dian or DDL. What remains, all gated:
+- #17 workflow steps that send (run-time confirm) — ONLY if Dian asks.
+- #19 reply threading — blocked on a navi_emails DDL (management token
+  out-of-band).
+- #21/#22 — email tool declared COMPLETE; don't touch unasked.
+- #27 preview-before-daily — doubles condition fetches; decide with Dian.
+- The runner's first real run — needs Dian's device setup.
+A genuinely new rung beyond these needs a new bridge table (Create/Share
+tools are still localStorage stand-ins) or a fresh direction from Dian.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -741,8 +790,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v37 | `4124524` | horizon round: mission dry-run (the whole remaining tail, read-only) + chats-age conditions (the seam's third source) |
 | v38 | `00445c4` | tempo round: weekly workflows (run every <weekday>, the v26 channel) + calendar/clock conditions (weekday/weekend/time-of-day, sync and free) |
 | v39 | `c92d992` | hands round: device task queue + name-only runner contract (tasks.ts, navi-runner/), ICS calendar export, workflow run receipts, briefing world line (#24) |
-| v40 | (see git) | muse round: /write slash command (free-text writing prompts, splitIntents-guarded) + new creative kinds (story/song/letter/speech/quote), generative story assembly, char-code variant seed |
+| v40 | `5bfbfed`+`d906065` | muse round: /write slash command (free-text writing prompts, splitIntents-guarded) + new creative kinds (story/song/letter/speech/quote), generative story assembly, char-code variant seed |
+| v41 | (see git) | rhythm round: monthly workflows (every month on the Nth, 1-28 only), device-task conditions (tasks/results waiting, sync), runner receipts at session-start (free, read-once) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → **217**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → **221**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

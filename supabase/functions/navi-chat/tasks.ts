@@ -19,7 +19,9 @@
 //      config (tasks.config.json), which chat can never write. A name the
 //      device doesn't define is refused by the runner, honestly. The runner
 //      POLLS — NAVI never pushes (the no-server-push anti-goal stands).
-//      "any results from my pc" reads the runner's receipts and clears them.
+//      "any results from my pc" reads the runner's receipts and clears them
+//      (v41: unread receipts also open the first reply of a session, through
+//      deviceReceipts below — same read-once-and-clear contract).
 //
 //   3. CALENDAR EXPORT — "export my reminders as a calendar" builds an
 //      RFC-5545 ICS block from everything dated NAVI holds (dated reminders,
@@ -177,6 +179,31 @@ export function buildIcs(profile: Profile, nowISO = new Date().toISOString()): s
     events.join('\n'),
     'END:VCALENDAR',
   ].join('\n');
+}
+
+// ── v41: session-start receipts ─────────────────────────────────────────────
+
+/**
+ * v41: unread runner receipts, surfaced on the first reply of a session
+ * (index.ts appends this after due sends, inside the crisis guard). Profile-
+ * only and free: the runner already wrote its results onto the deviceTasks
+ * row NAVI just loaded — no new network read. Same read-once contract as
+ * "any results from my pc": surfacing the receipts clears them. Returns null
+ * when nothing is waiting to be read.
+ */
+export function deviceReceipts(profile: Profile): { note: string; profile: Profile } | null {
+  const tasks = profile.deviceTasks ?? [];
+  const finished = tasks.filter((x) => x.auto && x.result);
+  if (!finished.length) return null;
+  const devices = [...new Set(finished.map((x) => x.device))];
+  const blocks = devices.map((d) => {
+    const mine = finished.filter((x) => x.device === d);
+    return `From the runner on your ${d}:\n${mine.map((x, i) => `${i + 1}. ${x.text} — ${x.result}`).join('\n')}`;
+  });
+  return {
+    note: `${blocks.join('\n\n')}\n\nReceipts read and cleared — queue more anytime with "run <name> on my <device>".`,
+    profile: { ...profile, deviceTasks: tasks.filter((x) => !finished.includes(x)) },
+  };
 }
 
 // ── The layer ───────────────────────────────────────────────────────────────
