@@ -20,8 +20,28 @@
 // active mission's plan. Either way the reminder leaves the list — promoted,
 // not abandoned.
 
-import type { Habit, Profile, Reminder } from './memory.ts';
+// v44 — RECURRING reminders + snooze (the cadence round): "remind me every
+// day to pray" / "remind me every monday to call mom" / "remind me to pay
+// rent on the 1st of every month" hold ONE reminder whose `due` rolls to the
+// next occurrence each time it surfaces — the surfacing IS the reminder, no
+// tick-off owed (the daily-workflow lastRun idea, worn by a reminder).
+// The cadence laws mirror the workflow schedule: weekly demands "every"/
+// "each" (so "on friday" stays a one-off date), monthly is 1-28 ONLY so the
+// day exists in every month, and "every month" bare defaults to the 1st.
+// "done with reminder N" on a recurring one rolls it and says so — only
+// "delete reminder N" stops it. "snooze reminder 2 until friday / for 3
+// days" pushes any reminder's date (a recurring one resumes its rhythm
+// after). And v44 closes a v22 gap: the add path now carries CRISIS_RX and
+// steps aside, so crisis phrasing is never stored as a reminder.
+
+import { type Habit, isCrisisReply, type Profile, type Reminder } from './memory.ts';
 import { todayInTZ } from './skills.ts';
+
+// Same guard as agent.ts/habit.ts/memory.ts: crisis language is a human
+// emergency, never a note to hold. Returning null lets the pipeline fall
+// through to the crisis nodes, which own the message.
+const CRISIS_RX =
+  /\b(die|dying|death|kill|suicide|suicidal|hurt (?:myself|me)|harm (?:myself|me)|self.?harm|end (?:it all|my life)|give up on (?:life|living)|not (?:want|worth) (?:to live|living)|disappear forever)\b/i;
 
 const NAVI_TZ = 'Africa/Johannesburg';
 const MAX_REMINDERS = 12;
@@ -87,12 +107,91 @@ export function parseWhen(text: string, today = todayInTZ(NAVI_TZ)): { text: str
   return { text: t, due };
 }
 
+// ── v44: recurring cadence ────────────────────────────────────────────────────
+
+// 'day', a weekday name, or a day-of-month number (1-28).
+export type Every = string | number;
+
+/**
+ * Parse a recurring phrase off a reminder and strip it: "every day",
+ * "every monday" (each/plural forms too), "on the 1st of every month",
+ * "every month [on the 15th]" (bare defaults to the 1st). Weekly demands
+ * "every"/"each" — "on friday" stays a one-off date for parseWhen. Monthly
+ * days 29-31 come back as `badDay` so the caller can refuse honestly.
+ * No bare "daily": "the daily standup" is a topic, not a cadence.
+ */
+export function parseEvery(text: string): { text: string; every?: Every; badDay?: number } {
+  let t = text.trim().replace(/[.!?]+\s*$/, '');
+  const strip = (rx: RegExp) => {
+    const m = t.match(rx);
+    if (m) t = t.replace(rx, ' ').replace(/\s+/g, ' ').trim();
+    return m;
+  };
+  let m: RegExpMatchArray | null;
+  if ((m = strip(/\s*\bon (?:the )?(\d{1,2})(?:st|nd|rd|th)? of (?:every|each) month\b/i)) ||
+      (m = strip(/\s*\b(?:every|each) month(?:\s+on (?:the )?(\d{1,2})(?:st|nd|rd|th)?)?\b/i))) {
+    const day = m[1] ? parseInt(m[1], 10) : 1;
+    if (day < 1 || day > 28) return { text: t, badDay: day };
+    return { text: t, every: day };
+  }
+  if (strip(/\s*\b(?:every|each) day\b/i)) return { text: t, every: 'day' };
+  if ((m = strip(new RegExp(String.raw`\s*\b(?:every|each) (${WEEKDAYS.join('|')})s?\b`, 'i')))) {
+    return { text: t, every: m[1].toLowerCase() };
+  }
+  return { text: t };
+}
+
+/**
+ * The next date (ISO, SA time) a cadence falls on. `after` excludes today —
+ * creation includes it ("every wednesday" said on a Wednesday surfaces this
+ * very day), rolling forward after a surface excludes it.
+ */
+export function nextOccurrence(every: Every, today: { y: number; m: number; d: number }, after = false): string {
+  const todayISO = isoFromYMD(today.y, today.m, today.d);
+  if (every === 'day') return after ? addDays(today, 1) : todayISO;
+  if (typeof every === 'number') {
+    const thisMonth = isoFromYMD(today.y, today.m, every);
+    if (after ? thisMonth > todayISO : thisMonth >= todayISO) return thisMonth;
+    return today.m === 12 ? isoFromYMD(today.y + 1, 1, every) : isoFromYMD(today.y, today.m + 1, every);
+  }
+  const target = WEEKDAYS.indexOf(String(every).toLowerCase());
+  if (target < 0) return todayISO; // unknown cadence never lands here; stay honest anyway
+  const now = new Date(Date.UTC(today.y, today.m - 1, today.d)).getUTCDay();
+  let ahead = ((target - now) % 7 + 7) % 7;
+  if (ahead === 0 && after) ahead = 7;
+  return addDays(today, ahead);
+}
+
+function ymdOf(iso: string): { y: number; m: number; d: number } {
+  return { y: parseInt(iso.slice(0, 4), 10), m: parseInt(iso.slice(5, 7), 10), d: parseInt(iso.slice(8, 10), 10) };
+}
+
+function ordinal(n: number): string {
+  const suffix = n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th';
+  return `${n}${suffix}`;
+}
+
+/** "every day" / "every monday" / "monthly on the 1st" — how a cadence reads back. */
+export function cadenceLabel(every: Every): string {
+  if (every === 'day') return 'every day';
+  if (typeof every === 'number') return `monthly on the ${ordinal(every)}`;
+  return `every ${every}`;
+}
+
 // ── Ask detection ─────────────────────────────────────────────────────────────
 
 const ADD_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+|can you\s+|could you\s+)?remind me\s+(?:to\s+|about\s+|that\s+)?(.+)$/i;
 const LIST_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:what are my|show (?:me )?my|list my|do i have any)\s+reminders?[?!.]*$/i;
 const CLEAR_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:clear|delete|remove|forget)\s+(?:all\s+)?(?:of\s+)?my\s+reminders[?!.]*$/i;
-const DONE_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:done with|i did|remove|delete|clear)\s+(?:the\s+)?reminder\s*(?:#|number\s*)?(\d{1,2})[?!.]*$/i;
+// v44: the verb is captured — on a RECURRING reminder "done with"/"i did"
+// rolls it to its next date, while remove/delete/clear stops it for good.
+const DONE_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(done with|i did|remove|delete|clear)\s+(?:the\s+)?reminder\s*(?:#|number\s*)?(\d{1,2})[?!.]*$/i;
+
+// v44: snooze — push a reminder's date out. The phrase reuses parseWhen's
+// closed vocabulary ("until tomorrow", "until friday", "until 25 december");
+// "for 3 days" / "for a week" normalize to the "in N days/weeks" form. No
+// phrase means tomorrow.
+const SNOOZE_RX = /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+)?(?:snooze|postpone|push|delay)\s+(?:the\s+)?reminder\s*(?:#|number\s*)?(\d{1,2})(?:\s+(?:until|till|to|for)\s+(.+?))?[?!.]*$/i;
 
 // v30: escalation commands. Anchored like everything else; "reminder 2" picks
 // by list position, bare "that reminder" picks the one NAVI last offered on
@@ -106,14 +205,16 @@ const ESC_MISSION_RX =
 export function isReminderAsk(message: string): boolean {
   const m = message.trim().replace(/[.!?]+\s*$/, '');
   return ADD_RX.test(m) || LIST_RX.test(m) || CLEAR_RX.test(m) || DONE_RX.test(m) ||
-    ESC_HABIT_RX.test(m) || ESC_MISSION_RX.test(m);
+    SNOOZE_RX.test(m) || ESC_HABIT_RX.test(m) || ESC_MISSION_RX.test(m);
 }
 
 function describe(r: Reminder, todayISO: string): string {
-  if (!r.due) return r.text;
-  if (r.due < todayISO) return `${r.text} (was due ${r.due})`;
-  if (r.due === todayISO) return `${r.text} (today)`;
-  return `${r.text} (${r.due})`;
+  // v44: a recurring reminder names its rhythm wherever it renders.
+  const tag = r.every !== undefined ? `${cadenceLabel(r.every)} — ` : '';
+  if (!r.due) return r.every !== undefined ? `${r.text} (${cadenceLabel(r.every)})` : r.text;
+  if (r.due < todayISO) return `${r.text} (${tag}was due ${r.due})`;
+  if (r.due === todayISO) return `${r.text} (${tag}today)`;
+  return `${r.text} (${tag}${r.every !== undefined ? 'next ' : ''}${r.due})`;
 }
 
 /**
@@ -142,19 +243,87 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
 
   const done = m.match(DONE_RX);
   if (done) {
-    const idx = parseInt(done[1], 10) - 1;
+    const idx = parseInt(done[2], 10) - 1;
     if (idx < 0 || idx >= list.length) {
       return { reply: list.length ? `I only have ${list.length} reminder${list.length > 1 ? 's' : ''} — say "what are my reminders" to see them.` : 'You have no reminders saved.' };
     }
-    const removed = list[idx];
+    const target = list[idx];
+    // v44: a recurring reminder survives "done" — it rolls to its next date.
+    // Only the delete verbs stop it.
+    if (target.every !== undefined && /^(?:done with|i did)$/i.test(done[1])) {
+      const base = target.due && target.due > todayISO ? ymdOf(target.due) : today;
+      const due = nextOccurrence(target.every, base, true);
+      return {
+        reply: `Ticked off for now — "${target.text}" repeats ${cadenceLabel(target.every)}, so it'll be back on ${due}. Say "delete reminder ${idx + 1}" to stop it for good.`,
+        profile: { ...stored, reminders: list.map((r, i) => (i === idx ? { ...r, due } : r)) },
+      };
+    }
+    const rest = list.filter((_, i) => i !== idx);
+    const tail = rest.length ? `${rest.length} still on the list.` : 'That was the last one.';
+    if (target.every !== undefined) {
+      return {
+        reply: `Stopped — no more ${cadenceLabel(target.every)} reminders about "${target.text}". ${tail}`,
+        profile: { ...stored, reminders: rest },
+      };
+    }
     return {
-      reply: `Ticked off — "${removed.text}" is done. ${list.length - 1 ? `${list.length - 1} still on the list.` : 'That was the last one.'}`,
-      profile: { ...stored, reminders: list.filter((_, i) => i !== idx) },
+      reply: `Ticked off — "${target.text}" is done. ${tail}`,
+      profile: { ...stored, reminders: rest },
+    };
+  }
+
+  // v44: snooze — push a reminder's date out; a recurring one resumes its
+  // rhythm after the snoozed date passes.
+  const snooze = m.replace(/[.!?]+\s*$/, '').match(SNOOZE_RX);
+  if (snooze) {
+    const idx = parseInt(snooze[1], 10) - 1;
+    if (idx < 0 || idx >= list.length) {
+      return { reply: list.length ? `I only have ${list.length} reminder${list.length > 1 ? 's' : ''} — say "what are my reminders" to see them.` : 'You have no reminders saved.' };
+    }
+    let phrase = (snooze[2] ?? 'tomorrow').trim()
+      .replace(/^(?:a|one)\s+(day|week)$/i, '1 $1')
+      .replace(/^(\d{1,2})\s+(day|week)s?$/i, 'in $1 $2s');
+    const { due } = parseWhen(phrase, today);
+    if (!due) {
+      return { reply: 'I can snooze "until tomorrow", "until friday", "for 3 days", or "until 25 december" — that phrasing I don\'t know yet.' };
+    }
+    if (due <= todayISO) {
+      return { reply: "That wouldn't move it anywhere — pick a day after today, like \"snooze reminder 1 until tomorrow\"." };
+    }
+    const target = list[idx];
+    const rhythm = target.every !== undefined ? ` (its ${cadenceLabel(target.every)} rhythm carries on after that)` : '';
+    return {
+      reply: `Snoozed — "${target.text}" will come back on ${due}${rhythm}.`,
+      profile: { ...stored, reminders: list.map((r, i) => (i === idx ? { ...r, due } : r)) },
     };
   }
 
   const add = m.replace(/[.!?]+\s*$/, '').match(ADD_RX);
   if (add) {
+    // v44: crisis phrasing is never stored as a reminder — step aside and let
+    // the crisis nodes own the whole message.
+    if (CRISIS_RX.test(add[1])) return null;
+    // v44: recurring? Parse the cadence BEFORE parseWhen — parseWhen would
+    // eat the weekday out of "every monday" and leave a one-off behind.
+    const ev = parseEvery(add[1]);
+    if (ev.badDay !== undefined) {
+      return { reply: `Not every month has a ${ordinal(ev.badDay)} — pick a day from 1 to 28 and the reminder will exist in every month.` };
+    }
+    if (ev.every !== undefined) {
+      // "remind me every monday to call mom" — the cadence came before the
+      // "to", so ADD_RX couldn't strip it; take it off the remainder here.
+      const text = ev.text.replace(/^(?:to|about|that)\s+/i, '').trim();
+      if (!text || text.length > 200) return { reply: "Tell me what to remind you about — like \"remind me every monday to call mom\"." };
+      if (list.length >= MAX_REMINDERS) {
+        return { reply: `Your list is full (${MAX_REMINDERS}). Say "what are my reminders" and tick a few off first.` };
+      }
+      const due = nextOccurrence(ev.every, today);
+      const first = due === todayISO ? 'today' : due === addDays(today, 1) ? 'tomorrow' : `on ${due}`;
+      return {
+        reply: `Held. I'll remind you to ${text} ${cadenceLabel(ev.every)}, starting ${first} — it repeats until you say "delete reminder ${list.length + 1}".`,
+        profile: { ...stored, reminders: [...list, { text, created: todayISO, due, every: ev.every }] },
+      };
+    }
     const { text, due } = parseWhen(add[1], today);
     if (!text || text.length > 200) return { reply: "Tell me what to remind you about — like \"remind me to call mom tomorrow\"." };
     if (list.length >= MAX_REMINDERS) {
@@ -175,18 +344,35 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
 
 /**
  * Prepend due reminders to the first reply of a fresh session. A reminder is
- * due when it has no date or its date has arrived; it stays on the list until
- * the user ticks it off, so nothing silently disappears.
+ * due when it has no date or its date has arrived; a one-off stays on the
+ * list until the user ticks it off, so nothing silently disappears. v44: a
+ * RECURRING reminder rolls to its next occurrence the moment it surfaces —
+ * the surfacing IS the reminder — and the rolled list comes back on
+ * `reminders` for the caller to carry into the save. Never wraps a crisis
+ * reply (invariant #1); the untouched list surfaces next session instead.
  */
-export function addDueReminders(response: string, stored: Profile, today = todayInTZ(NAVI_TZ)): string {
+export function addDueReminders(
+  response: string,
+  stored: Profile,
+  today = todayInTZ(NAVI_TZ),
+): { response: string; reminders?: Reminder[] } {
   const list = stored.reminders ?? [];
-  if (!list.length) return response;
+  if (!list.length || isCrisisReply(response)) return { response };
   const todayISO = isoFromYMD(today.y, today.m, today.d);
   const due = list.filter(r => !r.due || r.due <= todayISO);
-  if (!due.length) return response;
+  if (!due.length) return { response };
   const lines = due.map(r => `• ${describe(r, todayISO)}`).join('\n');
   const lead = due.length === 1 ? 'One thing you asked me to hold:' : `${due.length} things you asked me to hold:`;
-  return `${lead}\n${lines}\n(Say "done with reminder 1" to tick one off.)\n\n${response}`;
+  let rolled = false;
+  const reminders = list.map(r => {
+    if (r.every === undefined || !r.due || r.due > todayISO) return r;
+    rolled = true;
+    return { ...r, due: nextOccurrence(r.every, today, true) };
+  });
+  return {
+    response: `${lead}\n${lines}\n(Say "done with reminder 1" to tick one off.)\n\n${response}`,
+    ...(rolled ? { reminders } : {}),
+  };
 }
 
 // ── v30: escalation — a reminder that keeps waiting gets promoted ────────────
@@ -208,8 +394,9 @@ export function reminderEscalation(
   todayISO: string,
 ): { note: string; profile: Profile } | null {
   const list = profile.reminders ?? [];
+  // v44: recurring reminders never escalate — a cadence IS the promotion.
   const idx = list.findIndex(
-    (r) => !r.offered && daysBetween(r.created, todayISO) >= ESCALATE_AFTER_DAYS,
+    (r) => r.every === undefined && !r.offered && daysBetween(r.created, todayISO) >= ESCALATE_AFTER_DAYS,
   );
   if (idx < 0) return null;
   const r = list[idx];

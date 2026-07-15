@@ -41,7 +41,7 @@ import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
 import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 import { tryEquation } from './skills.ts';
 import { parseDefineAsk, formatDictionary, type DictEntry } from './define.ts';
-import { parseWhen, tryReminder, addDueReminders, isReminderAsk, tryEscalate, reminderEscalation } from './remind.ts';
+import { parseWhen, tryReminder, addDueReminders, isReminderAsk, tryEscalate, reminderEscalation, parseEvery, nextOccurrence } from './remind.ts';
 import { votdIndex, isVotdAsk, devotionTopic, formatVotd, formatDevotional, VOTD_ROTATION } from './devotion.ts';
 import { memorizeRef, activeMemoryRef, gradeAttempt, blankOut, startCoaching } from './memorize.ts';
 import { normalizeMessage } from './normalize.ts';
@@ -1021,10 +1021,102 @@ Deno.test('addDueReminders surfaces due and undated ones, holds future ones', ()
     { text: 'renew domain', created: '2026-07-07', due: '2026-12-25' },
   ] };
   const out = addDueReminders('Hey.', stored, T0);
-  if (!out.includes('call mom (today)')) throw new Error(`due today: ${out}`);
-  if (!out.includes('drink water')) throw new Error(`undated: ${out}`);
-  if (out.includes('renew domain')) throw new Error(`future leaked: ${out}`);
-  eq(addDueReminders('Hey.', { reminders: [{ text: 'renew domain', created: 'x', due: '2026-12-25' }] }, T0), 'Hey.', 'nothing due → untouched');
+  if (!out.response.includes('call mom (today)')) throw new Error(`due today: ${out.response}`);
+  if (!out.response.includes('drink water')) throw new Error(`undated: ${out.response}`);
+  if (out.response.includes('renew domain')) throw new Error(`future leaked: ${out.response}`);
+  eq(out.reminders, undefined, 'no recurring rows → no rolled list');
+  eq(addDueReminders('Hey.', { reminders: [{ text: 'renew domain', created: 'x', due: '2026-12-25' }] }, T0).response, 'Hey.', 'nothing due → untouched');
+});
+
+// ── v44: recurring reminders + snooze (the cadence round) ────────────────────
+
+Deno.test('parseEvery reads cadences, strips them, and refuses impossible month days', () => {
+  eq(parseEvery('pray every day'), { text: 'pray', every: 'day' }, 'every day');
+  eq(parseEvery('each day drink water'), { text: 'drink water', every: 'day' }, 'each day, leading');
+  eq(parseEvery('every monday call mom'), { text: 'call mom', every: 'monday' }, 'weekday leading');
+  eq(parseEvery('submit the report every friday'), { text: 'submit the report', every: 'friday' }, 'weekday trailing');
+  eq(parseEvery('pay rent on the 1st of every month'), { text: 'pay rent', every: 1 }, 'Nth of every month');
+  eq(parseEvery('pay rent every month on the 15th'), { text: 'pay rent', every: 15 }, 'every month on the Nth');
+  eq(parseEvery('pay rent every month'), { text: 'pay rent', every: 1 }, 'bare month defaults to the 1st');
+  eq(parseEvery('pay rent on the 30th of every month'), { text: 'pay rent', badDay: 30 }, '29-31 refused');
+  eq(parseEvery('join the daily standup'), { text: 'join the daily standup' }, 'bare "daily" is a topic, not a cadence');
+  eq(parseEvery('call mom on friday'), { text: 'call mom on friday' }, '"on friday" without every/each stays one-off');
+});
+
+Deno.test('nextOccurrence: daily, weekly, monthly, with and without today', () => {
+  eq(nextOccurrence('day', T0), '2026-07-08', 'daily includes today');
+  eq(nextOccurrence('day', T0, true), '2026-07-09', 'daily after today');
+  eq(nextOccurrence('wednesday', T0), '2026-07-08', 'same weekday includes today');
+  eq(nextOccurrence('wednesday', T0, true), '2026-07-15', 'same weekday after today jumps a week');
+  eq(nextOccurrence('monday', T0), '2026-07-13', 'next monday');
+  eq(nextOccurrence(15, T0), '2026-07-15', 'month day still ahead');
+  eq(nextOccurrence(1, T0), '2026-08-01', 'month day passed rolls a month');
+  eq(nextOccurrence(8, T0), '2026-07-08', 'month day today, inclusive');
+  eq(nextOccurrence(8, T0, true), '2026-08-08', 'month day today, exclusive');
+  eq(nextOccurrence(15, { y: 2026, m: 12, d: 20 }), '2027-01-15', 'december rolls the year');
+});
+
+Deno.test('recurring reminders: add, list with cadence, done rolls, delete stops', () => {
+  const added = tryReminder('remind me every monday to call mom', {}, T0);
+  if (!added?.profile?.reminders?.length) throw new Error('recurring add failed');
+  eq(added.profile.reminders[0], { text: 'call mom', created: '2026-07-08', due: '2026-07-13', every: 'monday' }, 'row shape');
+  if (!added.reply.includes('every monday')) throw new Error(`reply names cadence: ${added.reply}`);
+
+  const stored: Profile = added.profile;
+  const listed = tryReminder('what are my reminders?', stored, T0);
+  if (!listed?.reply.includes('every monday — next 2026-07-13')) throw new Error(`list shows cadence: ${listed?.reply}`);
+
+  const done = tryReminder('done with reminder 1', stored, T0);
+  eq(done?.profile?.reminders?.length, 1, 'done keeps a recurring reminder');
+  eq(done?.profile?.reminders?.[0].due, '2026-07-20', 'done rolls past the pending occurrence');
+  if (!done?.reply.includes('delete reminder 1')) throw new Error(`done points at delete: ${done?.reply}`);
+
+  const deleted = tryReminder('delete reminder 1', stored, T0);
+  eq(deleted?.profile?.reminders?.length, 0, 'delete stops it');
+  if (!deleted?.reply.includes('Stopped')) throw new Error(`delete reply: ${deleted?.reply}`);
+
+  const monthly = tryReminder('remind me to pay rent on the 1st of every month', {}, T0);
+  eq(monthly?.profile?.reminders?.[0], { text: 'pay rent', created: '2026-07-08', due: '2026-08-01', every: 1 }, 'monthly row');
+  const refused = tryReminder('remind me to pay rent on the 31st of every month', {}, T0);
+  if (!refused?.reply.includes('1 to 28') || refused.profile) throw new Error(`31st must be refused with no save: ${refused?.reply}`);
+});
+
+Deno.test('a surfaced recurring reminder rolls forward; one-offs stay put', () => {
+  const stored: Profile = { reminders: [
+    { text: 'pray', created: '2026-07-01', due: '2026-07-08', every: 'day' },
+    { text: 'call mom', created: '2026-07-07', due: '2026-07-08' },
+  ] };
+  const out = addDueReminders('Hey.', stored, T0);
+  if (!out.response.includes('pray (every day — today)')) throw new Error(`recurring surfaced: ${out.response}`);
+  if (!out.reminders) throw new Error('rolled list missing');
+  eq(out.reminders[0].due, '2026-07-09', 'recurring rolled to tomorrow');
+  eq(out.reminders[1], { text: 'call mom', created: '2026-07-07', due: '2026-07-08' }, 'one-off untouched');
+});
+
+Deno.test('snooze pushes a reminder out and teaches unknown phrasing', () => {
+  const stored: Profile = { reminders: [{ text: 'call mom', created: '2026-07-07' }] };
+  const bare = tryReminder('snooze reminder 1', stored, T0);
+  eq(bare?.profile?.reminders?.[0].due, '2026-07-09', 'bare snooze means tomorrow');
+  const friday = tryReminder('snooze reminder 1 until friday', stored, T0);
+  eq(friday?.profile?.reminders?.[0].due, '2026-07-10', 'until friday');
+  const days = tryReminder('push reminder 1 for 3 days', stored, T0);
+  eq(days?.profile?.reminders?.[0].due, '2026-07-11', 'for N days');
+  const week = tryReminder('postpone reminder 1 for a week', stored, T0);
+  eq(week?.profile?.reminders?.[0].due, '2026-07-15', 'for a week');
+  const unknown = tryReminder('snooze reminder 1 until the cows come home', stored, T0);
+  if (!unknown?.reply.includes('until tomorrow') || unknown.profile) throw new Error(`unknown phrase teaches: ${unknown?.reply}`);
+  const past = tryReminder('snooze reminder 1 until today', stored, T0);
+  if (!past?.reply.includes('after today') || past.profile) throw new Error(`today refused: ${past?.reply}`);
+  const missing = tryReminder('snooze reminder 4', stored, T0);
+  if (!missing?.reply.includes('only have 1 reminder') || missing.profile) throw new Error(`out of range: ${missing?.reply}`);
+  if (!isReminderAsk('snooze reminder 2 until friday')) throw new Error('isReminderAsk covers snooze');
+});
+
+Deno.test('crisis phrasing is never stored as a reminder, and recurring rows never escalate', () => {
+  eq(tryReminder('remind me to kill myself tomorrow', {}, T0), null, 'crisis add steps aside');
+  eq(tryReminder('remind me every day that i want to die', {}, T0), null, 'crisis recurring steps aside');
+  const p: Profile = { reminders: [{ text: 'pray', created: '2026-07-01', due: '2026-07-08', every: 'day' }] };
+  eq(reminderEscalation(p, '2026-07-08'), null, 'a cadence IS the promotion — no escalation offer');
 });
 
 // ── v22: devotionals ──────────────────────────────────────────────────────────
@@ -2946,6 +3038,19 @@ Deno.test('v38: evalCondition tells the day — weekdays, weekends, negations, f
   eq(await evalCondition("it's not a weekday", {}, SUN, EMAIL, spy.sources), true, 'weekday negation is the weekend');
   eq(await evalCondition("it's caturday", {}, SAT, EMAIL, spy.sources), null, 'the vocabulary stays closed');
   eq(spy.calls, [], 'calendar conditions never touch a source');
+});
+
+Deno.test('v44: evalCondition knows the day of the month — sync, free, closed', async () => {
+  const spy = stubSources(0, 0, 0);
+  const t = '2026-07-15';
+  eq(await evalCondition("it's the 15th", {}, t, EMAIL, spy.sources), true, 'the day itself');
+  eq(await evalCondition("it's the 15th of the month", {}, t, EMAIL, spy.sources), true, 'of-the-month suffix');
+  eq(await evalCondition('today is the 1st', {}, t, EMAIL, spy.sources), false, 'a different day');
+  eq(await evalCondition("it isn't the 1st", {}, t, EMAIL, spy.sources), true, 'negation holds');
+  eq(await evalCondition("it's not the 15th", {}, t, EMAIL, spy.sources), false, 'negation fails on the day');
+  eq(await evalCondition("it's the 1st", {}, '2026-08-01', EMAIL, spy.sources), true, 'month boundary');
+  eq(await evalCondition("it's the 32nd", {}, t, EMAIL, spy.sources), null, 'an impossible day teaches');
+  eq(spy.calls, [], 'day-of-month conditions never touch a source');
 });
 
 Deno.test('v38: evalCondition tells the time of day — pinned clock, closed segments', async () => {

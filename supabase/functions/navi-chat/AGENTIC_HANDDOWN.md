@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v43** (the reader round).
+Last updated: 2026-07-15, at **v44** (the cadence round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -178,6 +178,20 @@ Brain: trySummarize checks the SHAPED commands (one-sentence / key-points)
 BEFORE the plain one, both reusing applyRewrite; cleanEmailText is v43's one
 new understand.ts export.
 
+v44 additions: no new pipeline position — everything lives inside remind.ts
+plus two agent.ts touches. ONE call-site change in index.ts: addDueReminders
+now returns `{ response, reminders? }` — a recurring reminder that just
+surfaced rolls its `due` to the next occurrence, and the rolled list is set
+onto `stored.reminders` so it rides the end-of-request save (a direct
+assignment, no Object.assign ambiguity: the list is always an array).
+addDueReminders also now refuses to wrap a crisis reply (invariant #1 —
+it sat OUTSIDE the session-start crisis guard since v22; the check moved
+inside the function). And remind.ts finally carries CRISIS_RX on its add
+path — a v22 gap: crisis phrasing was storable as a reminder text. The
+recurring cadence mirrors the workflow schedule laws EXACTLY (weekly needs
+"every"/"each", monthly is 1-28 with an honest refusal, bare "every month"
+means the 1st and says so); no bare "daily" ("the daily standup" is a topic).
+
 v41 additions: ONE new session-start position — deviceReceipts (tasks.ts)
 sits right after runDueSends inside the crisis guard. It is profile-only and
 FREE (the runner already wrote its results onto the deviceTasks row the
@@ -211,7 +225,40 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v42) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43)
+### agent.ts — workflows & missions (v25→v44) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v44)
+
+**v44 — the cadence round** (remind.ts + two agent.ts touches — the reminder
+line learns the schedule laws the workflow line proved across v26/v38/v41;
+built under Dian's standing "keep developing NAVI" direction, all sync and
+free, no new sources, nothing gated):
+- **Recurring reminders**: "remind me every day to pray" / "remind me every
+  monday to call mom" / "remind me to pay rent on the 1st of every month"
+  (also "every month on the 15th"; bare "every month" = the 1st, said out
+  loud). ONE reminder row whose `due` holds the NEXT occurrence
+  (`Reminder.every`: 'day' | weekday | 1-28) — surfacing at session-start
+  ROLLS it forward (the surfacing IS the reminder, the daily-workflow lastRun
+  idea), "done with reminder N" rolls it past the pending occurrence and
+  points at delete, only delete/remove/clear stops it ("Stopped — no more
+  every-monday reminders about …"). The workflow cadence laws hold: weekly
+  demands "every"/"each" (so "on friday" stays a one-off date), monthly is
+  1-28 ONLY ("Not every month has a 31st"), and bare "daily" is NOT a
+  cadence ("join the daily standup" is a topic). Recurring rows are excluded
+  from the v30 escalation offer — a cadence IS the promotion. List/surface
+  lines name the rhythm ("every monday — next 2026-07-20").
+- **Snooze**: "snooze reminder 2 until friday" / "push reminder 1 for 3
+  days" / "postpone reminder 1 for a week" / bare snooze = tomorrow — the
+  phrase reuses parseWhen's closed vocabulary; unknown phrasing teaches,
+  today-or-past refuses honestly, out-of-range numbers answer with the
+  count. A snoozed recurring reminder resumes its rhythm after the date.
+- **Day-of-month conditions** (agent.ts): "when it's the 15th:" / "when it
+  isn't the 1st:" (optional "of the month") — sync, free, from todayISO
+  alone; the calendar sibling v41's monthly workflows were missing. Days
+  1-31 literally, "the 32nd" falls through to the honest teach.
+- **Two safety fixes while in the file**: remind.ts's add path now carries
+  CRISIS_RX (a v22 gap — crisis phrasing was storable as reminder text;
+  now it steps aside so the crisis nodes own the message), and
+  addDueReminders never wraps a crisis reply (it sat outside the
+  session-start crisis guard since v22 — the check now lives inside).
 
 **v43 — the reader round** (mail.ts + understand.ts + the second sanctioned
 App.tsx touch — roadmap #21 and #22, built at Dian's EXPLICIT direction:
@@ -873,6 +920,16 @@ management token). Everything else needs a new bridge table or fresh
 direction from Dian — ask, don't invent. The email tool is COMPLETE again:
 #21/#22 were one-time reopenings, not a standing license.
 
+Post-v44 status: under Dian's "keep developing NAVI" direction the cadence
+round taught the REMINDER line the workflow schedule laws (recurring +
+snooze) and completed the calendar condition vocabulary (day-of-month).
+A v43 follow-up commit also gave navi-runner phone legs (--loop mode,
+run-runner.sh, Termux config example — local plumbing, found staged but
+uncommitted from a prior session). Still gated: #19 (DDL), new bridges
+(no backend tables). The reminder line now matches the workflow line
+rung for rung; the next ungated seams are thin — weigh brain/compose
+deepening or ask Dian for a new direction before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -900,8 +957,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v40 | `5bfbfed`+`d906065` | muse round: /write slash command (free-text writing prompts, splitIntents-guarded) + new creative kinds (story/song/letter/speech/quote), generative story assembly, char-code variant seed |
 | v41 | `0538da0` | rhythm round: monthly workflows (every month on the Nth, 1-28 only), device-task conditions (tasks/results waiting, sync), runner receipts at session-start (free, read-once) |
 | v42 | `526e147`+`fa0c6fb` | trust round: run-time send confirm (#17 — Profile.runSend, three-level yes precedence, scheduled runs never send), report headline (#27 reshaped, zero-cost), help refresh, runner set up on Dian's PC |
-| v43 | (see git) | reader round: /email/…/send (#21, confirm-gated, client steps aside), single-mail digest (#22, format=full + cleanEmailText), shaped summaries (one-sentence / key-points), runner scheduled polling + log on Dian's PC |
+| v43 | `89fef8d` | reader round: /email/…/send (#21, confirm-gated, client steps aside), single-mail digest (#22, format=full + cleanEmailText), shaped summaries (one-sentence / key-points), runner scheduled polling + log on Dian's PC |
+| v44 | (see git) | cadence round: recurring reminders (every day / weekday / 1-28 monthly, roll-on-surface, done rolls, delete stops), snooze, day-of-month conditions, remind.ts crisis guard (v22 gap closed) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → **233**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → **240**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

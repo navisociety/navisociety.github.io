@@ -411,7 +411,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -529,6 +529,20 @@ export async function evalCondition(
   if (/^(?:it'?s|it is|today is) a weekday$|^(?:it (?:isn'?t|is not)|it'?s not|today (?:isn'?t|is not)) (?:the )?weekend$/.test(cond)) {
     const dow = weekdayOf(todayISO);
     return dow !== '' && dow !== 'saturday' && dow !== 'sunday';
+  }
+  // v44: day-of-month — "when it's the 15th:" / "when it isn't the 1st:",
+  // optional "of the month". Answers from todayISO alone (sync, free), the
+  // calendar sibling the v41 monthly workflows were missing. Days 1-31
+  // literally; "the 32nd" falls through to the honest teach.
+  m = cond.match(/^(?:it'?s|it is|today is) the (\d{1,2})(?:st|nd|rd|th)(?: of the month)?$/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    if (day >= 1 && day <= 31) return parseInt(todayISO.slice(8, 10), 10) === day;
+  }
+  m = cond.match(/^(?:it (?:isn'?t|is not)|it'?s not|today (?:isn'?t|is not)) the (\d{1,2})(?:st|nd|rd|th)(?: of the month)?$/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    if (day >= 1 && day <= 31) return parseInt(todayISO.slice(8, 10), 10) !== day;
   }
   // v38: clock conditions — the hour comes from the SA clock (or the pinned
   // test hour). Segments are closed and exhaustive, so this never guesses.
@@ -887,7 +901,7 @@ WORKFLOWS — saved routines I run on command:
 - start a step with a condition and it only runs when it's true: when i haven't logged my prayer habit: remind me to pray — negations work too (when no reminders are due / when my mood isn't low / when my prayer streak is under 3)
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
-- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when my pc has results waiting
+- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when my pc has results waiting
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
 - list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
@@ -906,6 +920,7 @@ MISSIONS — a goal I break into steps and walk you through:
 BEYOND THE CHAT — I execute on your other tools too:
 - add … to my vision board / what's on my vision board / remove … from my vision board (put my mission on my vision board pins the active goal)
 - a reminder that's waited 3+ days gets offered a promotion: "make that reminder a habit" or "make that reminder a mission step"
+- reminders can repeat: remind me every day to pray / remind me every monday to call mom / remind me to pay rent on the 1st of every month — each comes back on its day until you delete it; snooze reminder 2 until friday pushes any reminder off
 - how many chats do i have / clean up my old chats — I count what's been idle 30+ days and ALWAYS ask before deleting anything
 - email: draft an email to me about … / /email/sam@x.com/Subject/Body (end it /send to be offered the send in the same turn) / check my inbox / summarise my inbox / summarise the last email from sam (that one mail, read in full) / reply to the last email from sam / send draft 2 tomorrow morning — real sends ALWAYS take a spoken yes
 - devices: add a task for my laptop: push the repo / what's waiting on my laptop / run backup on my pc (the runner on that device executes only names it already knows) / any results from my pc

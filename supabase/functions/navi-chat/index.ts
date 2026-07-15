@@ -4711,7 +4711,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (followUps.events) stored.events = followUps.events;
       // v22: due (or undated) reminders open the first reply of a session
       // (under the welcome-back line), and stay listed until ticked off.
-      response = addDueReminders(response, stored);
+      // v44: a recurring reminder that just surfaced rolls to its next date —
+      // the rolled list is set on stored so it rides the end-of-request save.
+      const dueOut = addDueReminders(response, stored);
+      response = dueOut.response;
+      if (dueOut.reminders) stored.reminders = dueOut.reminders;
       response = addReturningGreeting(response, stored);
 
       // v26: daily workflows — the first session of a new SA day runs every

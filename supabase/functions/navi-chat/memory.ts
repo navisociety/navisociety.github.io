@@ -171,7 +171,10 @@ export type LifeEvent = { text: string; date: string };
 // omitted means "surface on the very next session".
 // v30: `offered` stamps the day NAVI offered to escalate a long-waiting
 // reminder into a habit or mission step — one offer per reminder, ever.
-export type Reminder = { text: string; created: string; due?: string; offered?: string };
+// v44: `every` makes it recurring — 'day', a weekday name, or a day-of-month
+// number (1-28, the v41 monthly rule). `due` then holds the NEXT occurrence:
+// surfacing rolls it forward, "done" rolls it too, only delete removes it.
+export type Reminder = { text: string; created: string; due?: string; offered?: string; every?: string | number };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 
