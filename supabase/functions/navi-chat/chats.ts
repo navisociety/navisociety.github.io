@@ -11,6 +11,11 @@
 //   "clean up my old chats"                        → counts chats idle 30+ days
 //   "delete chats older than 60 days"              → …or any horizon ≥ 7 days
 //
+// v37: chatsIdleCount(email, days) is the third ConditionSources source
+// (agent.ts) — a pure read of how many chats sit idle past a horizon, so a
+// workflow step can open "when i have chats older than 30 days:". Counting
+// only; the two-step cleanup above stays the ONLY path that deletes.
+//
 // Deleting is DESTRUCTIVE (the session's messages CASCADE away with it), so
 // cleanup is a TWO-STEP move: NAVI first counts and names what would go, then
 // waits for an explicit confirmation. The pending offer is stamped on the
@@ -128,6 +133,19 @@ async function deleteOlderThan(email: string, cutoffISO: string): Promise<number
   } catch {
     return null;
   }
+}
+
+/**
+ * v37: how many chats have sat idle for more than `days` days — the chats-age
+ * condition source for agent.ts. A pure count (nothing is ever deleted here);
+ * null when the history can't be reached, so the condition skips honestly.
+ */
+export async function chatsIdleCount(email: string, days: number): Promise<number | null> {
+  if (!email) return null;
+  const sessions = await listSessions(email);
+  if (sessions === null) return null;
+  const cutoffMs = Date.now() - Math.max(days, 1) * 86400000;
+  return sessions.filter((s) => Date.parse(s.updated_at) < cutoffMs).length;
 }
 
 // ── Replies ─────────────────────────────────────────────────────────────────

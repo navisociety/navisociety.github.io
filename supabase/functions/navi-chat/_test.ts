@@ -2579,13 +2579,24 @@ Deno.test('v34: isInboxDigestAsk is anchored; the digest fails honestly offline'
 
 // ── v35: the awareness round ─────────────────────────────────────────────────
 
-const stubSources = (vision: number | null, unread: number | 'not-connected' | null) => {
+const stubSources = (
+  vision: number | null,
+  unread: number | 'not-connected' | null,
+  oldChats: number | null = 0, // v37: the chats-age source rides the same stub
+) => {
   const calls: string[] = [];
+  const days: number[] = [];
   return {
     calls,
+    days,
     sources: {
       visionCount: (_e: string) => { calls.push('vision'); return Promise.resolve(vision); },
       inboxUnread: (_e: string) => { calls.push('inbox'); return Promise.resolve(unread); },
+      chatsOlderThan: (_e: string, d: number) => {
+        calls.push('chats');
+        days.push(d);
+        return Promise.resolve(oldChats);
+      },
     },
   };
 };
@@ -2720,4 +2731,96 @@ Deno.test('v36: booked-send conditions read the profile — sync and free', asyn
   eq(await evalCondition('no booked sends are waiting', {}, t, EMAIL, spy.sources), true, 'the negation holds');
   eq(await evalCondition('i have no booked sends', booked, t, EMAIL, spy.sources), false, 'the negation fails with one booked');
   eq(spy.calls, [], 'booked-send conditions never touch a source');
+});
+
+// ── v37: the horizon round ───────────────────────────────────────────────────
+
+Deno.test('v37: the mission dry-run reads the whole remaining tail — read-only', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = {
+    mission: {
+      goal: 'launch my ep',
+      steps: ['write the tracklist', 'record vocals', 'mix the record', 'plan the release'],
+      done: 1,
+      created: '2026-07-01T08:00:00Z',
+      touched: '2026-07-01T08:00:00Z',
+    },
+  };
+
+  const out = await tryAgent('what would finish my mission?', EMAIL, profile, run);
+  if (!out?.reply.includes('3 steps stand')) throw new Error('the tail is counted: ' + out?.reply);
+  if (!out.reply.includes('2. record vocals')) throw new Error('numbering starts at the current step: ' + out.reply);
+  if (!out.reply.includes('4. plan the release')) throw new Error('the last step is read back: ' + out.reply);
+  if (out.reply.includes('1. write the tracklist')) throw new Error('finished steps stay finished: ' + out.reply);
+  if (!out.reply.includes('Nothing moved')) throw new Error('the preview says it is read-only: ' + out.reply);
+  eq(out.profile, undefined, 'nothing changed');
+  eq(ran, [], 'nothing executed');
+
+  const preview = await tryAgent('preview my mission', EMAIL, profile, run);
+  if (!preview?.reply.includes('3 steps stand')) throw new Error('the preview verb works: ' + preview?.reply);
+  const show = await tryAgent('show my remaining mission steps', EMAIL, profile, run);
+  if (!show?.reply.includes('3 steps stand')) throw new Error('the show form works: ' + show?.reply);
+
+  const lastLeg: Profile = { ...profile, mission: { ...profile.mission!, done: 3 } };
+  const one = await tryAgent('what would finish my mission', EMAIL, lastLeg, run);
+  if (!one?.reply.includes('One step stands')) throw new Error('the last leg reads singular: ' + one?.reply);
+
+  const none = await tryAgent('what would finish my mission?', EMAIL, {}, run);
+  if (!none?.reply.includes('No active mission')) throw new Error('no mission is answered honestly: ' + none?.reply);
+  const anon = await tryAgent('preview my mission', '', {}, run);
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous asks point at sign-in: ' + anon?.reply);
+
+  eq(await tryAgent('what would finish my sandwich?', EMAIL, profile, run), null, 'ordinary conversation stays untouched');
+  const wf = await tryAgent('preview my mission workflow', EMAIL, { workflows: [] }, run);
+  if (!wf?.reply.includes('to preview')) throw new Error('"my mission workflow" is a WORKFLOW preview ask: ' + wf?.reply);
+});
+
+Deno.test('v37: chats-age conditions count the idle history — lazily, honestly', async () => {
+  const t = '2026-07-14';
+
+  const dusty = stubSources(0, 0, 4);
+  eq(await evalCondition('i have chats older than 30 days', {}, t, EMAIL, dusty.sources), true, 'four idle chats hold the condition');
+  eq(await evalCondition('i have no chats older than 30 days', {}, t, EMAIL, dusty.sources), false, 'the negation fails');
+  eq(dusty.days, [30, 30], 'the horizon is passed through to the source');
+
+  const tidy = stubSources(0, 0, 0);
+  eq(await evalCondition('i have chats older than 90 days', {}, t, EMAIL, tidy.sources), false, 'a tidy history fails the condition');
+  eq(await evalCondition('i have no chats idle than 90 days', {}, t, EMAIL, tidy.sources), true, 'the negation holds (idle form too)');
+  eq(tidy.days, [90, 90], 'each phrasing carries its own horizon');
+
+  const offline = stubSources(0, 0, null);
+  eq(await evalCondition('i have chats older than 30 days', {}, t, EMAIL, offline.sources), 'unreachable', 'an unreachable history is honest');
+
+  // Lazy + closed: profile conditions never count chats; loose phrasing teaches.
+  const spy = stubSources(0, 0, 9);
+  eq(await evalCondition('i have a mission', {}, t, EMAIL, spy.sources), false, 'profile conditions still answer from the profile');
+  eq(await evalCondition('my chats are old', {}, t, EMAIL, spy.sources), null, 'the vocabulary stays closed');
+  eq(spy.calls, [], 'neither of those touched the source');
+});
+
+Deno.test('v37: chats-age conditions steer runs and previews like any world condition', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = {
+    workflows: [{
+      name: 'tidy',
+      steps: ['when i have chats older than 30 days: encourage me', 'a verse about order'],
+      created: 'now',
+    }],
+  };
+
+  const dusty = stubSources(0, 0, 2);
+  const out1 = await tryAgent('run my tidy workflow', EMAIL, profile, run, dusty.sources);
+  if (!out1?.reply.includes('Step 1 — encourage me')) throw new Error('idle chats run the step: ' + out1?.reply);
+  eq(ran.splice(0), ['encourage me', 'a verse about order'], 'both steps executed');
+
+  const clean = stubSources(0, 0, 0);
+  const out2 = await tryAgent('run my tidy workflow', EMAIL, profile, run, clean.sources);
+  if (!out2?.reply.includes(`skipped ("when i have chats older than 30 days"`)) {
+    throw new Error('a tidy history skips the step: ' + out2?.reply);
+  }
+  eq(ran.splice(0), ['a verse about order'], 'only the unconditional step executed');
+
+  const preview = await tryAgent('preview my tidy workflow', EMAIL, profile, run, dusty.sources);
+  if (!preview?.reply.includes('1. would run — encourage me')) throw new Error('the dry-run sees the condition hold: ' + preview?.reply);
+  eq(ran, [], 'the preview executed nothing');
 });

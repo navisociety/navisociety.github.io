@@ -1,6 +1,17 @@
 // supabase/functions/navi-chat/agent.ts
 //
-// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35/v36 below)
+// NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v37 below)
+//
+// v37 additions (the horizon round):
+//   - MISSION DRY-RUN — "what would finish my mission?" / "preview my mission"
+//     / "show my remaining mission steps" reads the WHOLE remaining tail of
+//     the active mission back, numbered as the mission numbers them.
+//     READ-ONLY like the v29 mission-step literal: nothing advances, the
+//     profile never changes, and advancing still takes a real "done".
+//   - CHATS-AGE CONDITIONS — "when i have chats older than <n> days:" /
+//     "when i have no chats older than <n> days:" count idle chats through
+//     the third ConditionSources source (chats.ts chatsIdleCount). Counting
+//     only — a condition can never delete; cleanup stays the two-step confirm.
 //
 // v36 additions (the foresight round):
 //   - WORKFLOW DRY-RUN — "preview my aware workflow" / "dry run my study
@@ -93,6 +104,7 @@ import { stepsForGoal } from './plan.ts';
 import { todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
 import { inboxUnreadCount } from './mail.ts';
+import { chatsIdleCount } from './chats.ts';
 
 export type AgentRunner = (
   part: string,
@@ -106,11 +118,14 @@ export type AgentRunner = (
 export type ConditionSources = {
   visionCount: (email: string) => Promise<number | null>;
   inboxUnread: (email: string) => Promise<number | 'not-connected' | null>;
+  // v37: idle chats past a horizon — a pure count, never a delete.
+  chatsOlderThan: (email: string, days: number) => Promise<number | null>;
 };
 
 const REAL_SOURCES: ConditionSources = {
   visionCount: visionItemCount,
   inboxUnread: inboxUnreadCount,
+  chatsOlderThan: chatsIdleCount,
 };
 
 /**
@@ -283,7 +298,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -393,6 +408,19 @@ export async function evalCondition(
     if (n === null) return 'unreachable';
     if (n === 'not-connected') return 'not-connected';
     return n === 0;
+  }
+  // v37: chats-age conditions — how long has the history sat still? A pure
+  // count through chats.ts (the condition can never delete anything); an
+  // unreachable history skips honestly, same as the board and the inbox.
+  m = cond.match(/^i have (?:chats|conversations) (?:older|idle) than (\d{1,3}) days?$/);
+  if (m) {
+    const n = await sources.chatsOlderThan(email, parseInt(m[1], 10));
+    return n === null ? 'unreachable' : n > 0;
+  }
+  m = cond.match(/^i have no (?:chats|conversations) (?:older|idle) than (\d{1,3}) days?$/);
+  if (m) {
+    const n = await sources.chatsOlderThan(email, parseInt(m[1], 10));
+    return n === null ? 'unreachable' : n === 0;
   }
   return null;
 }
@@ -562,6 +590,13 @@ const MISSION_START_RX =
 const MISSION_STATUS_RX =
   /^(?:mission(?: status)?|(?:show|check)(?: me)?(?: my| the)? mission(?: status| progress)?|how(?:'s| is) (?:my|the) mission(?: going)?|where am i (?:on|with|in) (?:my|the) mission)$/;
 
+// v37: the mission dry-run — read the WHOLE remaining tail back, read-only.
+// "what's next" (MISSION_NEXT_RX) shows one step; this shows the horizon.
+// The workflow preview verbs demand the word "workflow"/"routine", so
+// "preview my mission" can never collide with them.
+const MISSION_PREVIEW_RX =
+  /^(?:what would (?:finish|complete|close)(?: out)? (?:my|the) mission|what(?:'s| is) left (?:of|on|in) (?:my|the) mission|(?:preview|dry.?run)(?: my| the)? mission|(?:show|list)(?: me)?(?: my| the)? remaining mission steps|what (?:mission )?steps (?:are left|remain)(?: (?:of|on|in) (?:my|the) mission)?)$/;
+
 const MISSION_NEXT_RX =
   /^(?:what'?s next|whats next|next step|what(?: do| should) i do next|give me (?:the |my )?next step|what'?s (?:the |my )?next step)$/;
 
@@ -680,6 +715,7 @@ WORKFLOWS — saved routines I run on command:
 MISSIONS — a goal I break into steps and walk you through:
 - start a mission to launch my EP
 - what's next? / done / mission status / abandon mission
+- what would finish my mission? (reads every remaining step back, read-only — nothing advances)
 - skip (drops the step in front of you) / add a step to my mission: …
 - queue a mission to X (up to 3 wait behind the active one and auto-start when it completes) / show my mission queue
 - move X to the front of the queue / start the queued mission X now (the active one steps back into the queue)
@@ -715,6 +751,7 @@ export function isAgentAsk(message: string): boolean {
     parseMissionQueue(message) !== null ||
     LIST_RX.test(t) ||
     MISSION_STATUS_RX.test(t) ||
+    MISSION_PREVIEW_RX.test(t) ||
     MISSION_ABANDON_RX.test(t) ||
     QUEUE_SHOW_RX.test(t) ||
     QUEUE_CLEAR_RX.test(t) ||
@@ -746,6 +783,20 @@ function missionStatus(mission: Mission, queue: string[] = []): string {
   // v29: the queue rides along in the status report.
   const queued = queue.length ? `\n\nQueued next:\n${queueLines(queue)}` : '';
   return `Mission: ${mission.goal}\n${done}\n\nCurrent step (${current} of ${total}):\n${mission.steps[mission.done]}${queued}\n\nSay "done" when it's finished, "what's next" to hear it again, or "abandon mission" to drop it.`;
+}
+
+// v37: the mission dry-run — the whole remaining tail, numbered as the
+// mission numbers them. Pure read: nothing advances, nothing changes.
+function missionPreview(mission: Mission): string {
+  const total = mission.steps.length;
+  const remaining = mission.steps.slice(mission.done);
+  const lines = remaining
+    .map((s, i) => `${mission.done + i + 1}. ${s}`)
+    .join('\n');
+  const count = remaining.length === 1
+    ? 'One step stands'
+    : `${remaining.length} steps stand`;
+  return `Here's what would finish "${mission.goal}" — ${count} between you and done (of ${total} total):\n${lines}\n\nNothing moved — you're still on step ${mission.done + 1}, and each one still takes a real "done". That's the whole mountain; climb it one step at a time.`;
 }
 
 // ── Execution ───────────────────────────────────────────────────────────────
@@ -1122,6 +1173,10 @@ export async function tryAgent(
     if (MISSION_STATUS_RX.test(t) || MISSION_NEXT_RX.test(t)) {
       return { reply: missionStatus(profile.mission, queue) };
     }
+    // v37: the dry-run — the whole remaining tail, read-only.
+    if (MISSION_PREVIEW_RX.test(t)) {
+      return { reply: missionPreview(profile.mission) };
+    }
     if (MISSION_DONE_RX.test(t)) return advanceMission(profile);
     // v27: mission editing — bare "skip" only means anything mid-mission.
     if (MISSION_SKIP_RX.test(t)) return skipStep(profile);
@@ -1152,7 +1207,7 @@ export async function tryAgent(
       };
     }
   } else {
-    if (MISSION_STATUS_RX.test(t) || MISSION_ABANDON_RX.test(t)) {
+    if (MISSION_STATUS_RX.test(t) || MISSION_ABANDON_RX.test(t) || MISSION_PREVIEW_RX.test(t)) {
       return {
         reply: 'No active mission right now. Start one with "start a mission to…" and I\'ll break it into steps and walk you through them, one at a time.',
       };

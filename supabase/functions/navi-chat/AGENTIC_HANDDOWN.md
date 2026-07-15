@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-14, at **v36** (the foresight round).
+Last updated: 2026-07-15, at **v37** (the horizon round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -113,6 +113,19 @@ isAgentAsk includes preview so anonymous asks get the sign-in prompt. The
 booked-send condition pair reads Profile.mailScheduled synchronously — no
 source, no network.
 
+v37 additions: no new wiring at all. MISSION_PREVIEW_RX + missionPreview
+(agent.ts) sit inside the existing mission cluster of tryAgent — parsed right
+after MISSION_STATUS/NEXT in the active branch, answered honestly in the
+no-mission branch, covered by isAgentAsk for the anonymous sign-in prompt.
+The workflow preview verbs demand the word "workflow"/"routine", so
+"preview my mission" can never collide with them (and "preview my mission
+workflow" is still a WORKFLOW ask — the mission regex is $-anchored).
+The chats-age condition pair rides the v35 seam: ConditionSources grew a
+THIRD source, `chatsOlderThan(email, days)` (chats.ts chatsIdleCount — a
+pure count over listSessions; a condition can never delete). Any test that
+stubs ConditionSources must stub all three sources (stubSources in _test.ts
+took a third optional param).
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -123,7 +136,23 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v36) · mail.ts (v32→v35)
+### agent.ts — workflows & missions (v25→v37) · mail.ts (v32→v35)
+
+**v37 — the horizon round** (agent.ts + one helper in chats.ts):
+- **Mission dry-run** (roadmap #26): "what would finish my mission?" /
+  "preview my mission" / "show my remaining mission steps" / "what's left of
+  my mission" — reads the WHOLE remaining tail of the active mission back,
+  numbered exactly as the mission numbers them (finished steps stay hidden).
+  Pure read: nothing advances, the profile never changes, and the reply says
+  so ("Nothing moved — you're still on step N"). With no active mission the
+  ask gets the honest no-mission line; anonymous asks get the sign-in prompt.
+- **Chats-age conditions** (the #23 remainder — the seam's third source):
+  "when i have chats older than 30 days:" / "when i have no chats older than
+  30 days:" (also "conversations", "idle than") — counted live through
+  chats.ts `chatsIdleCount(email, days)`, a pure read over the same
+  navi_chat_sessions listing the cleanup uses. COUNTING ONLY — a condition
+  can never delete; the two-step v31 cleanup stays the only deleting path.
+  Unreachable history → honest 'unreachable' skip, like board and inbox.
 
 **v36 — the foresight round** (all agent.ts):
 - **Workflow dry-run** (roadmap #25): "preview my aware workflow" /
@@ -526,10 +555,11 @@ Post-v34 candidates:
 
 Post-v35 candidates (the execution line beyond email):
 
-23. **More world conditions on the seam** — PARTLY DONE in v36 (the
-    booked-send pair, sync). Still open: "when i have chats older than N
-    days:" (chats.ts counts — needs a third source). Add sources sparingly;
-    every one is a live network call inside a workflow run.
+23. ~~**More world conditions on the seam**~~ — DONE across v36/v37: the
+    booked-send pair (v36, sync) and the chats-age pair (v37, chats.ts
+    chatsIdleCount as the third source). The seam now has three sources —
+    keep adding them sparingly; every one is a live network call inside a
+    workflow run.
 24. **Condition-aware briefing line** — "brief me" could append one line of
     world state (board count, unread count) — read-only, but it makes the
     briefing a network call; weigh against the instant-reply feel.
@@ -538,12 +568,19 @@ Post-v35 candidates (the execution line beyond email):
 
 Post-v36 candidates:
 
-26. **Mission dry-run** — "what would finish my mission?" reads the remaining
-    steps back (pure read, missionStatus already shows the current one — this
-    shows the whole tail). Small, honest, zero risk.
+26. ~~**Mission dry-run**~~ — SHIPPED in v37 ("what would finish my mission?"
+    reads the whole remaining tail back, read-only, in the mission cluster).
 27. **Preview-before-daily** — the session-start daily report could open with
     a one-line preview summary ("2 of 4 steps will run") — but it doubles the
     condition fetches per run; probably not worth it. Decide with Dian.
+
+Post-v37 status: the deterministic execution line is nearly saturated. What
+remains open is #17 (workflow steps that send — only with a run-time confirm,
+only if Dian asks), #19 (reply threading — blocked on DDL via the Management
+API), #21/#22 (email tool declared COMPLETE — don't touch unasked), #24
+(briefing world-state line — costs a network call on every "brief me") and
+#27 (ask Dian). A genuinely new rung needs either a new bridge table (Create/
+Share tools have no backend yet) or a decision from Dian.
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
@@ -565,8 +602,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v33 | `2dfbdf8` | correspondence round: inbox read, reply-from-context (by sender name), booked sends (closed time vocabulary + session-start runDueSends) |
 | v34 | `3271dfa` | slash-command round: /email/to/subject/body shorthand (client + server, splitIntents-guarded), inbox digests through the summarise engine |
 | v35 | `f76074c` | awareness round: async evalCondition seam — board-aware and inbox-aware workflow conditions with honest unreachable/not-connected skips |
-| v36 | (see git) | foresight round: workflow dry-run (preview / what-would, reply-only, live conditions) + sync booked-send conditions |
+| v36 | `3d30ad9` | foresight round: workflow dry-run (preview / what-would, reply-only, live conditions) + sync booked-send conditions |
+| v37 | (see git) | horizon round: mission dry-run (the whole remaining tail, read-only) + chats-age conditions (the seam's third source) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → **201**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → **204**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
