@@ -34,3 +34,17 @@ receipt on each, and writes the receipts back to the profile row.
 
 Like `navi-brain/`, this is local plumbing — never bundled, never in CI, and
 the service-role key is env-only (`navi-runner/.env` is gitignored).
+
+## Hands-free polling (v43)
+
+`run-runner.cmd` runs the poll once, reading `navi-runner\.env`, and appends
+its output to `navi-runner\runner.log` (gitignored) so scheduled runs leave a
+trail. To poll automatically, register it with Task Scheduler — this is the
+owner scheduling their own device, so the no-server-push rule stands:
+
+```
+schtasks /Create /TN "NAVI Runner" /TR "\"<repo>\navi-runner\run-runner.cmd\"" /SC MINUTE /MO 15
+```
+
+Check the trail with `type navi-runner\runner.log`, and pause anytime with
+`schtasks /Change /TN "NAVI Runner" /DISABLE` (or `/DELETE` to remove).

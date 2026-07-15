@@ -3,6 +3,17 @@
 // NAVI v32 — The email bridge: NAVI executes REAL tasks.
 // NAVI v33 — The correspondence round: NAVI reads, replies, and books sends.
 // NAVI v34 — The slash-command round: the /email shorthand + inbox digests.
+// NAVI v43 — The reader round (#21 + #22, both built at Dian's explicit ask —
+//            the email tool was declared complete after v34, and this round
+//            reopened exactly these two rungs):
+//
+//   "/email/sam@x.com/Subject/Body/send"             → the draft PLUS the v32
+//        send offer stamped in the same turn — the trailing /send segment is
+//        the ask; the yes-law never bends (nothing goes out without it).
+//   "summarise the last email from sam"              → ONE mail read in full:
+//        the text/plain body, stripped of quoted history and signatures
+//        (understand.ts cleanEmailText), pressed through the summarise
+//        engine. Read-only, still zero external LLM.
 //
 //   "/email/sam@x.com/Subject line/Body text"        → a draft, parts split on
 //        slashes (recipient / subject / body; the body keeps its own slashes
@@ -66,7 +77,7 @@
 
 import type { MailSend, Profile, ScheduledSend } from './memory.ts';
 import { todayInTZ } from './skills.ts';
-import { summarize } from './understand.ts';
+import { cleanEmailText, summarize } from './understand.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -196,12 +207,22 @@ export function parseMailSlash(message: string): MailDraftAsk | 'malformed' | nu
   if (raw.length > MAX_BODY + MAX_SUBJECT + 100) return 'malformed';
   const parts = raw.replace(SLASH_OPEN_RX, '').split('/');
   if (parts.length < 3) return 'malformed';
+  // v43 (#21): a trailing /send segment asks for the send offer in the same
+  // turn. It only counts when a body still stands in front of it (4+ parts),
+  // so a 3-part ask whose body IS the word "send" stays a plain draft. The
+  // yes-law never bends: this stamps the SAME v32 offer the "send an email
+  // to …" verb does — nothing goes out without the spoken yes.
+  let wantSend = false;
+  if (parts.length >= 4 && parts[parts.length - 1].trim().toLowerCase() === 'send') {
+    wantSend = true;
+    parts.pop();
+  }
   const toRaw = parts[0].trim().toLowerCase();
   const subject = parts[1].trim().slice(0, MAX_SUBJECT);
   const body = parts.slice(2).join('/').trim().slice(0, MAX_BODY);
   if (!toRaw || !subject || !body) return 'malformed';
   if (CRISIS_RX.test(subject) || CRISIS_RX.test(body)) return null;
-  return { to: toRaw, subject, body, wantSend: false };
+  return { to: toRaw, subject, body, wantSend };
 }
 
 // v34: digest reads — snippets, not just headers. Anchored like INBOX_RX.
@@ -212,6 +233,23 @@ const DIGEST_RX =
 export function isInboxDigestAsk(message: string): boolean {
   const t = tidy(message);
   return !!t && t.length <= 60 && DIGEST_RX.test(t);
+}
+
+// v43 (#22): the single-mail digest — one mail, read in FULL. Anchored to the
+// same "last email from X" shape the reply command uses, so the vocabulary
+// stays one family: check → summarise inbox → summarise one → reply.
+const DIGEST_ONE_RX =
+  /^(?:please )?(?:summari[sz]e|digest|give me the gist of) (?:the )?(?:last|latest|most recent|newest) e?mail from (.+)$|^what does the (?:last|latest|most recent|newest) e?mail from (.+) say$/;
+
+/** v43: the sender name from a "summarise the last email from X" ask, or null. */
+export function parseMailDigestOne(message: string): string | null {
+  const t = tidy(message);
+  if (!t || t.length > 100) return null;
+  const m = t.match(DIGEST_ONE_RX);
+  if (!m) return null;
+  const from = (m[1] ?? m[2]).trim();
+  if (!from || from.length > 60 || CRISIS_RX.test(from)) return null;
+  return from;
 }
 
 /** True for a "list my email drafts" read ask. */
@@ -254,6 +292,10 @@ export function parseDraftSendLater(message: string): { n: number; when: string 
  */
 export function isSendStep(text: string): boolean {
   if (parseMailDraft(text)?.wantSend) return true;
+  // v43 (#21): "/email/…/send" is a send step too — a workflow step carrying
+  // it gates the run behind the v42 run-time confirm like any other send.
+  const slash = parseMailSlash(text);
+  if (slash && slash !== 'malformed' && slash.wantSend) return true;
   return parseDraftSend(text) !== null || parseDraftSendLater(text) !== null;
 }
 
@@ -609,6 +651,53 @@ export async function inboxUnreadCount(email: string): Promise<number | 'not-con
   }
 }
 
+// ── v43 (#22): one mail, read in full ───────────────────────────────────────
+
+/** Gmail's base64url body data → UTF-8 text, or '' when it won't decode. */
+function fromB64url(data: string): string {
+  try {
+    const bin = atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  } catch {
+    return '';
+  }
+}
+
+type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
+
+/**
+ * The first text/plain body in a payload tree, decoded — or ''. A simple
+ * mail carries its body at the top level; a multipart one nests it. HTML-only
+ * mails return '' and the caller falls back to the snippet (which Gmail
+ * already renders as plain text).
+ */
+function plainTextOf(part: GmailPart | undefined): string {
+  if (!part) return '';
+  if ((part.mimeType ?? 'text/plain').startsWith('text/plain') && part.body?.data) {
+    return fromB64url(part.body.data);
+  }
+  for (const p of part.parts ?? []) {
+    const text = plainTextOf(p);
+    if (text) return text;
+  }
+  return '';
+}
+
+/** One mail's full plain-text body — '' when it has none, null when unreachable. */
+async function getMailBody(g: GmailToken, id: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`,
+      { headers: { Authorization: `Bearer ${g.token}` }, signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) return null;
+    const msg = await res.json();
+    return plainTextOf(msg.payload);
+  } catch {
+    return null;
+  }
+}
+
 /** The bare address out of a From header ("Sam <sam@x.com>" → sam@x.com), or ''. */
 function fromAddress(from: string): string {
   const angled = from.match(/<([^>]+)>/);
@@ -719,6 +808,7 @@ export async function tryMail(
   // v33: the new asks. All anchored and mutually exclusive with the old ones.
   const inboxAsk = isInboxAsk(message);
   const digestAsk = isInboxDigestAsk(message); // v34
+  const digestOne = parseMailDigestOne(message); // v43 (#22)
   const replyAsk = parseMailReply(message);
   const schedListAsk = isScheduledListAsk(message);
   const schedCancel = parseScheduledCancel(message);
@@ -738,7 +828,8 @@ export async function tryMail(
 
   const anyAsk = !!draftAsk || listAsk || deleteN !== null || sendN !== null ||
     laterAt !== null || laterProblem !== null || inboxAsk || !!replyAsk ||
-    schedListAsk || schedCancel !== null || slashAsk === 'malformed' || digestAsk;
+    schedListAsk || schedCancel !== null || slashAsk === 'malformed' || digestAsk ||
+    digestOne !== null;
 
   // Bare yes/no with nothing pending is ordinary conversation — not ours.
   if (!pending && (confirmBare || cancelBare) && !confirmExplicit && !cancelExplicit) {
@@ -807,7 +898,7 @@ export async function tryMail(
   // ── v34: a malformed /email is taught, never guessed at ───────────────────
   if (slashAsk === 'malformed') {
     return {
-      reply: 'That\'s the /email shape, but it needs three parts split by slashes: /email/someone@example.com/Subject line/Body text. The body can hold slashes of its own — only the first three cuts count.',
+      reply: 'That\'s the /email shape, but it needs three parts split by slashes: /email/someone@example.com/Subject line/Body text. The body can hold slashes of its own — only the first three cuts count. End it with /send and I\'ll offer to send it in the same breath (I still ask before anything real goes out).',
     };
   }
 
@@ -994,6 +1085,32 @@ export async function tryMail(
     }).join('\n');
     return {
       reply: `The gist of your ${msgs.length === 1 ? 'newest mail' : `${msgs.length} newest mails`}:\n${lines}\n\nSay "reply to the last email from …" and I'll draft the reply — I read your inbox, I never delete from it.`,
+    };
+  }
+
+  // ── v43 (#22): "summarise the last email from sam" — one mail, in full ────
+  if (digestOne) {
+    const g = await gmailToken(email);
+    if (g === null) return { reply: UNREACHABLE_INBOX };
+    if (g === 'not-connected') return { reply: NOT_CONNECTED_READ };
+    const msgs = await searchInbox(g, `in:inbox from:(${digestOne})`, 1);
+    if (msgs === null) return { reply: UNREACHABLE_INBOX };
+    if (!msgs.length) {
+      return { reply: `I looked, but there's no inbox email from "${digestOne}". Say "check my inbox" and I'll show you who HAS written.` };
+    }
+    const src = msgs[0];
+    const body = await getMailBody(g, src.id);
+    // An unreachable or HTML-only body falls back to Gmail's own plain-text
+    // snippet — a shorter read, but never a silent shrug.
+    const cleaned = cleanEmailText(body ?? '');
+    const source = cleaned || src.snippet;
+    const gist = summarize(source, 3, 400) || source.slice(0, 400);
+    if (!gist) {
+      return { reply: `The last email from ${fromName(src.from) || '(unknown sender)'} ("${src.subject || '(no subject)'}") has no readable text to digest — it might be all images or attachments. Open it in the Email tool to see it whole.` };
+    }
+    const partial = cleaned ? '' : '\n\n(That\'s from the preview — the full body didn\'t come through as plain text.)';
+    return {
+      reply: `The last email from ${fromName(src.from) || '(unknown sender)'} — "${src.subject || '(no subject)'}":\n${gist}${partial}\n\nSay "reply to the last email from ${digestOne}" and I'll draft the reply — I read your inbox, I never delete from it.`,
     };
   }
 

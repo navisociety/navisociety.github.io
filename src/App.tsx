@@ -284,7 +284,17 @@ export default function App() {
     // Runs before any inference. The /email command always triggers; plain
     // messages only trigger when they name an address AND use an intent verb.
     const isEmailCommand = /^\/email\b/i.test(text);
-    if (isEmailCommand || hasAutoEmailIntent(text)) {
+    // v43 (#21, Dian-sanctioned like the v34 slash form): a slash form ending
+    // in /send belongs to the navi-chat function — only the server can draft
+    // AND stamp the send-confirm offer in one turn. The intercept steps aside
+    // so the /send segment is never swallowed into the body. Mirrors the
+    // server rule: 4+ parts after the opening, last part exactly "send".
+    const slashSendParts = /^\/\s*email\s*\//i.test(text.trim())
+      ? text.trim().replace(/^\/\s*email\s*\//i, '').split('/')
+      : [];
+    const slashWantsSend = slashSendParts.length >= 4 &&
+      slashSendParts[slashSendParts.length - 1].trim().toLowerCase() === 'send';
+    if ((isEmailCommand || hasAutoEmailIntent(text)) && !slashWantsSend) {
       const reply = (msg: string) => {
         stream(msg, naviId);
         if (naviSession) {
@@ -309,7 +319,7 @@ export default function App() {
 
       if (!draft) {
         if (isEmailCommand) {
-          reply('To draft an email, type: /email/recipient@example.com/Subject line/Body text — recipient, subject, then body, split by slashes.');
+          reply('To draft an email, type: /email/recipient@example.com/Subject line/Body text — recipient, subject, then body, split by slashes. End it with /send and NAVI will offer to send it right away (it always asks before anything goes out).');
           return;
         }
         // Auto-detect with no usable draft → fall through to normal inference.

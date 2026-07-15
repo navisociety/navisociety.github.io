@@ -34,7 +34,7 @@ import {
 import { detectComparison, splitCompound, tryReason } from './reason.ts';
 import { adaptTone, userIsTerse } from './tone.ts';
 import { addCuriosity } from './curiosity.ts';
-import { trySummarize, tryRewrite, rewriteMode } from './understand.ts';
+import { trySummarize, tryRewrite, rewriteMode, cleanEmailText } from './understand.ts';
 import { parseCompose, tryCompose, parseWriteSlash, isWriteSlashAsk, WRITE_USAGE } from './compose.ts';
 import { parsePlanGoal, stepsForGoal, tryPlan } from './plan.ts';
 import { topicFrom, updateTopics, tryEpisodic } from './episodic.ts';
@@ -65,6 +65,7 @@ import {
   parseDraftSendLater, isInboxAsk, parseMailReply, isScheduledListAsk,
   parseScheduledCancel, parseSendWhen, runDueSends,
   parseMailSlash, isMailSlashAsk, isInboxDigestAsk, isSendStep,
+  parseMailDigestOne,
 } from './mail.ts';
 import type { Profile } from './memory.ts';
 
@@ -3364,4 +3365,106 @@ Deno.test('v42: previews and creation name send steps before anything real happe
   if (!help?.reply.includes('send steps back entirely')) throw new Error('help teaches the send law: ' + help?.reply);
   if (!help?.reply.includes('run backup on my pc')) throw new Error('help covers devices now: ' + help?.reply);
   if (!help?.reply.includes('every month on the 15th')) throw new Error('help covers monthly schedules: ' + help?.reply);
+});
+
+// ── v43: the reader round — /email/…/send, the single-mail digest, shaped
+//        summaries, and the email-aware cleaner ──────────────────────────────
+
+Deno.test('v43: a trailing /send segment turns the slash draft into a send ask', () => {
+  eq(parseMailSlash('/email/sam@x.com/Friday plans/See you at 7/send'),
+    { to: 'sam@x.com', subject: 'Friday plans', body: 'See you at 7', wantSend: true }, 'the core /send form');
+  eq(parseMailSlash('/email/me/Note to self/Do the thing/SEND'),
+    { to: 'me', subject: 'Note to self', body: 'Do the thing', wantSend: true }, 'the send word is case-blind');
+  eq(parseMailSlash('/email/sam@x.com/Mix notes/Bounce v2, then A/B the levels/send'),
+    { to: 'sam@x.com', subject: 'Mix notes', body: 'Bounce v2, then A/B the levels', wantSend: true },
+    'the body keeps its own slashes; only the FINAL send segment is consumed');
+  eq(parseMailSlash('/email/sam@x.com/Plans/Body here/ send '),
+    { to: 'sam@x.com', subject: 'Plans', body: 'Body here', wantSend: true }, 'a padded send still counts');
+  eq(parseMailSlash('/email/sam@x.com/Plans/send'),
+    { to: 'sam@x.com', subject: 'Plans', body: 'send', wantSend: false },
+    'three parts stay a plain draft — the last part is the body, even when it reads "send"');
+  eq(parseMailSlash('/email/sam@x.com/Plans/Send it tonight'),
+    { to: 'sam@x.com', subject: 'Plans', body: 'Send it tonight', wantSend: false },
+    'a body that merely OPENS with send is just a body');
+});
+
+Deno.test('v43: "/email/…/send" is a send step — the run-time confirm law covers it', () => {
+  eq(isSendStep('/email/me/subject/body/send'), true, 'the slash send gates a workflow run');
+  eq(isSendStep('/email/me/subject/body'), false, 'the plain slash draft stays harmless');
+  eq(isSendStep('/email/me/hi'), false, 'a malformed slash ask is not a send step');
+});
+
+Deno.test('v43: slash sends through tryMail — sign-in, teaching, offline honesty', async () => {
+  const anon = await tryMail('/email/sam@x.com/Hi/Body text/send', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous slash sends point at sign-in: ' + anon?.reply);
+  const taught = await tryMail('/email/sam@x.com/only a subject', EMAIL, {});
+  if (!taught?.reply.includes('/send')) throw new Error('the malformed teach now names the /send tail: ' + taught?.reply);
+
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
+  const offline = await tryMail('/email/me/Hi/Body text here/send', EMAIL, {});
+  if (!offline?.reply.includes("couldn't reach")) throw new Error('an unreachable slash send is honest: ' + offline?.reply);
+});
+
+Deno.test('v43: parseMailDigestOne is anchored to one mail from one sender', () => {
+  eq(parseMailDigestOne('summarise the last email from sam'), 'sam', 'the core ask');
+  eq(parseMailDigestOne('summarize the latest email from Sam Smith'), 'sam smith', 'z-spelling + full name');
+  eq(parseMailDigestOne('digest the newest email from mom'), 'mom', 'digest verb');
+  eq(parseMailDigestOne('give me the gist of the last email from sam'), 'sam', 'gist form');
+  eq(parseMailDigestOne('what does the last email from sam say'), 'sam', 'question form');
+  eq(parseMailDigestOne('summarise my inbox'), null, 'the whole-inbox digest belongs to v34');
+  eq(parseMailDigestOne('summarise the bible'), null, 'topic asks stay on the knowledge path');
+  eq(parseMailDigestOne('reply to the last email from sam'), null, 'replies belong to the reply command');
+  eq(parseMailDigestOne('what does the last email from sam say about the gig'), null, 'the question form is whole-message');
+  eq(parseMailDigestOne('summarise the last email from i want to die'), null, 'crisis language never drives a search');
+});
+
+Deno.test('v43: the single-mail digest fails honestly offline; anonymous asks point at sign-in', async () => {
+  const anon = await tryMail('summarise the last email from sam', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous digest points at sign-in: ' + anon?.reply);
+
+  if (Deno.env.get('SUPABASE_URL')) return; // live runs exercise the real path
+  const offline = await tryMail('summarise the last email from sam', EMAIL, {});
+  if (!offline?.reply.includes("couldn't reach")) throw new Error('an unreachable single-mail digest is honest: ' + offline?.reply);
+});
+
+Deno.test('v43: cleanEmailText keeps the message and drops the furniture', () => {
+  const raw = [
+    'Hi Dian,',
+    '',
+    'The mix is ready for Friday and the stems are uploaded here: https://drive.example.com/folder/abc123',
+    'Let me know if the chorus needs another pass.',
+    '',
+    'On Tue, 14 Jul 2026, Prophet Dian wrote:',
+    '> Can you send the stems?',
+    '> Thanks',
+    'Sent from my iPhone',
+    '--',
+    'Sam Smith',
+    'Producer, Studio X',
+  ].join('\n');
+  const out = cleanEmailText(raw);
+  if (!out.includes('The mix is ready for Friday')) throw new Error('the real prose survives: ' + out);
+  if (!out.includes('(link)')) throw new Error('URLs collapse to (link): ' + out);
+  if (out.includes('Can you send the stems')) throw new Error('quoted history is dropped: ' + out);
+  if (out.includes('wrote:')) throw new Error('the quote introduction is dropped: ' + out);
+  if (out.includes('Sent from my')) throw new Error('device signatures are dropped: ' + out);
+  if (out.includes('Producer, Studio X')) throw new Error('everything after the -- delimiter is dropped: ' + out);
+  eq(cleanEmailText(''), '', 'empty in, empty out');
+  eq(cleanEmailText('> only quotes\n> nothing else'), '', 'a pure quote block cleans to nothing');
+});
+
+Deno.test('v43: shaped summaries — one sentence and key points', () => {
+  const one = trySummarize(`summarize in one sentence: ${PASTED}`);
+  if (!one.startsWith('One sentence:')) throw new Error(`one-sentence shape failed: ${one}`);
+  const boiled = trySummarize(`boil down to a single sentence: ${PASTED}`);
+  if (!boiled.startsWith('One sentence:')) throw new Error(`boil-down shape failed: ${boiled}`);
+  const points = trySummarize(`key points: ${PASTED}`);
+  if (!points.startsWith('The key points:')) throw new Error(`key-points shape failed: ${points}`);
+  if (!points.includes('• ')) throw new Error(`key points come as bullets: ${points}`);
+  const bullets = trySummarize(`bullet points of: ${PASTED}`);
+  if (!bullets.startsWith('The key points:')) throw new Error(`bullet-points shape failed: ${bullets}`);
+  eq(trySummarize('key points of the bible'), '', 'topic asks stay on the knowledge path');
+  eq(trySummarize('summarize in one sentence: too short'), '', 'a short paste is not a text');
+  const plain = trySummarize(`summarize: ${PASTED}`);
+  if (!plain.startsWith("Here's the heart of it:")) throw new Error(`the classic shape still works: ${plain}`);
 });

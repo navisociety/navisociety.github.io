@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v42** (the trust round).
+Last updated: 2026-07-15, at **v43** (the reader round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -162,6 +162,22 @@ spoken confirm uses — and ANY stamp still standing afterwards is cleared
 unrelated bare "yes" would fire it). runWorkflow also now returns optional
 `counts` — runDailyWorkflows' #27 headline reads it, nobody else needs to.
 
+v43 additions: no new pipeline position — everything rides the existing
+tryMail wiring plus understand.ts. #21: parseMailSlash consumes a TRAILING
+/send segment (4+ parts only, so a 3-part body that IS the word "send" stays
+a draft) and sets wantSend — the existing draftAsk branch stamps the v32
+offer; isSendStep covers the slash form so the v42 run-time confirm gates it
+in workflows; the splitIntents guard needed nothing (it keys on the opening).
+#22: parseMailDigestOne → one searchInbox hit → getMailBody (format=full,
+first text/plain part, base64url-decoded) → understand.ts cleanEmailText →
+summarize; HTML-only or unreachable bodies fall back to the snippet with an
+honest note. THE SECOND SANCTIONED App.tsx TOUCH: the v34 email intercept now
+STEPS ASIDE when a slash ask ends /send (only the server can stamp the
+confirm offer) — same rule mirrored client-side, 4+ parts + final "send".
+Brain: trySummarize checks the SHAPED commands (one-sentence / key-points)
+BEFORE the plain one, both reusing applyRewrite; cleanEmailText is v43's one
+new understand.ts export.
+
 v41 additions: ONE new session-start position — deviceReceipts (tasks.ts)
 sits right after runDueSends inside the crisis guard. It is profile-only and
 FREE (the runner already wrote its results onto the deviceTasks row the
@@ -195,7 +211,41 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v42) · mail.ts (v32→v42) · tasks.ts (v39→v41) · compose.ts (v21→v40)
+### agent.ts — workflows & missions (v25→v42) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43)
+
+**v43 — the reader round** (mail.ts + understand.ts + the second sanctioned
+App.tsx touch — roadmap #21 and #22, built at Dian's EXPLICIT direction:
+"do steps 2, 3 and 4" reopened the email extras, hardened the runner, and
+deepened the reading brain):
+- **/email/…/send** (#21): a trailing /send segment on the v34 slash form
+  stamps the v32 send offer in the same turn as the draft — the yes-law never
+  bends. Rules: 4+ parts after the opening, final part exactly "send"
+  (case-blind, trimmed); a 3-part ask whose body is the word "send" stays a
+  plain draft; the body keeps its own slashes. isSendStep now knows the form,
+  so a workflow step carrying it hits the v42 run-time confirm. The locked
+  client's email intercept STEPS ASIDE for these asks (the sanctioned touch —
+  only the server can stamp the offer); the malformed teach and all four help
+  surfaces name the tail.
+- **The single-mail digest** (#22): "summarise the last email from sam" /
+  "what does the last email from sam say" / "give me the gist of …" reads
+  that ONE mail in FULL — format=full, first text/plain part, base64url
+  decoded — cleans it with cleanEmailText, and presses it through summarize
+  (3 sentences, 400 chars). HTML-only and unreachable bodies fall back to the
+  snippet with an honest "(That's from the preview …)" note. Read-only,
+  crisis-guarded sender, whole-message anchored (a trailing "… say about the
+  gig" stays conversation).
+- **The reading brain** (understand.ts): cleanEmailText strips quoted history
+  ("> …", "On … wrote:"), RFC signature blocks ("-- " onward), device
+  signatures, and collapses URLs to "(link)" — deterministic, zero-I/O.
+  trySummarize learned SHAPED summaries: "summarize in one sentence: <text>"
+  and "key points: <text>" (also "bullet points of:") reuse the applyRewrite
+  machinery, checked BEFORE the plain command, same 160-char pasted-text
+  floor so topic asks stay on the knowledge path.
+- **Runner hardening** (local, this PC): run-runner.cmd now logs every poll
+  to navi-runner\runner.log (gitignored); a Task Scheduler entry
+  ("NAVI Runner", every 15 minutes) polls hands-free; the allowlist grew
+  "node version" and "site status". The no-server-push rule stands — the
+  OWNER scheduled the device.
 
 **v42 — the trust round** (agent.ts + mail.ts isSendStep — roadmap #17 and
 #27, built at Dian's EXPLICIT "implement all those steps" direction, which
@@ -616,9 +666,10 @@ created, first mood) — is 7+ days old, and only when there's data to review.
    Web lookups (DDG/Wikipedia) are the only network reads, silent, cached.
 6. **UI is LOCKED** (App.tsx and UI files) until Dian says otherwise. The
    agentic layer is server-side only — you never need the frontend.
-   (One sanctioned exception so far: v34's /email slash form in App.tsx's
-   email intercept — Dian requested that format explicitly. The lock stands
-   for everything else.)
+   (Two sanctioned exceptions so far, BOTH inside the same email intercept:
+   v34's /email slash form, and v43's step-aside for slash asks ending
+   /send — Dian explicitly reopened #21, which cannot work from the chat box
+   without it. The lock stands for everything else.)
 7. **One mission at a time** — focus is the feature, not a limitation.
 8. Caps everywhere (workflows 8, steps 5, mission steps 10, wins 10, habits 6).
    Every new list needs a cap and an eviction rule.
@@ -740,15 +791,12 @@ Post-v33 candidates, in rough order of value:
 
 Post-v34 candidates:
 
-21. **Slash-form sends from chat** — "/email/…" currently only DRAFTS.
-    A trailing `/send` segment could stamp the v32 offer in the same turn
-    (like the "send an email to …" verb already does) — cheap, symmetrical,
-    still confirm-gated. (NOTE: Dian declared the email tool COMPLETE after
-    v34 — don't build #21/#22 without being asked.)
-22. **Digest depth** — the digest reads 5 snippets; "summarise the last
-    email from sam" (one mail, format=full body through summarize) is the
-    natural next read — still zero external LLM, still read-only. (Same
-    note as #21: email tool declared complete.)
+21. ~~**Slash-form sends from chat**~~ — SHIPPED in v43 (Dian explicitly
+    reopened it: the trailing /send segment stamps the v32 offer in the same
+    turn, still confirm-gated, isSendStep-covered, client steps aside).
+22. ~~**Digest depth**~~ — SHIPPED in v43 (the single-mail digest: one mail
+    format=full through cleanEmailText + summarize, snippet fallback,
+    read-only).
 
 Post-v35 candidates (the execution line beyond email):
 
@@ -817,6 +865,14 @@ named rungs left, both gated. A genuinely new rung needs a new bridge table
 (Create/Share tools are still localStorage stand-ins) or a fresh direction
 from Dian — ask, don't invent.
 
+Post-v43 status: Dian's "do steps 2, 3 and 4" (2026-07-15) reopened and
+CLOSED #21/#22, hardened the runner (scheduled polling is live on this PC),
+and deepened the reading brain. The ONLY named rung left is #19 (reply
+threading — still blocked on the navi_emails DDL via the out-of-band
+management token). Everything else needs a new bridge table or fresh
+direction from Dian — ask, don't invent. The email tool is COMPLETE again:
+#21/#22 were one-time reopenings, not a standing license.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -843,8 +899,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v39 | `c92d992` | hands round: device task queue + name-only runner contract (tasks.ts, navi-runner/), ICS calendar export, workflow run receipts, briefing world line (#24) |
 | v40 | `5bfbfed`+`d906065` | muse round: /write slash command (free-text writing prompts, splitIntents-guarded) + new creative kinds (story/song/letter/speech/quote), generative story assembly, char-code variant seed |
 | v41 | `0538da0` | rhythm round: monthly workflows (every month on the Nth, 1-28 only), device-task conditions (tasks/results waiting, sync), runner receipts at session-start (free, read-once) |
-| v42 | (see git) | trust round: run-time send confirm (#17 — Profile.runSend, three-level yes precedence, scheduled runs never send), report headline (#27 reshaped, zero-cost), help refresh, runner set up on Dian's PC |
+| v42 | `526e147`+`fa0c6fb` | trust round: run-time send confirm (#17 — Profile.runSend, three-level yes precedence, scheduled runs never send), report headline (#27 reshaped, zero-cost), help refresh, runner set up on Dian's PC |
+| v43 | (see git) | reader round: /email/…/send (#21, confirm-gated, client steps aside), single-mail digest (#22, format=full + cleanEmailText), shaped summaries (one-sentence / key-points), runner scheduled polling + log on Dian's PC |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → **226**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → **233**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

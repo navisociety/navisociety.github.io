@@ -12,3 +12,4 @@ package-lock.json
 navi-runner/.env
 navi-runner/.env.*
 navi-runner/tasks.config.json
+navi-runner/runner.log
