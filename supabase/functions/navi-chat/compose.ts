@@ -553,7 +553,7 @@ const TONED: Record<Tone, Partial<Record<Kind, string[]>>> = {
       `{Topic} — a commitment, not a moment. Onwards.`,
     ],
     quote: [
-      `"Discipline is the bridge between intention and {topic} — cross it daily."`,
+      `"Consistency is the bridge between intention and {topic} — cross it daily."`,
       `"{Topic} is not achieved by force, but by the quiet arithmetic of consistent days."`,
       `"Those who honour the process are, in time, honoured by {topic} itself."`,
       `"Excellence in {topic} is never an accident; it is the residue of deliberate practice."`,
