@@ -1223,6 +1223,7 @@ BEYOND THE CHAT — I execute on your other tools too:
 - how many chats do i have / clean up my old chats — I count what's been idle 30+ days and ALWAYS ask before deleting anything
 - email: draft an email to me about … / /email/sam@x.com/Subject/Body (end it /send to be offered the send in the same turn) / check my inbox / summarise my inbox / summarise the last email from sam (that one mail, read in full) / reply to the last email from sam / send draft 2 tomorrow morning — real sends ALWAYS take a spoken yes
 - devices: add a task for my laptop: push the repo / what's waiting on my laptop / run backup on my pc (the runner on that device executes only names it already knows) / any results from my pc
+- the world: weather in johannesburg / convert 100 usd to zar / price of bitcoin / capital of france / news about music — all of these work as workflow steps too, so a routine can open with the sky, the markets, and the headlines
 - export my reminders as a calendar — an .ics block your calendar app imports
 
 And anytime you want the full picture — mission, habits, reminders, mood — just say "brief me".

@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-16, at **v50** (the sentinel round).
+Last updated: 2026-07-16, at **v51** (the senses round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -288,6 +288,19 @@ new v50 cluster right after the dailySet block. ONE behavioural nuance: a
 false watch does NOT stamp lastRun, so it keeps checking on every session
 start of the same day until it fires — the stamp is the fire, not the check.
 
+v51 additions: ONE new pipeline position, used TWICE — tryWorld (world.ts,
+NEW) sits right after tryTasks in answerIntent (so every workflow step gets
+the five world engines), and in the MAIN path's v21 engine block right after
+tryDefine (so it outranks the lesson/compose engines and, crucially, runs
+BEFORE navi.infer — a weak node match can never swallow "languages of
+switzerland" again). It is reply-only and read-only: never a profile, works
+signed-in or out, no splitIntents guard needed (its parsers are all
+single-ask shapes; the weather parser explicitly rejects a city containing
+"and"/"then" because splitIntents does NOT split those tails). KNOW THE
+API TRAP: restcountries.com v3.1 is DEAD (301 → a deprecation JSON that is
+still HTTP 200 — the failure mode is quiet); the atlas now reads
+mledoze/countries via jsDelivr + the World Bank population indicator.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -298,7 +311,43 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v50) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+### agent.ts — workflows & missions (v25→v50) · world.ts (v51, NEW) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+
+**v51 — the senses round** (world.ts NEW + two index.ts call sites + one
+HELP_TEXT line — built under Dian's explicit "give NAVI 5 more upgrades like
+wikipedia and duck duck go … enhance the LLM execution capabilities"
+direction, 2026-07-16). Five keyless world engines in the DDG/Wikipedia
+mold — silent live reads, in-memory TTL caches, honest can't-reach replies —
+and because tryWorld rides answerIntent, EVERY ONE works as a workflow step
+("weather in johannesburg" in a morning routine, "news about *" on a slot):
+- **Weather** (Open-Meteo geocoding + forecast, no key): "weather in
+  johannesburg" / "what's the weather like in cape town today" → current
+  temp/feels-like/sky (closed WMO code map)/humidity/wind + today's
+  low/high/rain chance. Bare ask teaches the form; unknown place answers
+  honestly (a weather ask has nowhere better to fall); TTL 30 min.
+- **Currency** (Frankfurter — ECB reference rates, no key): "convert 100 usd
+  to zar" / "how much is 50 dollars in rands" / loose "usd to zar". CLOSED
+  ECB set + word aliases (rand, dollars, euros, pounds, quid…). THE UNITS
+  LAW: tryUnits is consulted first, so "convert 100 pounds to kg" stays
+  mass and "100 pounds to rands" is money. Only the explicit convert verb
+  teaches on an unknown code; loose shapes never hijack conversation.
+  Rate cached 6 h per pair, converted locally.
+- **Crypto** (CoinGecko simple price, no key): "price of bitcoin" (USD + ZAR
+  by default) / "ethereum price in rands". Closed ten-coin list (btc eth sol
+  ada doge xrp ltc bnb dot trx); a bare coin name is conversation — the ask
+  needs a price word. TTL 5 min, snapshot honesty in the reply.
+- **Atlas** (mledoze/countries via jsDelivr + World Bank population):
+  "capital / population / currency / languages of <country>", "how many
+  people live in <country>". Precise structured answers ("South Africa has
+  3 capitals…", "Nigeria has about 237,527,782 people (World Bank, 2025)").
+  UNKNOWN countries return null and FALL THROUGH (the web path owns "capital
+  of the roman empire"); a down source answers honestly. The 1.4 MB dataset
+  is fetched lazily once per isolate and slimmed to six fields; TTL 7 days
+  per answered ask. (restcountries.com is dead — see the wiring note.)
+- **News** (Google News RSS, SA edition, no key): "today's headlines" /
+  "news about <topic>" → the 5 newest titles, numbered. Crisis topics step
+  aside (invariant #1); "what's the news with you" stays conversation
+  (pronoun stoplist); empty results are honest; TTL 15 min.
 
 **v50 — the sentinel round** (all agent.ts + two memory.ts type touches:
 Workflow += `watch`, WorkflowRun.via += 'watch' — built under Dian's renewed
@@ -1284,6 +1333,22 @@ reply threading + the navi_choices table drop (both the management token),
 direct Share posting (per-platform OAuth apps). Otherwise: ask Dian for the
 next direction before inventing.
 
+Post-v51 status: Dian's "5 more upgrades like wikipedia and duck duck go"
+(2026-07-16) added the five world senses (world.ts) — weather, currency,
+crypto, atlas, news — all keyless, cached, honest, and workflow-step-ready.
+KNOW THE PRECEDENCE: tryWorld runs in the engine block, BEFORE navi.infer on
+both paths — so a world engine SHADOWS any curated node covering the same
+ask ("capital of south africa" now answers from the atlas, not the richer
+hand-written three-capitals node; verified live and accepted — structured
+data beats prose, but keep the parsers conservative for exactly this
+reason). Natural continuations if the direction returns: world-sense
+CONDITIONS on the v35 seam ("when it's raining in johannesburg:" — weigh it,
+every source is a live call inside a run), a weather/news line in the daily
+briefing (brief.ts BriefSources pattern), more coins/currencies only if Dian
+asks. Still gated: #19 reply threading + navi_choices drop (management
+token), direct Share posting (OAuth apps), share bridge ungated/unbuilt.
+Otherwise: ask Dian before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1319,7 +1384,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v48 | (see git) | anthology round: assembled songs (verse/chorus/verse-2/bridge banks, 256 songs), new kinds congrats/comfort/rap, multi-piece asks on caption/quote/affirmation (numbered, clamped honestly), {sender}-signed letters, conversational CRISIS_RX guard on parseCompose |
 | v49 | (see git) | elevation round: assembled poems (opening/heart/closing stanza banks, 64 poems, stanzas rhyme as wholes), funny/formal tones on the short kinds (toned banks + honest note elsewhere), deadline-aware briefing (deadlineCountdown shared with brief.ts), counted summaries ("summarize in N sentences", two–five) |
 | v50 | (see git) | sentinel round: watched workflows ("run my X workflow whenever <condition>" — the closed evalCondition vocabulary as a schedule, validated at set time, session-start fires on clean true only, once a day, exclusive with calendar schedules, sends held, via 'watch') + "check my watches" (the active check-and-fire) |
+| v51 | (see git) | senses round: world.ts NEW — five keyless world engines (Open-Meteo weather, Frankfurter ECB currency with the units-law step-aside, CoinGecko crypto, mledoze+World-Bank atlas, Google News RSS headlines), injected-source tested, TTL-cached, honest can't-reach replies, wired into answerIntent (workflow steps) + the main engine block |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → **287** (v50). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → **293** (v51). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

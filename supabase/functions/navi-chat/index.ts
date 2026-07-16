@@ -90,6 +90,7 @@ import { tryReview, reviewOffer } from './review.ts';
 import { tryVision, isVisionSlashAsk } from './vision.ts';
 import { tryChats } from './chats.ts';
 import { tryMail, runDueSends, isMailSlashAsk } from './mail.ts';
+import { tryWorld } from './world.ts';
 
 type NaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -4223,6 +4224,12 @@ async function answerIntent(
   const tasks = tryTasks(part, email, profile);
   if (tasks) return { reply: tasks.reply, profile: tasks.profile };
 
+  // v51: the world senses — weather, currency, crypto, country facts, news.
+  // Reply-only and read-only, so a workflow step like "weather in
+  // johannesburg" or "news about *" turns a routine into a live report.
+  const world = await tryWorld(part);
+  if (world) return { reply: world };
+
   const bible = await answerFromBible(part);
   if (bible) return { reply: bible };
   const devotion = await tryDevotion(part);
@@ -4636,6 +4643,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // from a real dictionary. Both verbatim, like everything in this block.
     if (!response) response = await tryDevotion(message);
     if (!response) response = await tryDefine(message);
+    // v51: the world senses — weather, currency, crypto, country facts,
+    // news — live keyless lookups delivered verbatim like every engine.
+    if (!response) response = (await tryWorld(message)) ?? '';
     if (!response) {
       const topic = lessonTopic(message);
       if (topic) {

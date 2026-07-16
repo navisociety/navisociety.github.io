@@ -72,6 +72,10 @@ import {
   parseMailDigestOne,
 } from './mail.ts';
 import type { Profile, Workflow } from './memory.ts';
+import {
+  tryWorld, parseWeatherAsk, parseConvertAsk, parseCryptoAsk, parseCountryAsk,
+  parseNewsAsk, type WorldSources,
+} from './world.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -4415,4 +4419,132 @@ Deno.test('v50: ordinary conversation still falls through the watch parsers', as
   eq(await tryAgent('whenever i pray i feel better', EMAIL, {}, run), null, 'reflection untouched');
   eq(await tryAgent('i check my watch all the time', EMAIL, {}, run), null, 'a wristwatch is not a command');
   eq(await tryAgent('run my errands whenever you can', EMAIL, {}, run), null, 'no workflow word, no parse');
+});
+
+// ── v51: the senses round — five world engines (weather, currency, crypto,
+//        atlas, news), all injected-source tested, never touching the net ────
+
+const worldStub = (over: Partial<WorldSources> = {}) => {
+  const calls: string[] = [];
+  const sources: WorldSources = {
+    geocode: (c) => { calls.push(`geo:${c}`); return Promise.resolve({ name: 'Johannesburg', country: 'South Africa', lat: -26.2, lon: 28.04 }); },
+    forecast: () => { calls.push('fc'); return Promise.resolve({ tempC: 17, feelsC: 15, humidity: 40, windKmh: 11, code: 2, minC: 8, maxC: 19, rainPct: 10 }); },
+    rate: (f, t) => { calls.push(`rate:${f}:${t}`); return Promise.resolve(18.5); },
+    crypto: (id, vs) => { calls.push(`coin:${id}:${vs.join(',')}`); return Promise.resolve({ usd: 43250, zar: 812000 }); },
+    country: (n) => { calls.push(`country:${n}`); return Promise.resolve({ name: 'South Africa', capitals: ['Pretoria', 'Cape Town', 'Bloemfontein'], population: 59308690, currencies: ['South African rand (ZAR)'], languages: ['Afrikaans', 'English', 'Zulu'], region: 'Africa' }); },
+    news: (t) => { calls.push(`news:${t ?? ''}`); return Promise.resolve(['Rains ease in Gauteng - News24', 'Springboks name squad - SuperSport']); },
+    ...over,
+  };
+  return { calls, sources };
+};
+
+Deno.test('v51: the world parsers are anchored — asks parse, conversation does not', () => {
+  eq(parseWeatherAsk('weather in johannesburg'), { city: 'johannesburg' }, 'core weather ask');
+  eq(parseWeatherAsk("Hey Navi, what's the weather like in cape town today?"), { city: 'cape town' }, 'trailing time word + address');
+  eq(parseWeatherAsk("what's the weather"), { city: '' }, 'bare ask carries no city');
+  eq(parseWeatherAsk('the weather has been wild lately'), null, 'weather talk stays talk');
+  eq(parseWeatherAsk('weather in durban and price of ethereum'), null, 'a multi-part tail is not a place');
+  eq(parseConvertAsk('convert 100 usd to zar'), { amount: 100, from: 'usd', to: 'zar', explicit: true }, 'explicit convert');
+  eq(parseConvertAsk('how much is 50 dollars in rands'), { amount: 50, from: 'dollars', to: 'rands', explicit: false }, 'spoken form');
+  eq(parseConvertAsk('usd to zar'), { amount: 1, from: 'usd', to: 'zar', explicit: false }, 'the loose rate form');
+  eq(parseConvertAsk('i want to convert my room into a studio'), null, 'no amount, no parse');
+  eq(parseCryptoAsk('price of bitcoin'), { coin: 'bitcoin' }, 'core crypto ask');
+  eq(parseCryptoAsk('ethereum price in rands'), { coin: 'ethereum', vs: 'rands' }, 'named vs currency');
+  eq(parseCryptoAsk('bitcoin'), null, 'a bare coin name is conversation');
+  eq(parseCountryAsk('what is the capital of france'), { what: 'capital', country: 'france' }, 'capital ask');
+  eq(parseCountryAsk('how many people live in nigeria'), { what: 'population', country: 'nigeria' }, 'population, spoken');
+  eq(parseCountryAsk('languages of south africa'), { what: 'languages', country: 'south africa' }, 'languages');
+  eq(parseCountryAsk('tell me about france'), null, 'prose asks stay on the wiki path');
+  eq(parseNewsAsk("today's headlines"), {}, 'top stories');
+  eq(parseNewsAsk('news about music'), { topic: 'music' }, 'topic search');
+  eq(parseNewsAsk("what's the news with you"), null, 'conversation, not a topic');
+  eq(parseNewsAsk('news about how i want to die'), null, 'crisis language never drives a search');
+});
+
+Deno.test('v51: weather — live format, honest misses, and the cache', async () => {
+  const w = worldStub();
+  const out = await tryWorld('weather in johannesburg', w.sources);
+  eq(out, 'Weather in Johannesburg, South Africa right now: 17°C (feels like 15°C), partly cloudy, humidity 40%, wind 11 km/h. Today: low 8°C, high 19°C, 10% chance of rain. (Open-Meteo)', 'the full report');
+  eq(w.calls, ['geo:johannesburg', 'fc'], 'one geocode, one forecast');
+  await tryWorld('weather in johannesburg', w.sources);
+  eq(w.calls.length, 2, 'the second ask came from the cache');
+
+  const bare = await tryWorld("what's the weather", w.sources);
+  if (!bare?.includes('weather in johannesburg')) throw new Error('a bare ask teaches the form: ' + bare);
+  const lost = await tryWorld('weather in narnia', worldStub({ geocode: () => Promise.resolve(null) }).sources);
+  if (!lost?.includes('couldn\'t find a place called "narnia"')) throw new Error('an unknown place is honest: ' + lost);
+  const down = await tryWorld('weather in atlantis', worldStub({ geocode: () => Promise.resolve('down') }).sources);
+  if (!down?.includes("couldn't reach the weather service")) throw new Error('a down geocoder is honest: ' + down);
+  const noFc = await tryWorld('weather in durban', worldStub({ forecast: () => Promise.resolve(null) }).sources);
+  if (!noFc?.includes("couldn't reach the forecast service")) throw new Error('a down forecast is honest: ' + noFc);
+});
+
+Deno.test('v51: currency — ECB conversion, units step aside, unknown codes teach', async () => {
+  const w = worldStub();
+  const out = await tryWorld('convert 100 usd to zar', w.sources);
+  eq(out, '100 USD ≈ 1,850 ZAR (rate 18.5 — European Central Bank reference rates, updated daily).', 'the conversion');
+  eq(w.calls, ['rate:USD:ZAR'], 'one rate fetch');
+  await tryWorld('convert 250 dollars to rands', w.sources);
+  eq(w.calls.length, 1, 'the same pair reuses the cached rate');
+
+  eq(await tryWorld('convert 30 c to f', w.sources), null, 'physical units stay on the skills path');
+  eq(await tryWorld('convert 100 pounds to kg', w.sources), null, 'mass pounds stay mass');
+  eq(await tryWorld('welcome to paris', w.sources), null, 'the loose form never teaches');
+  const taught = await tryWorld('convert 100 usd to naira', w.sources);
+  if (!taught?.includes('"naira" isn\'t one I have rates for')) throw new Error('an unknown currency teaches: ' + taught);
+  const same = await tryWorld('convert 20 usd to dollars', w.sources);
+  if (!same?.includes('exactly 20 USD')) throw new Error('same-to-same answers itself: ' + same);
+  const down = await tryWorld('convert 5 eur to gbp', worldStub({ rate: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the exchange-rate service")) throw new Error('a down rate feed is honest: ' + down);
+});
+
+Deno.test('v51: crypto — snapshot quotes, named currencies, honest feed talk', async () => {
+  const w = worldStub();
+  const out = await tryWorld('price of bitcoin', w.sources);
+  eq(out, 'Bitcoin right now: 43,250 USD · 812,000 ZAR. (CoinGecko — crypto moves fast, treat this as a snapshot.)', 'usd + zar by default');
+  eq(w.calls, ['coin:bitcoin:usd,zar'], 'one price fetch');
+  await tryWorld("what's the price of bitcoin", w.sources);
+  eq(w.calls.length, 1, 'the second ask came from the cache');
+
+  const inRand = await tryWorld('ethereum price in rands', w.sources);
+  if (!inRand?.includes('812,000 ZAR') || inRand.includes('USD')) throw new Error('a named currency narrows the quote: ' + inRand);
+  const odd = await tryWorld('bitcoin price in seashells', w.sources);
+  if (!odd?.includes('isn\'t one I track')) throw new Error('unknown quote currencies teach: ' + odd);
+  const down = await tryWorld('price of solana', worldStub({ crypto: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the crypto price feed")) throw new Error('a down feed is honest: ' + down);
+});
+
+Deno.test('v51: atlas — precise country facts, unknown countries fall through', async () => {
+  const w = worldStub();
+  const caps = await tryWorld('capital of south africa', w.sources);
+  eq(caps, 'South Africa has 3 capitals: Pretoria, Cape Town, Bloemfontein.', 'multi-capital countries read right');
+  const pop = await tryWorld('population of south africa', w.sources);
+  eq(pop, 'South Africa has about 59,308,690 people.', 'population with separators');
+  const cur = await tryWorld('currency of south africa', w.sources);
+  eq(cur, 'South Africa uses the South African rand (ZAR).', 'currency');
+  const lang = await tryWorld('languages of south africa', w.sources);
+  if (!lang?.includes('3 official languages')) throw new Error('languages listed: ' + lang);
+
+  eq(await tryWorld('capital of the roman empire', worldStub({ country: () => Promise.resolve('unknown') }).sources), null,
+    'an unknown country falls through to the web path');
+  const down = await tryWorld('capital of lesotho', worldStub({ country: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the country atlas")) throw new Error('a down atlas is honest: ' + down);
+});
+
+Deno.test('v51: news — numbered headlines, topics, and honest quiet days', async () => {
+  const w = worldStub();
+  const top = await tryWorld("today's headlines", w.sources);
+  eq(top, "Today's headlines:\n1. Rains ease in Gauteng - News24\n2. Springboks name squad - SuperSport\n(Google News, South Africa edition.)", 'top stories numbered');
+  eq(w.calls, ['news:'], 'one feed fetch');
+  const topic = await tryWorld('news about music', w.sources);
+  if (!topic?.includes('The latest on "music"')) throw new Error('the topic heads the reply: ' + topic);
+  eq(w.calls[1], 'news:music', 'the topic rode the fetch');
+
+  const empty = await tryWorld('news about quantum basket weaving', worldStub({ news: () => Promise.resolve([]) }).sources);
+  if (!empty?.includes('Nothing in the news about')) throw new Error('an empty search is honest: ' + empty);
+  const down = await tryWorld('news about rugby', worldStub({ news: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the news feed")) throw new Error('a down feed is honest: ' + down);
+
+  eq(await tryWorld('is there anything new under the sun', w.sources), null, 'philosophy is not a news ask');
+  eq(await tryWorld('good news everyone', w.sources), null, 'exclamations stay conversation');
 });
