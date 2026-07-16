@@ -1160,6 +1160,25 @@ own `_test.ts` (8 pure-helper tests; run with --no-check — esm.sh's current
 supabase-js@2 resolution pulls types wanting @types/node, `deno check
 index.ts` still passes).
 
+Vision-photos note (2026-07-16, Dian-directed — "allow users to change
+photos of projects and add photos to projects made without an image; make
+sure /vision board gives NAVI access to the vision board tool"): navi-vision
+gained a `set-image` action (upload or pasted URL; a TEXT project becomes an
+image tile, its name staying as the label; an image project's old stored
+file is cleaned up after the swap; add-image/delete-item now share the
+extracted resolveImageUrl/removeStoredFile helpers). VisionBoardScreen's
+edit modal grew the photo picker (staged like the add form, applied by Save
+via set-image — sanctioned UI work, Dian asked). And the /vision SLASH
+COMMAND landed in vision.ts (the v34 /email / v40 /write pattern):
+`/vision add <goal>` / `/vision remove <goal>` / `/vision list`, plus
+`/visionboard` and `/vision board` forms — parseVisionSlash REWRITES the
+subcommand into the canonical phrase forms so every existing guard (crisis
+steps aside for the crisis nodes, caps, duplicates, photo protection,
+sign-in gate) applies unchanged; bare/malformed/help asks are TAUGHT
+(VISION_USAGE), never dropped; isVisionSlashAsk joins the splitIntents
+guard (an "and" inside a goal is goal); help nodes added to index.ts NODES
++ the navi-model.ts mirror. Tests 273 → 276.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1194,6 +1213,6 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v47 | `073a288` | chronicle round: per-step run receipts (WorkflowRun.topic/steps + "what did my last run do"), the re-run form ("run my X workflow again" replays the receipt topic), mission deadlines (set/show/clear + status countdown + session-start nudge + due-soon/overdue conditions) |
 | v48 | (see git) | anthology round: assembled songs (verse/chorus/verse-2/bridge banks, 256 songs), new kinds congrats/comfort/rap, multi-piece asks on caption/quote/affirmation (numbered, clamped honestly), {sender}-signed letters, conversational CRISIS_RX guard on parseCompose |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → **273**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → **276** (the 2026-07-16 /vision slash round). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
