@@ -965,9 +965,10 @@ With the v29/v30 backlog cleared, the next rungs for the execution line:
 
 11. **More cross-platform bridges** — the Email bridge (mail.ts) SHIPPED in
     v32 — NAVI's first real-world action (drafts + Gmail sends behind the
-    two-step confirm). Still open: Create-tool creations, Share drafts (both
-    are localStorage stand-ins today — no tables to bridge until they get a
-    backend). Each new bridge is a vision.ts/chats.ts/mail.ts sibling; keep
+    two-step confirm). Still open: Create-tool creations. Share got its real
+    backend on 2026-07-16 (navi-share, storage-backed — see the tools note
+    after Post-v48), so a share bridge (share.ts sibling) is now ungated.
+    Each new bridge is a vision.ts/chats.ts/mail.ts sibling; keep
     photos/files tool-managed. The reusable pattern for anything
     destructive/irreversible: TWO-STEP CONFIRM (offer stamp on the profile +
     fresh-bare-yes window + re-read at execute), and each new stamp must slot
@@ -1138,6 +1139,26 @@ stanzas rhyme as wholes — don't split them naively), remembering recent
 variants per user (needs a profile stamp — tryCompose would have to return
 a profile, a try* contract change). Still gated: #19 (DDL), new bridges.
 Otherwise: ask Dian for the next direction before inventing.
+
+Tools note (2026-07-16, post-v48, Dian-directed — "finish deleting choice
+tool and complete share tool"): the CHOICE tool is REMOVED (`f49ea70` —
+navi-choice function + ChoiceScreen + migration deleted; CI now runs
+`supabase functions delete navi-choice`, harmless once gone). The live
+`navi_choices` table still exists in Postgres — dropping it needs the
+out-of-band management token; harmless meanwhile. The SHARE tool is now
+REAL (`86cc5c0` — navi-share edge function): connected-account slots and
+share history persist in Supabase STORAGE (bucket `navi-share`, auto-created
+by the function with the service role — chosen because a new table needs the
+gated DDL; per-user `accounts.json` + `shares.json` + media files, public
+URLs, 10MB cap, share needs ≥1 connected account, history capped at 100).
+ShareScreen is server-backed with a My Shares history view. Direct posting
+to the platforms is still NOT implemented (needs per-platform developer
+apps + OAuth — a Dian decision); the success screen says so honestly.
+Consequence for the agentic line: a share bridge (share.ts reading via the
+same storage JSON) is now UNGATED if Dian asks for it. navi-share has its
+own `_test.ts` (8 pure-helper tests; run with --no-check — esm.sh's current
+supabase-js@2 resolution pulls types wanting @types/node, `deno check
+index.ts` still passes).
 
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
