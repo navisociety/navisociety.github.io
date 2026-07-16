@@ -76,6 +76,7 @@ import { lessonTopic, buildLesson, tryQuiz } from './lesson.ts';
 import { tryDefine } from './define.ts';
 import { tryReminder, isReminderAsk, addDueReminders, tryEscalate, reminderEscalation } from './remind.ts';
 import { tryLifeEvent, addEventFollowUps } from './life.ts';
+import { tryDates, isDatesAsk, addDateHeadsUps } from './dates.ts';
 import { tryDevotion } from './devotion.ts';
 import { tryMemorize } from './memorize.ts';
 import { normalizeMessage } from './normalize.ts';
@@ -4170,6 +4171,10 @@ async function answerIntent(
     // v30: reminder escalation — "make that reminder a habit / a mission step".
     const esc = tryEscalate(part, profile);
     if (esc) return { reply: esc.reply, profile: esc.profile };
+    // v45: the special-dates book — before the forget layer, same as the
+    // main path, so "forget my mom's birthday" stays a dates command.
+    const dates = tryDates(part, profile);
+    if (dates) return { reply: dates.reply, profile: dates.profile };
     const habit = tryHabit(part, profile);
     if (habit) return { reply: habit.reply, profile: habit.profile };
     const forget = detectForget(part);
@@ -4419,7 +4424,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
           headers: { ...cors, "Content-Type": "application/json" },
         });
       }
-    } else if (isReminderAsk(message)) {
+      // v45: the special-dates book — "my mom's birthday is on 3 august" /
+      // "when is my mom's birthday". BEFORE the forget layer, so "forget my
+      // mom's birthday" is a dates command (the bare own-birthday forms step
+      // aside inside tryDates and stay memory.ts's). Persisted immediately.
+      const datesTurn = tryDates(message, stored);
+      if (datesTurn) {
+        if (datesTurn.profile) await saveStoredProfile(email, datesTurn.profile);
+        return new Response(JSON.stringify({ response: datesTurn.reply }), {
+          status: 200,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    } else if (isReminderAsk(message) || isDatesAsk(message)) {
       return new Response(JSON.stringify({ response: "I can hold reminders for you, but only once you're signed in — that's where your memory lives. Sign in and tell me again." }), {
         status: 200,
         headers: { ...cors, "Content-Type": "application/json" },
@@ -4709,6 +4726,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       response = followUps.response;
       // The trimmed event list rides into the end-of-request save via stored.
       if (followUps.events) stored.events = followUps.events;
+      // v45: special-date heads-ups — a birthday/anniversary landing today
+      // (or tomorrow) opens the session; the `noted` stamps ride the save.
+      // Checks crisis internally, like addDueReminders.
+      const headsUps = addDateHeadsUps(response, stored);
+      response = headsUps.response;
+      if (headsUps.dates) stored.dates = headsUps.dates;
       // v22: due (or undated) reminders open the first reply of a session
       // (under the welcome-back line), and stay listed until ticked off.
       // v44: a recurring reminder that just surfaced rolls to its next date —

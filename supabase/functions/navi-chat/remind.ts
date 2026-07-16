@@ -34,6 +34,12 @@
 // after). And v44 closes a v22 gap: the add path now carries CRISIS_RX and
 // steps aside, so crisis phrasing is never stored as a reminder.
 
+// v45 — YEARLY reminders (the almanac round): "remind me every year on
+// 3 august to wish mom happy birthday" holds a {month, day} cadence that
+// rolls a whole year on surface. Impossible dates (29 february, 31 april)
+// are refused honestly — a yearly date must exist in EVERY year, the same
+// law that keeps monthly reminders at 1-28.
+
 import { type Habit, isCrisisReply, type Profile, type Reminder } from './memory.ts';
 import { todayInTZ } from './skills.ts';
 
@@ -109,18 +115,26 @@ export function parseWhen(text: string, today = todayInTZ(NAVI_TZ)): { text: str
 
 // ── v44: recurring cadence ────────────────────────────────────────────────────
 
-// 'day', a weekday name, or a day-of-month number (1-28).
-export type Every = string | number;
+// 'day', a weekday name, a day-of-month number (1-28), or — v45 — a yearly
+// {month, day} date ("every year on 3 august").
+export type Every = string | number | { month: number; day: number };
+
+// v45: how many days each month really has (February 28 — a yearly date must
+// exist in EVERY year, the same law that keeps monthly reminders at 1-28).
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /**
  * Parse a recurring phrase off a reminder and strip it: "every day",
  * "every monday" (each/plural forms too), "on the 1st of every month",
- * "every month [on the 15th]" (bare defaults to the 1st). Weekly demands
- * "every"/"each" — "on friday" stays a one-off date for parseWhen. Monthly
- * days 29-31 come back as `badDay` so the caller can refuse honestly.
+ * "every month [on the 15th]" (bare defaults to the 1st), and — v45 —
+ * "every year on 3 august" / "on the 3rd of august every year" (month-first
+ * order too). Weekly demands "every"/"each" — "on friday" stays a one-off
+ * date for parseWhen. Monthly days 29-31 come back as `badDay`, impossible
+ * yearly dates (29 february, 31 april) as `badDate`, and a bare "every year"
+ * as `needsDate` — so the caller can refuse or teach honestly.
  * No bare "daily": "the daily standup" is a topic, not a cadence.
  */
-export function parseEvery(text: string): { text: string; every?: Every; badDay?: number } {
+export function parseEvery(text: string): { text: string; every?: Every; badDay?: number; badDate?: { month: number; day: number }; needsDate?: boolean } {
   let t = text.trim().replace(/[.!?]+\s*$/, '');
   const strip = (rx: RegExp) => {
     const m = t.match(rx);
@@ -128,6 +142,19 @@ export function parseEvery(text: string): { text: string; every?: Every; badDay?
     return m;
   };
   let m: RegExpMatchArray | null;
+  // v45: yearly — the date phrase and "every year" must BOTH be consumed here,
+  // in either order, or parseWhen would eat the date and leave a one-off.
+  if ((m = strip(new RegExp(String.raw`\s*\b(?:on )?(?:the )?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of )?(${MONTHS.join('|')})\s+(?:of )?(?:every|each) year\b`, 'i'))) ||
+      (m = strip(new RegExp(String.raw`\s*\b(?:on )?(${MONTHS.join('|')})\s+(?:the )?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of )?(?:every|each) year\b`, 'i'))) ||
+      (m = strip(new RegExp(String.raw`\s*\b(?:every|each) year,?\s+(?:on )?(?:the )?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of )?(${MONTHS.join('|')})\b`, 'i'))) ||
+      (m = strip(new RegExp(String.raw`\s*\b(?:every|each) year,?\s+(?:on )?(${MONTHS.join('|')})\s+(?:the )?(\d{1,2})(?:st|nd|rd|th)?\b`, 'i')))) {
+    const [a, b] = [m[1].toLowerCase(), m[2].toLowerCase()];
+    const day = /^\d/.test(a) ? parseInt(a, 10) : parseInt(b, 10);
+    const month = MONTHS.indexOf(/^\d/.test(a) ? b : a) + 1;
+    if (day < 1 || day > DAYS_IN_MONTH[month - 1]) return { text: t, badDate: { month, day } };
+    return { text: t, every: { month, day } };
+  }
+  if (strip(/\s*\b(?:every|each) year\b/i)) return { text: t, needsDate: true };
   if ((m = strip(/\s*\bon (?:the )?(\d{1,2})(?:st|nd|rd|th)? of (?:every|each) month\b/i)) ||
       (m = strip(/\s*\b(?:every|each) month(?:\s+on (?:the )?(\d{1,2})(?:st|nd|rd|th)?)?\b/i))) {
     const day = m[1] ? parseInt(m[1], 10) : 1;
@@ -149,6 +176,12 @@ export function parseEvery(text: string): { text: string; every?: Every; badDay?
 export function nextOccurrence(every: Every, today: { y: number; m: number; d: number }, after = false): string {
   const todayISO = isoFromYMD(today.y, today.m, today.d);
   if (every === 'day') return after ? addDays(today, 1) : todayISO;
+  // v45: yearly — this year's date if it hasn't passed, else next year's.
+  if (typeof every === 'object') {
+    const thisYear = isoFromYMD(today.y, every.month, every.day);
+    if (after ? thisYear > todayISO : thisYear >= todayISO) return thisYear;
+    return isoFromYMD(today.y + 1, every.month, every.day);
+  }
   if (typeof every === 'number') {
     const thisMonth = isoFromYMD(today.y, today.m, every);
     if (after ? thisMonth > todayISO : thisMonth >= todayISO) return thisMonth;
@@ -171,9 +204,10 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-/** "every day" / "every monday" / "monthly on the 1st" — how a cadence reads back. */
+/** "every day" / "every monday" / "monthly on the 1st" / "every year on 3 august" — how a cadence reads back. */
 export function cadenceLabel(every: Every): string {
   if (every === 'day') return 'every day';
+  if (typeof every === 'object') return `every year on ${every.day} ${MONTHS[every.month - 1]}`;
   if (typeof every === 'number') return `monthly on the ${ordinal(every)}`;
   return `every ${every}`;
 }
@@ -308,6 +342,18 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
     const ev = parseEvery(add[1]);
     if (ev.badDay !== undefined) {
       return { reply: `Not every month has a ${ordinal(ev.badDay)} — pick a day from 1 to 28 and the reminder will exist in every month.` };
+    }
+    // v45: an impossible yearly date is refused honestly — 29 february only
+    // exists in leap years, and no april has a 31st.
+    if (ev.badDate) {
+      const month = MONTHS[ev.badDate.month - 1];
+      const why = ev.badDate.month === 2 && ev.badDate.day === 29
+        ? '29 february only exists in leap years — pick 28 february or 1 march and it lands every year'
+        : `${month} doesn't have a ${ordinal(ev.badDate.day)} — pick a real ${month} day`;
+      return { reply: `I can't book that yearly: ${why}.` };
+    }
+    if (ev.needsDate) {
+      return { reply: 'A yearly reminder needs its day — like "remind me every year on 3 august to wish mom happy birthday".' };
     }
     if (ev.every !== undefined) {
       // "remind me every monday to call mom" — the cadence came before the

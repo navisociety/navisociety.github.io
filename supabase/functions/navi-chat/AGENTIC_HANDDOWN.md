@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v44** (the cadence round).
+Last updated: 2026-07-15, at **v45** (the almanac round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -192,6 +192,22 @@ recurring cadence mirrors the workflow schedule laws EXACTLY (weekly needs
 "every"/"each", monthly is 1-28 with an honest refusal, bare "every month"
 means the 1st and says so); no bare "daily" ("the daily standup" is a topic).
 
+v45 additions: ONE new pipeline position + ONE new session-start position.
+tryDates (dates.ts, NEW — the special-dates book) sits right after tryEscalate
+in BOTH the main path and answerIntent — BEFORE the forget layer on purpose,
+so "forget my mom's birthday" is a dates command; the bare own-birthday forms
+("my birthday is…", "when is my birthday", "forget my birthday") return null
+inside tryDates and stay memory.ts's field. addDateHeadsUps sits right after
+addEventFollowUps in the session-start block (it checks crisis INTERNALLY,
+like addDueReminders — both run before the !isCrisisReply guard); the `noted`
+stamps ride `stored.dates` into the end-of-request save. Yearly reminders are
+pure remind.ts: `Every` grew a {month, day} object form (parseEvery consumes
+the date AND "every year" in either order — parseWhen would otherwise eat the
+date and leave a one-off), nextOccurrence rolls a whole year, 29 february and
+31 april are refused honestly, bare "every year" teaches (needsDate). The
+event-proximity + special-day conditions are sync agent.ts reads over
+Profile.events / Profile.dates — no new source on the seam.
+
 v41 additions: ONE new session-start position — deviceReceipts (tasks.ts)
 sits right after runDueSends inside the crisis guard. It is profile-only and
 FREE (the runner already wrote its results onto the deviceTasks row the
@@ -225,7 +241,31 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v44) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v44)
+### agent.ts — workflows & missions (v25→v45) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+
+**v45 — the almanac round** (dates.ts NEW + remind.ts + agent.ts conditions —
+the YEARLY cadence, the one rhythm v44 left out; built under Dian's standing
+"keep developing NAVI" direction, all sync and free, no new sources, no DDL):
+- **The special-dates book** (dates.ts): "my mom's birthday is on 3 august" /
+  "our wedding anniversary is 20 june" held YEARLY on `Profile.dates` (cap 8,
+  `SpecialDate = { what, month, day, noted? }`). The user's OWN birthday stays
+  memory.ts's field — the book is for everyone else's; life.ts still bans
+  birthdays, so nothing collides. "when is my mom's birthday" answers with a
+  live countdown; "what special dates do i have" lists soonest-first; "forget
+  my mom's birthday" drops one; "clear my special dates" wipes. Impossible
+  dates (29 february, 31 april) are refused honestly. Session-start opens with
+  a heads-up on the day itself AND the day before — one note per day per date
+  (the `noted` stamp), and a yearly date is never released: next year it
+  speaks again. Crisis-guarded add, sign-in prompt via isDatesAsk, "my mom's
+  birthday is always chaotic" stays conversation (no clean date → null).
+- **Yearly reminders** (remind.ts): "remind me every year on 3 august to wish
+  mom happy birthday" — `Reminder.every` grew a {month, day} form; the v44
+  roll-on-surface contract holds (done rolls a whole year, only delete stops
+  it); cadenceLabel reads "every year on 3 august". Bare "every year" teaches.
+- **Event-proximity + special-day conditions** (agent.ts): "when i have an
+  event today / this week:" (+ negations) over Profile.events, and "when it's
+  a special day:" (+ negation) over Profile.dates — sync, free, they light up
+  in v36 dry-run previews automatically. KNOWN_CONDITIONS + HELP_TEXT updated.
 
 **v44 — the cadence round** (remind.ts + two agent.ts touches — the reminder
 line learns the schedule laws the workflow line proved across v26/v38/v41;
@@ -930,6 +970,15 @@ uncommitted from a prior session). Still gated: #19 (DDL), new bridges
 rung for rung; the next ungated seams are thin — weigh brain/compose
 deepening or ask Dian for a new direction before inventing.
 
+Post-v45 status: the almanac round added the YEARLY rhythm everywhere it was
+missing — the special-dates book (dates.ts, the seam life.ts explicitly left
+open by banning birthdays), yearly reminders, and event/special-day
+conditions. The cadence family is now complete: daily/weekly/monthly
+workflows, day/weekday/monthly/yearly reminders, and a yearly dates book.
+Still gated: #19 (DDL), new bridges (no backend tables). The genuinely
+ungated seams left are brain/compose deepening (understand.ts shapes,
+compose.ts banks) — or ask Dian for a new direction before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -958,8 +1007,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v41 | `0538da0` | rhythm round: monthly workflows (every month on the Nth, 1-28 only), device-task conditions (tasks/results waiting, sync), runner receipts at session-start (free, read-once) |
 | v42 | `526e147`+`fa0c6fb` | trust round: run-time send confirm (#17 — Profile.runSend, three-level yes precedence, scheduled runs never send), report headline (#27 reshaped, zero-cost), help refresh, runner set up on Dian's PC |
 | v43 | `89fef8d` | reader round: /email/…/send (#21, confirm-gated, client steps aside), single-mail digest (#22, format=full + cleanEmailText), shaped summaries (one-sentence / key-points), runner scheduled polling + log on Dian's PC |
-| v44 | (see git) | cadence round: recurring reminders (every day / weekday / 1-28 monthly, roll-on-surface, done rolls, delete stops), snooze, day-of-month conditions, remind.ts crisis guard (v22 gap closed) |
+| v44 | `559ecd5` | cadence round: recurring reminders (every day / weekday / 1-28 monthly, roll-on-surface, done rolls, delete stops), snooze, day-of-month conditions, remind.ts crisis guard (v22 gap closed) |
+| v45 | (see git) | almanac round: special-dates book (dates.ts — others' birthdays/anniversaries, yearly, day-of + day-before heads-ups), yearly reminders (every year on {month, day}), event-proximity + special-day conditions |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → **240**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → **247**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

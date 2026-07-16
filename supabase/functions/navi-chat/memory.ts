@@ -85,7 +85,15 @@ export type Profile = {
   // v39: the last 10 workflow runs (name, SA date, and how it was started)
   // so "which workflows ran today" has honest receipts. Managed by agent.ts.
   workflowLog?: WorkflowRun[];
+  // v45: the special-dates book — OTHER people's birthdays and anniversaries
+  // ("my mom's birthday is on 3 august"), yearly by nature so they never
+  // expire. The user's OWN birthday stays on `birthday`. Managed by dates.ts.
+  dates?: SpecialDate[];
 };
+
+// v45: one yearly special date. `noted` is the last SA day NAVI surfaced it
+// at session-start (day-of or day-before), so one note per day, never a nag.
+export type SpecialDate = { what: string; month: number; day: number; noted?: string };
 
 // v39: one queued device task. `auto` marks it for the runner; `result` is
 // the runner's receipt (set once, read-and-cleared by "any results from …").
@@ -174,7 +182,9 @@ export type LifeEvent = { text: string; date: string };
 // v44: `every` makes it recurring — 'day', a weekday name, or a day-of-month
 // number (1-28, the v41 monthly rule). `due` then holds the NEXT occurrence:
 // surfacing rolls it forward, "done" rolls it too, only delete removes it.
-export type Reminder = { text: string; created: string; due?: string; offered?: string; every?: string | number };
+// v45: a {month, day} object makes it YEARLY ("remind me every year on
+// 3 august to wish mom happy birthday") — same roll-on-surface contract.
+export type Reminder = { text: string; created: string; due?: string; offered?: string; every?: string | number | { month: number; day: number } };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 

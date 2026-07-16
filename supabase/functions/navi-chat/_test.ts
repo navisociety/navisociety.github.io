@@ -21,6 +21,7 @@ import {
   captureAck, newProfileBits, tryGoalDone, pushMood, moodTrend,
 } from './memory.ts';
 import { parseLifeEvent, tryLifeEvent, addEventFollowUps } from './life.ts';
+import { tryDates, isDatesAsk, addDateHeadsUps } from './dates.ts';
 import { extractTopicEntity, resolveReference } from './context.ts';
 import { tryAcknowledgment } from './acts.ts';
 import { tryRepair } from './repair.ts';
@@ -1117,6 +1118,135 @@ Deno.test('crisis phrasing is never stored as a reminder, and recurring rows nev
   eq(tryReminder('remind me every day that i want to die', {}, T0), null, 'crisis recurring steps aside');
   const p: Profile = { reminders: [{ text: 'pray', created: '2026-07-01', due: '2026-07-08', every: 'day' }] };
   eq(reminderEscalation(p, '2026-07-08'), null, 'a cadence IS the promotion — no escalation offer');
+});
+
+// ── v45: yearly reminders + the special-dates book (the almanac round) ────────
+
+Deno.test('v45: parseEvery reads yearly cadences in every order and refuses impossible dates', () => {
+  eq(parseEvery('wish mom happy birthday on 3 august every year'), { text: 'wish mom happy birthday', every: { month: 8, day: 3 } }, 'date-first trailing');
+  eq(parseEvery('every year on 3 august wish mom happy birthday'), { text: 'wish mom happy birthday', every: { month: 8, day: 3 } }, 'every-year leading');
+  eq(parseEvery('every year on the 3rd of august wish mom happy birthday'), { text: 'wish mom happy birthday', every: { month: 8, day: 3 } }, 'ordinal + of');
+  eq(parseEvery('renew the domain on august 3 every year'), { text: 'renew the domain', every: { month: 8, day: 3 } }, 'month-first order');
+  eq(parseEvery('celebrate every year on 29 february'), { text: 'celebrate', badDate: { month: 2, day: 29 } }, '29 february refused');
+  eq(parseEvery('celebrate on 31 april every year'), { text: 'celebrate', badDate: { month: 4, day: 31 } }, '31 april refused');
+  eq(parseEvery('pray every year'), { text: 'pray', needsDate: true }, 'bare yearly needs its day');
+  eq(parseEvery('pay rent every month on the 15th'), { text: 'pay rent', every: 15 }, 'monthly still parses after the yearly patterns');
+});
+
+Deno.test('v45: nextOccurrence rolls yearly dates across the year boundary', () => {
+  eq(nextOccurrence({ month: 8, day: 3 }, T0), '2026-08-03', 'still ahead this year');
+  eq(nextOccurrence({ month: 3, day: 12 }, T0), '2027-03-12', 'passed this year rolls to next');
+  eq(nextOccurrence({ month: 7, day: 8 }, T0), '2026-07-08', 'the day itself, inclusive');
+  eq(nextOccurrence({ month: 7, day: 8 }, T0, true), '2027-07-08', 'the day itself, exclusive, rolls a whole year');
+});
+
+Deno.test('v45: yearly reminders — add, list names the rhythm, done rolls a year, delete stops', () => {
+  const added = tryReminder('remind me every year on 3 august to wish mom happy birthday', {}, T0);
+  if (!added?.profile?.reminders?.length) throw new Error('yearly add failed');
+  eq(added.profile.reminders[0], { text: 'wish mom happy birthday', created: '2026-07-08', due: '2026-08-03', every: { month: 8, day: 3 } }, 'row shape');
+  if (!added.reply.includes('every year on 3 august')) throw new Error(`reply names cadence: ${added.reply}`);
+
+  const stored: Profile = added.profile;
+  const listed = tryReminder('what are my reminders?', stored, T0);
+  if (!listed?.reply.includes('every year on 3 august — next 2026-08-03')) throw new Error(`list shows cadence: ${listed?.reply}`);
+
+  const done = tryReminder('done with reminder 1', stored, T0);
+  eq(done?.profile?.reminders?.[0].due, '2027-08-03', 'done rolls past the pending occurrence into next year');
+
+  const deleted = tryReminder('delete reminder 1', stored, T0);
+  eq(deleted?.profile?.reminders?.length, 0, 'delete stops it');
+
+  const leap = tryReminder('remind me every year on 29 february to celebrate', {}, T0);
+  if (!leap?.reply.includes('leap years') || leap.profile) throw new Error(`29 feb refused with no save: ${leap?.reply}`);
+  const bare = tryReminder('remind me every year to pray', {}, T0);
+  if (!bare?.reply.includes('needs its day') || bare.profile) throw new Error(`bare yearly teaches: ${bare?.reply}`);
+});
+
+Deno.test('v45: the special-dates book — add, recall with countdown, list, forget, clear', () => {
+  const added = tryDates("my mom's birthday is on 3 august", {}, T0);
+  if (!added?.profile?.dates?.length) throw new Error('add failed');
+  eq(added.profile.dates[0], { what: "mom's birthday", month: 8, day: 3 }, 'row shape');
+  if (!added.reply.includes('3 august') || !added.reply.includes('in 26 days')) throw new Error(`add reply: ${added.reply}`);
+
+  let stored: Profile = added.profile;
+  const anniv = tryDates('our wedding anniversary is 20 june', stored, T0);
+  eq(anniv?.profile?.dates?.[1], { what: 'wedding anniversary', month: 6, day: 20 }, 'anniversary with qualifier');
+  stored = anniv!.profile!;
+
+  const when = tryDates("when is my mom's birthday?", stored, T0);
+  if (!when?.reply.includes('3 august') || !when.reply.includes('in 26 days') || when.profile) throw new Error(`recall: ${when?.reply}`);
+  const whenAnniv = tryDates('when is our anniversary?', stored, T0);
+  if (!whenAnniv?.reply.includes('20 june')) throw new Error(`bare anniversary recall: ${whenAnniv?.reply}`);
+  const unknown = tryDates("when is sarah's birthday?", stored, T0);
+  if (!unknown?.reply.includes("don't have that date") || unknown.profile) throw new Error(`unknown teaches: ${unknown?.reply}`);
+
+  const listed = tryDates('what special dates do i have?', stored, T0);
+  if (!listed?.reply.includes("mom's birthday") || !listed.reply.includes('wedding anniversary')) throw new Error(`list: ${listed?.reply}`);
+
+  const updated = tryDates("my mom's birthday is on 4 august", stored, T0);
+  eq(updated?.profile?.dates?.length, 2, 'update replaces, never duplicates');
+  if (!updated?.reply.startsWith('Updated')) throw new Error(`update reply: ${updated?.reply}`);
+
+  const forgot = tryDates("forget my mom's birthday", stored, T0);
+  eq(forgot?.profile?.dates?.length, 1, 'forget drops one');
+  const cleared = tryDates('clear my special dates', stored, T0);
+  eq(cleared?.profile?.dates?.length, 0, 'clear wipes the book');
+});
+
+Deno.test("v45: the user's OWN birthday and plain conversation never enter the book", () => {
+  eq(tryDates('my birthday is on 12 march', {}, T0), null, 'own birthday stays memory.ts');
+  eq(tryDates('when is my birthday?', {}, T0), null, 'own recall stays memory.ts');
+  eq(tryDates('forget my birthday', {}, T0), null, 'own forget stays the memory field');
+  eq(tryDates("my mom's birthday is always chaotic", {}, T0), null, 'no date, stays conversation');
+  eq(tryDates('my exam is on friday', {}, T0), null, 'life events stay life.ts');
+  eq(tryDates("my dead friend's birthday is on 3 august and i want to die", {}, T0), null, 'crisis steps aside');
+  const bad = tryDates("my mom's birthday is on 31 april", {}, T0);
+  if (!bad?.reply.includes("doesn't have a 31st") || bad.profile) throw new Error(`impossible date refused: ${bad?.reply}`);
+  const leap = tryDates("my mom's birthday is on 29 february", {}, T0);
+  if (!leap?.reply.includes('leap years') || leap.profile) throw new Error(`29 feb honest: ${leap?.reply}`);
+  if (!isDatesAsk("my mom's birthday is on 3 august")) throw new Error('isDatesAsk covers adds');
+  if (!isDatesAsk('what special dates do i have')) throw new Error('isDatesAsk covers list');
+  if (isDatesAsk('my birthday is on 12 march')) throw new Error('own birthday is not a dates ask');
+  if (isDatesAsk('what a special day this is')) throw new Error('conversation is not a dates ask');
+});
+
+Deno.test('v45: date heads-ups — today and tomorrow speak once per day, crisis never wrapped', () => {
+  const book: Profile = { dates: [
+    { what: "mom's birthday", month: 7, day: 8 },
+    { what: 'wedding anniversary', month: 7, day: 9 },
+    { what: "sam's birthday", month: 12, day: 25 },
+  ] };
+  const out = addDateHeadsUps('Hey.', book, T0);
+  if (!out.response.includes("mom's birthday TODAY")) throw new Error(`today note: ${out.response}`);
+  if (!out.response.includes('TOMORROW')) throw new Error(`tomorrow note: ${out.response}`);
+  if (out.response.includes("sam's birthday")) throw new Error('a far date stays quiet');
+  if (!out.dates) throw new Error('noted stamps missing');
+  eq(out.dates[0].noted, '2026-07-08', 'today stamped');
+  eq(out.dates[1].noted, '2026-07-08', 'tomorrow stamped');
+  eq(out.dates[2].noted, undefined, 'far date unstamped');
+
+  const again = addDateHeadsUps('Hey.', { dates: out.dates }, T0);
+  eq(again, { response: 'Hey.' }, 'one note per day — the stamp holds');
+
+  const crisis = addDateHeadsUps('Please call SADAG on 0800 567 567.', book, T0);
+  eq(crisis.response, 'Please call SADAG on 0800 567 567.', 'crisis reply never wrapped');
+});
+
+Deno.test('v45: evalCondition sees events and special days — sync, free, closed', async () => {
+  const spy = stubSources(0, 0, 0);
+  const t = '2026-07-08';
+  const p: Profile = { events: [{ text: 'exam', date: '2026-07-08' }, { text: 'gig', date: '2026-07-12' }] };
+  eq(await evalCondition('i have an event today', p, t, EMAIL, spy.sources), true, 'event today');
+  eq(await evalCondition('i have no events today', p, t, EMAIL, spy.sources), false, 'negation on the day');
+  eq(await evalCondition('i have an event this week', { events: [{ text: 'gig', date: '2026-07-12' }] }, t, EMAIL, spy.sources), true, 'within 7 days');
+  eq(await evalCondition('i have an event this week', { events: [{ text: 'gig', date: '2026-07-20' }] }, t, EMAIL, spy.sources), false, 'past the horizon');
+  eq(await evalCondition('i have no events this week', {}, t, EMAIL, spy.sources), true, 'empty calendar');
+  const book: Profile = { dates: [{ what: "mom's birthday", month: 7, day: 8 }] };
+  eq(await evalCondition("it's a special day", book, t, EMAIL, spy.sources), true, 'the day itself');
+  eq(await evalCondition("it's a special day", book, '2026-07-09', EMAIL, spy.sources), false, 'any other day');
+  eq(await evalCondition("it isn't a special day", {}, t, EMAIL, spy.sources), true, 'negation, empty book');
+  eq(await evalCondition('i have an event someday', p, t, EMAIL, spy.sources), null, 'the vocabulary stays closed');
+  eq(spy.calls, [], 'event and special-day conditions never touch a source');
 });
 
 // ── v22: devotionals ──────────────────────────────────────────────────────────

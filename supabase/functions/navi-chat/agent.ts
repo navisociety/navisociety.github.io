@@ -411,7 +411,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "i have an event today", "i have no events today", "i have an event this week", "i have no events this week", "it's a special day", "it isn't a special day", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -543,6 +543,26 @@ export async function evalCondition(
   if (m) {
     const day = parseInt(m[1], 10);
     if (day >= 1 && day <= 31) return parseInt(todayISO.slice(8, 10), 10) !== day;
+  }
+  // v45: event-proximity — the life-events calendar (life.ts) lives ON the
+  // profile, so this pair is sync and free. "today" is the day itself;
+  // "this week" is the next 7 days including today.
+  m = cond.match(/^i have (no )?(?:an? )?events? (today|this week)$/);
+  if (m) {
+    const horizon = m[2] === 'today' ? 0 : 7;
+    const n = (profile.events ?? []).filter((e) => {
+      const diff = Math.round((Date.parse(e.date) - Date.parse(todayISO)) / 86400000);
+      return Number.isFinite(diff) && diff >= 0 && diff <= horizon;
+    }).length;
+    return m[1] ? n === 0 : n > 0;
+  }
+  // v45: the special-dates book (dates.ts) — "when it's a special day:" is
+  // true when any held birthday/anniversary lands today. Sync and free.
+  if (/^(?:it'?s|it is|today is) a special (?:day|date)$/.test(cond)) {
+    return (profile.dates ?? []).some((d) => d.month === parseInt(todayISO.slice(5, 7), 10) && d.day === parseInt(todayISO.slice(8, 10), 10));
+  }
+  if (/^(?:it (?:isn'?t|is not)|it'?s not|today (?:isn'?t|is not)) a special (?:day|date)$/.test(cond)) {
+    return !(profile.dates ?? []).some((d) => d.month === parseInt(todayISO.slice(5, 7), 10) && d.day === parseInt(todayISO.slice(8, 10), 10));
   }
   // v38: clock conditions — the hour comes from the SA clock (or the pinned
   // test hour). Segments are closed and exhaustive, so this never guesses.
@@ -901,7 +921,7 @@ WORKFLOWS — saved routines I run on command:
 - start a step with a condition and it only runs when it's true: when i haven't logged my prayer habit: remind me to pray — negations work too (when no reminders are due / when my mood isn't low / when my prayer streak is under 3)
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
-- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when my pc has results waiting
+- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
 - list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
@@ -920,7 +940,8 @@ MISSIONS — a goal I break into steps and walk you through:
 BEYOND THE CHAT — I execute on your other tools too:
 - add … to my vision board / what's on my vision board / remove … from my vision board (put my mission on my vision board pins the active goal)
 - a reminder that's waited 3+ days gets offered a promotion: "make that reminder a habit" or "make that reminder a mission step"
-- reminders can repeat: remind me every day to pray / remind me every monday to call mom / remind me to pay rent on the 1st of every month — each comes back on its day until you delete it; snooze reminder 2 until friday pushes any reminder off
+- reminders can repeat: remind me every day to pray / remind me every monday to call mom / remind me to pay rent on the 1st of every month / remind me every year on 3 august to wish mom happy birthday — each comes back on its day until you delete it; snooze reminder 2 until friday pushes any reminder off
+- special dates: my mom's birthday is on 3 august / our wedding anniversary is 20 june — held every year; when is my mom's birthday answers with a countdown, what special dates do i have lists the book, and I open the chat with a heads-up the day before and on the day
 - how many chats do i have / clean up my old chats — I count what's been idle 30+ days and ALWAYS ask before deleting anything
 - email: draft an email to me about … / /email/sam@x.com/Subject/Body (end it /send to be offered the send in the same turn) / check my inbox / summarise my inbox / summarise the last email from sam (that one mail, read in full) / reply to the last email from sam / send draft 2 tomorrow morning — real sends ALWAYS take a spoken yes
 - devices: add a task for my laptop: push the repo / what's waiting on my laptop / run backup on my pc (the runner on that device executes only names it already knows) / any results from my pc
