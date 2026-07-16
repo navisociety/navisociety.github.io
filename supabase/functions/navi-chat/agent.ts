@@ -2,6 +2,22 @@
 //
 // NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v42 below)
 //
+// v50 additions (the sentinel round — "focus on agentic features", 2026-07-16):
+//   - WATCHED WORKFLOWS — "run my triage workflow whenever i have new email"
+//     makes the schedule a CONDITION, not a calendar (Workflow.watch, the
+//     closed evalCondition vocabulary, validated at set time so no watch is
+//     ever promised that can't be checked). The session-start channel checks
+//     it lazily and fires ONLY on a clean true (false and can't-check verdicts
+//     stay silent — a passive channel never guesses and never nags), at most
+//     once a day (the same lastRun stamp; an unfired watch keeps checking on
+//     every session start of the day). Exclusive with daily/day/monthDay —
+//     setting either side clears the other; "stop watching my X workflow"
+//     lifts it; pause puts it to sleep; slotted workflows refuse (no topic).
+//     Watch-fired runs are scheduled runs: sends held, receipts via 'watch'.
+//   - CHECK MY WATCHES — the active half: reports every watch honestly
+//     (paused / already fired / false / unreachable / not-connected) and
+//     fires the clean-true ones right now, stamping lastRun as usual.
+//
 // v47 additions (the chronicle round — the named post-v46 rungs, none gated):
 //   - PER-STEP RUN RECEIPTS — every real run's receipt (WorkflowRun) now
 //     carries the topic and each step's fate (StepOutcome: ran / skipped /
@@ -335,6 +351,46 @@ const MONTHLY_ON_DAY_FIRST_RX = new RegExp(
 const MONTHLY_OFF_RX = new RegExp(
   `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:(?:every|each) month|monthly)$`,
 );
+
+// v50: "run my triage workflow whenever i have new email" — a WATCHED
+// workflow: the schedule is a condition, not a calendar. ON demands the word
+// "whenever" (never a bare "when", which belongs to triggers — "when i say …"
+// — and to conditional steps), so topic runs and calendar schedules can never
+// reach here. The condition itself is the closed evalCondition vocabulary,
+// validated at set time so no watch is ever promised that can't be checked.
+const WATCH_ON_RX = new RegExp(
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? whenever (.{3,80})$`,
+);
+const WATCH_ON_LEAD_RX = new RegExp(
+  `^whenever (.{3,80}?), ?(?:please )?(?:run|start)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+const WATCH_OFF_RX = new RegExp(
+  `^(?:please )?(?:stop|don'?t) (?:watching|watch)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+const WATCH_OFF_COND_RX = new RegExp(
+  `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) whenever .{3,80}$`,
+);
+
+// v50: the spoken mid-session check — session-start is the passive channel,
+// this is the active one: report every watch honestly and fire the true ones.
+const CHECK_WATCHES_RX =
+  /^(?:please )?(?:check|run|test) my (?:watches|watchers|watched (?:workflows|routines))$/;
+
+/**
+ * v50: { name, cond } from a watch-on ask, { name } from a watch-off ask,
+ * or null when this isn't a watch ask at all.
+ */
+export function parseWatchSet(message: string): { name: string; cond?: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 140) return null;
+  let m = t.match(WATCH_ON_RX);
+  if (m) return { name: m[1].trim(), cond: m[2].trim() };
+  m = t.match(WATCH_ON_LEAD_RX);
+  if (m) return { name: m[2].trim(), cond: m[1].trim() };
+  m = t.match(WATCH_OFF_RX) ?? t.match(WATCH_OFF_COND_RX);
+  if (m) return { name: m[1].trim() };
+  return null;
+}
 
 // ── v42: the run-time send confirm ──────────────────────────────────────────
 // A workflow whose steps SEND real email never runs unconfirmed. Same bare
@@ -1142,6 +1198,7 @@ WORKFLOWS — saved routines I run on command:
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
 - conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting / when my mission is due soon / when my mission is overdue
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
+- run my triage workflow whenever i have new email (a WATCHED workflow — the schedule is a condition, any from the list above: I check it when you start a chat and fire the workflow at most once a day, only on a clean true) / stop watching my triage workflow / check my watches (checks every watch right now and fires the true ones)
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
 - list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
 - what did my last run do (the newest receipt, step by step — what ran, what skipped and why) / run my study workflow again (repeats the last run, same topic and all)
@@ -1189,6 +1246,7 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowRename(message) !== null ||
     parseTriggerSet(message) !== null ||
     parseDailySet(message) !== null ||
+    parseWatchSet(message) !== null ||
     parseWorkflowPause(message) !== null ||
     parseWorkflowResume(message) !== null ||
     parseMissionStart(message) !== null ||
@@ -1197,6 +1255,7 @@ export function isAgentAsk(message: string): boolean {
     parseLastRun(message) !== null ||
     parseWorkflowRunAgain(message) !== null ||
     LIST_RX.test(t) ||
+    CHECK_WATCHES_RX.test(t) ||
     RAN_TODAY_RX.test(t) ||
     MISSION_DEADLINE_CLEAR_RX.test(t) ||
     MISSION_DEADLINE_SHOW_RX.test(t) ||
@@ -1220,7 +1279,7 @@ function nameList(workflows: Workflow[]): string {
   return workflows
     .map((w) => {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
-      const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : w.monthDay ? ` — runs monthly on the ${ordinal(w.monthDay)}` : '';
+      const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : w.monthDay ? ` — runs monthly on the ${ordinal(w.monthDay)}` : w.watch ? ` — watching: whenever ${w.watch}` : '';
       // v46: a sleeping workflow says so wherever it's listed.
       const nap = isPaused(w, todayISO) ? ` — ${pauseLabel(w)}` : '';
       return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}${nap}`;
@@ -1293,6 +1352,7 @@ const VIA_LABEL: Record<WorkflowRun['via'], string> = {
   weekly: 'weekly auto-run',
   monthly: 'monthly auto-run',
   nested: 'ran as a step inside another workflow',
+  watch: 'its watch condition came true',
 };
 
 async function runWorkflow(
@@ -2033,7 +2093,8 @@ export async function tryAgent(
       ? '\nRuns daily on your first chat of the day.'
       : wf.day
       ? `\nRuns every ${wf.day}, on your first chat that day.`
-      : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.` : '';
+      : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.`
+      : wf.watch ? `\nWatching: runs itself whenever ${wf.watch} — checked when you start a chat, fired at most once a day.` : '';
     // v46: a sleeping workflow says so when shown.
     const td = todayInTZ('Africa/Johannesburg');
     const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
@@ -2344,15 +2405,15 @@ export async function tryAgent(
       };
     }
     // v38: one schedule per workflow — weekly replaces daily and vice versa
-    // (v41: monthly joins the swap); off clears whichever is set (and the
-    // lastRun stamp with it).
+    // (v41: monthly joins the swap; v50: a watch swaps out the same way);
+    // off clears whichever is set (and the lastRun stamp with it).
     const nextList = workflows.map((w, i) => {
       if (i !== idx) return w;
       const next = { ...w };
-      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.monthDay; delete next.lastRun; }
-      else if (dailySet.monthDay) { next.monthDay = dailySet.monthDay; delete next.daily; delete next.day; }
-      else if (dailySet.day) { next.day = dailySet.day; delete next.daily; delete next.monthDay; }
-      else { next.daily = true; delete next.day; delete next.monthDay; }
+      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.monthDay; delete next.watch; delete next.lastRun; }
+      else if (dailySet.monthDay) { next.monthDay = dailySet.monthDay; delete next.daily; delete next.day; delete next.watch; }
+      else if (dailySet.day) { next.day = dailySet.day; delete next.daily; delete next.monthDay; delete next.watch; }
+      else { next.daily = true; delete next.day; delete next.monthDay; delete next.watch; }
       return next;
     });
     return {
@@ -2363,6 +2424,134 @@ export async function tryAgent(
           ? `Done — "${dailySet.name}" now runs itself every ${dailySet.day}, on your first chat that day. You show up, I handle the routine.`
           : `Done — "${dailySet.name}" now runs itself every day, on your first chat of the day. You show up, I handle the routine.`
         : `Okay — "${dailySet.name}" is off the schedule. It's still saved; run it anytime with "run my ${dailySet.name} workflow".`,
+      profile: { ...profile, workflows: nextList },
+    };
+  }
+
+  // ── v50: watched workflows — the schedule is a condition, not a calendar ──
+  // "check my watches" is the active half: report every watch honestly and
+  // fire the clean-true ones right now (session-start stays the passive half).
+  if (CHECK_WATCHES_RX.test(t)) {
+    const watchers = workflows.filter((w) => w.watch);
+    if (!watchers.length) {
+      return { reply: 'Nothing\'s watching — no workflow has a watch condition. Set one with "run my <name> workflow whenever <condition>" and I\'ll fire it the moment the condition comes true.' };
+    }
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    let prof = profile;
+    let changed = false;
+    const lines: string[] = [];
+    const reports: string[] = [];
+    for (const wf of watchers) {
+      const tag = `"${wf.name}" (whenever ${wf.watch})`;
+      if (isPaused(wf, todayISO)) {
+        lines.push(`- ${tag} — ${pauseLabel(wf)}, so it sits this one out.`);
+        continue;
+      }
+      if (wf.lastRun === todayISO) {
+        lines.push(`- ${tag} — already fired today; a watch fires at most once a day.`);
+        continue;
+      }
+      const verdict = await evalCondition(wf.watch!, prof, todayISO, email, sources);
+      if (verdict === false) {
+        lines.push(`- ${tag} — not yet; the condition is false right now.`);
+        continue;
+      }
+      if (verdict === 'unreachable') {
+        lines.push(`- ${tag} — couldn't reach the source to check, so I played it safe and left it alone.`);
+        continue;
+      }
+      if (verdict === 'not-connected') {
+        lines.push(`- ${tag} — Gmail isn't connected, so this check can't pass. The Email tool's Connect button fixes that.`);
+        continue;
+      }
+      if (verdict === null) {
+        lines.push(`- ${tag} — I no longer recognise that condition, so it stays quiet. Reset it with "run my ${wf.name} workflow whenever <condition>".`);
+        continue;
+      }
+      // A clean true — fire it, stamp lastRun, leave the usual receipt.
+      // Sends stay held (allowSend=false): a batch check never sends unasked.
+      const out = await runWorkflow(wf, prof, run, undefined, email, sources, 'watch');
+      if (out.profile) prof = out.profile;
+      prof = {
+        ...prof,
+        workflows: (prof.workflows ?? []).map((w) =>
+          w.name === wf.name ? { ...w, lastRun: todayISO } : w,
+        ),
+      };
+      changed = true;
+      const head = out.counts ? ` (${out.counts.executed} of ${out.counts.total} step${out.counts.total === 1 ? '' : 's'} ran)` : '';
+      lines.push(`- ${tag} — TRUE. Fired; the run is below.`);
+      reports.push(`— "${wf.name}" fired${head} —\n\n${out.reply}`);
+    }
+    const reply = `Checked ${watchers.length} watch${watchers.length === 1 ? '' : 'es'}:\n${lines.join('\n')}${reports.length ? '\n\n' + reports.join('\n\n') : ''}`;
+    return changed ? { reply, profile: prof } : { reply };
+  }
+
+  const watchSet = parseWatchSet(message);
+  if (watchSet) {
+    const idx = workflows.findIndex((w) => w.name === watchSet.name);
+    if (idx < 0) {
+      return {
+        reply: `I don't have a workflow called "${watchSet.name}". ${workflows.length ? `You have: ${workflows.map((w) => w.name).join(', ')}.` : 'Create it first: create a workflow called ' + watchSet.name + ': …'}`,
+      };
+    }
+    const wf = workflows[idx];
+    // The off form — the watch lifts, the workflow stays.
+    if (!watchSet.cond) {
+      if (!wf.watch) {
+        return { reply: `"${wf.name}" isn't watching anything, so there's nothing to call off. Set a watch with "run my ${wf.name} workflow whenever <condition>".` };
+      }
+      const nextList = workflows.map((w, i) => {
+        if (i !== idx) return w;
+        const { watch: _watch, ...rest } = w;
+        return rest as Workflow;
+      });
+      return {
+        reply: `Okay — "${wf.name}" stopped watching for "${wf.watch}". It's still saved; run it anytime with "run my ${wf.name} workflow".`,
+        profile: { ...profile, workflows: nextList },
+      };
+    }
+    // v27's schedule rule holds: a watch fires with no topic in hand.
+    if (hasSlot(wf)) {
+      return {
+        reply: `"${wf.name}" has a * slot, so it needs a topic each time — a watch wouldn't know what to fill in. Run it whenever you like with "run my ${wf.name} workflow on <topic>".`,
+      };
+    }
+    // Validate the condition NOW — no watch is ever promised that can't be
+    // checked. A live verdict rides back in the reply as a bonus.
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    const verdict = await evalCondition(watchSet.cond, profile, todayISO, email, sources);
+    if (verdict === null) {
+      return {
+        reply: `I don't know how to check "${watchSet.cond}" yet, so I won't promise a watch I can't keep. Conditions I understand: ${KNOWN_CONDITIONS}.`,
+      };
+    }
+    const nextList = workflows.map((w, i) => {
+      if (i !== idx) return w;
+      const next = { ...w, watch: watchSet.cond! };
+      delete next.daily;
+      delete next.day;
+      delete next.monthDay;
+      return next;
+    });
+    const swapped = (wf.daily || wf.day || wf.monthDay)
+      ? ' Its calendar schedule steps down — one schedule per workflow, and the watch is it now.'
+      : '';
+    // v42's law reaches here too: a watch-fired run is a scheduled run.
+    const sends = sendStepsOf(wf, workflows).length
+      ? ' Heads up: its send step gets held back when the watch fires — a scheduled run never sends without you.'
+      : '';
+    const now = verdict === true
+      ? "It's true right now, so expect it to fire when your next session starts"
+      : verdict === false
+        ? "It's false right now — I'll keep checking"
+        : verdict === 'unreachable'
+          ? "I couldn't reach the source to check it just now, but the watch is set — I'll keep trying"
+          : "Gmail isn't connected yet, so the check can't pass until you link it (the Email tool's Connect button)";
+    return {
+      reply: `Watching — "${wf.name}" now runs itself whenever ${watchSet.cond}. I check when you start a chat and fire it at most once a day, only on a clean true.${swapped}${sends} ${now}. "stop watching my ${wf.name} workflow" calls it off, and "check my watches" checks right now.`,
       profile: { ...profile, workflows: nextList },
     };
   }
@@ -2396,6 +2585,7 @@ export async function tryAgent(
     const nextList = workflows.map((w, i) => (i === idx ? { ...w, paused: until ?? true } : w));
     const sleeps: string[] = [];
     if (wf.daily || wf.day || wf.monthDay) sleeps.push('its schedule');
+    if (wf.watch) sleeps.push(`its watch ("whenever ${wf.watch}")`);
     if (wf.trigger) sleeps.push(`its trigger ("${wf.trigger}")`);
     const what = sleeps.length ? ` ${sleeps.join(' and ')} sleep${sleeps.length === 1 ? 's' : ''} too;` : '';
     return {
@@ -2560,21 +2750,34 @@ export async function runDailyWorkflows(
   const dom = parseInt(todayISO.slice(8, 10), 10);
   // v46: a paused workflow sleeps through its schedule — silently, that's the
   // point of a pause; a dated pause simply stops holding on its wake day.
+  // v50: watched workflows join the channel — due only while their condition
+  // holds, checked lazily below so calendar schedules stay free. A watch that
+  // hasn't fired yet keeps checking on every session start of the day.
   const due = (profile.workflows ?? []).filter((w) =>
-    (w.daily || (w.day && w.day === dow) || (w.monthDay && w.monthDay === dom)) &&
+    (w.daily || (w.day && w.day === dow) || (w.monthDay && w.monthDay === dom) || w.watch) &&
     w.lastRun !== todayISO && !hasSlot(w) && !isPaused(w, todayISO));
   if (!due.length) return null;
 
   let prof = profile;
   const reports: string[] = [];
   for (const wf of due) {
-    const via = wf.daily ? 'daily' : wf.day ? 'weekly' : 'monthly';
+    // v50: a watch fires ONLY on a clean true — false and can't-check
+    // verdicts stay silent (a passive channel never guesses and never nags),
+    // and the day's profile threads through so an earlier run's side-effects
+    // are already visible to the check.
+    if (wf.watch) {
+      const verdict = await evalCondition(wf.watch, prof, todayISO, email, sources);
+      if (verdict !== true) continue;
+    }
+    const via = wf.watch ? 'watch' : wf.daily ? 'daily' : wf.day ? 'weekly' : 'monthly';
     const out = await runWorkflow(wf, prof, run, undefined, email, sources, via);
     if (out.profile) prof = out.profile;
     // v42 (#27): a glanceable headline, counted from the run itself — the
     // zero-cost cousin of the pre-run preview the roadmap weighed and feared.
     const head = out.counts ? ` (${out.counts.executed} of ${out.counts.total} step${out.counts.total === 1 ? '' : 's'} ran)` : '';
-    reports.push(`— Your ${wf.daily ? 'daily' : wf.day ?? 'monthly'} "${wf.name}" workflow${head} —\n\n${out.reply}`);
+    const label = wf.watch ? 'watched' : wf.daily ? 'daily' : wf.day ?? 'monthly';
+    const why = wf.watch ? ` (${wf.watch})` : '';
+    reports.push(`— Your ${label} "${wf.name}" workflow${why}${head} —\n\n${out.reply}`);
     prof = {
       ...prof,
       workflows: (prof.workflows ?? []).map((w) =>
@@ -2582,6 +2785,7 @@ export async function runDailyWorkflows(
       ),
     };
   }
+  if (!reports.length) return null;
   return { report: reports.join('\n\n'), profile: prof };
 }
 

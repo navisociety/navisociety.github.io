@@ -100,11 +100,12 @@ export type SpecialDate = { what: string; month: number; day: number; noted?: st
 export type DeviceTask = { device: string; text: string; created: string; auto?: boolean; result?: string };
 
 // v39: one workflow run receipt — `via` says who started it. (+v41 monthly,
-// +v46 nested: the run was a step inside another workflow.)
+// +v46 nested: the run was a step inside another workflow; +v50 watch: its
+// watch condition came true.)
 // v47: `topic` is what filled the * slots (the re-run form replays it), and
 // `steps` holds per-step outcomes so "what did my last run do" answers with
 // the whole story. Step text is clipped at stamp time to keep the row small.
-export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested'; topic?: string; steps?: StepOutcome[] };
+export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested' | 'watch'; topic?: string; steps?: StepOutcome[] };
 
 // v47: one step's fate inside a run receipt — `s` is the (clipped) step text,
 // `o` what happened to it, `w` the short honest why when it didn't run.
@@ -151,7 +152,11 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // v46: `paused` puts the whole workflow to sleep — true indefinitely, or an
 // ISO date (yyyy-mm-dd) it wakes on. Schedules skip it, triggers answer
 // honestly, manual runs point at "resume". Managed by agent.ts.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; lastRun?: string; paused?: boolean | string };
+// v50: `watch` makes the schedule a CONDITION, not a calendar — the closed
+// evalCondition vocabulary, checked at session-start (and by "check my
+// watches"), fired at most once a day on a CLEAN true, sharing `lastRun`.
+// Exclusive with daily/day/monthDay — setting one clears the others.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.

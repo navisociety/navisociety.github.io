@@ -56,6 +56,7 @@ import {
   parseWorkflowPreview,
   parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
   parseLastRun, parseWorkflowRunAgain, parseMissionDeadline, isAgentAsk,
+  parseWatchSet,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -70,7 +71,7 @@ import {
   parseMailSlash, isMailSlashAsk, isInboxDigestAsk, isSendStep,
   parseMailDigestOne,
 } from './mail.ts';
-import type { Profile } from './memory.ts';
+import type { Profile, Workflow } from './memory.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
   const sa = JSON.stringify(a), sb = JSON.stringify(b);
@@ -4268,4 +4269,150 @@ Deno.test('v47: ordinary conversation still falls through the new parsers', asyn
   eq(await tryAgent('again', EMAIL, {}, run), null, 'a bare "again" is conversation');
   eq(await tryAgent('run it back one more time', EMAIL, {}, run), null, 'loose replay talk untouched');
   eq(parseWorkflowRun('run my study workflow again') === null, true, 'the plain run parser never eats the again form');
+});
+
+// ── v50: the sentinel round — watched workflows ──────────────────────────────
+
+Deno.test('v50: parseWatchSet reads watch on/off; ordinary asks stay untouched', () => {
+  eq(parseWatchSet('run my triage workflow whenever i have new email'),
+    { name: 'triage', cond: 'i have new email' }, 'the trailing form');
+  eq(parseWatchSet('Hey Navi, set my push routine whenever my pc has results waiting'),
+    { name: 'push', cond: 'my pc has results waiting' }, 'set verb + routine + navi address');
+  eq(parseWatchSet('whenever a reminder is due, run my desk workflow'),
+    { name: 'desk', cond: 'a reminder is due' }, 'the leading form');
+  eq(parseWatchSet('stop watching my triage workflow'), { name: 'triage' }, 'the off form');
+  eq(parseWatchSet('stop running my triage workflow whenever i have new email'),
+    { name: 'triage' }, 'the spelled-out off form');
+  eq(parseWatchSet('run my study workflow on friday'), null, 'topic runs stay topic runs');
+  eq(parseWatchSet('run my morning workflow every day'), null, "calendar schedules stay parseDailySet's");
+  eq(parseWatchSet('when i say go, run my study workflow'), null, 'triggers stay triggers');
+  eq(parseWatchSet('whenever i pray i feel better'), null, 'conversation untouched');
+});
+
+Deno.test('v50: setting a watch validates the condition, swaps the calendar, and lifts honestly', async () => {
+  const { run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'desk', steps: ['list my reminders'], created: 'now', daily: true }] };
+
+  const missing = await tryAgent('run my ghost workflow whenever a reminder is due', EMAIL, profile, run);
+  if (!missing?.reply.includes('"ghost"')) throw new Error('a missing workflow is honest: ' + missing?.reply);
+
+  const unknown = await tryAgent('run my desk workflow whenever the stars align', EMAIL, profile, run);
+  if (!unknown?.reply.includes('Conditions I understand') || unknown.profile) throw new Error('an unknown condition teaches, promises nothing: ' + unknown?.reply);
+
+  const set = await tryAgent('run my desk workflow whenever a reminder is due', EMAIL, profile, run);
+  eq(set?.profile?.workflows?.[0].watch, 'a reminder is due', 'the watch is stored');
+  eq(set?.profile?.workflows?.[0].daily, undefined, 'the daily schedule stepped down');
+  if (!set?.reply.includes('calendar schedule steps down')) throw new Error('the swap is named: ' + set?.reply);
+  if (!set?.reply.includes("It's false right now")) throw new Error('the live verdict rides back: ' + set?.reply);
+  profile = set!.profile!;
+
+  const listed = await tryAgent('list my workflows', EMAIL, profile, run);
+  if (!listed?.reply.includes('watching: whenever a reminder is due')) throw new Error('the list names the watch: ' + listed?.reply);
+  const shown = await tryAgent('show my desk workflow', EMAIL, profile, run);
+  if (!shown?.reply.includes('Watching: runs itself whenever a reminder is due')) throw new Error('show names the watch: ' + shown?.reply);
+
+  const swapped = await tryAgent('run my desk workflow every day', EMAIL, profile, run);
+  eq(swapped?.profile?.workflows?.[0].watch, undefined, 'a calendar schedule clears the watch');
+  eq(swapped?.profile?.workflows?.[0].daily, true, 'and takes its place');
+
+  const reset = await tryAgent('run my desk workflow whenever a reminder is due', EMAIL, swapped!.profile!, run);
+  const off = await tryAgent('stop watching my desk workflow', EMAIL, reset!.profile!, run);
+  eq(off?.profile?.workflows?.[0].watch, undefined, 'the off form lifts the watch');
+  if (!off?.reply.includes('stopped watching')) throw new Error('off says so: ' + off?.reply);
+  const nothing = await tryAgent('stop watching my desk workflow', EMAIL, off!.profile!, run);
+  if (!nothing?.reply.includes("isn't watching") || nothing.profile) throw new Error('off with no watch is honest: ' + nothing?.reply);
+
+  const slotted: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+  const refused = await tryAgent('run my study workflow whenever a reminder is due', EMAIL, slotted, run);
+  if (!refused?.reply.includes('* slot') || refused.profile) throw new Error('a slotted workflow refuses a watch: ' + refused?.reply);
+});
+
+Deno.test('v50: runDailyWorkflows fires a watch only on a clean true, once a day', async () => {
+  const { ran, run } = stubRunner();
+  const watcher = (extra: Partial<Workflow> = {}): Profile => ({
+    reminders: [{ text: 'pray', created: 'now' }],
+    workflows: [{ name: 'desk', steps: ['list my reminders'], created: 'now', watch: 'a reminder is due', ...extra }],
+  });
+
+  const fired = await runDailyWorkflows(watcher(), run, '2026-07-16');
+  if (!fired) throw new Error('a true watch fires');
+  eq(ran.splice(0), ['list my reminders'], 'the watched workflow ran');
+  if (!fired.report.includes('Your watched "desk" workflow (a reminder is due)')) throw new Error('the header names the watch: ' + fired.report);
+  const log = fired.profile.workflowLog!;
+  eq(log[log.length - 1].via, 'watch', 'the receipt says watch');
+  eq(fired.profile.workflows?.[0].lastRun, '2026-07-16', 'lastRun stamped');
+  eq(await runDailyWorkflows(fired.profile, run, '2026-07-16'), null, 'never twice the same day');
+
+  const quiet: Profile = { workflows: [{ name: 'desk', steps: ['list my reminders'], created: 'now', watch: 'a reminder is due' }] };
+  eq(await runDailyWorkflows(quiet, run, '2026-07-16'), null, 'a false watch stays quiet — and keeps checking (no stamp)');
+  eq(ran.splice(0), [], 'nothing ran on false');
+
+  const world: Profile = { workflows: [{ name: 'triage', steps: ['list my reminders'], created: 'now', watch: 'i have new email' }] };
+  const down = stubSources(0, null);
+  eq(await runDailyWorkflows(world, run, '2026-07-16', EMAIL, down.sources), null, 'unreachable stays quiet — never a guess');
+  const unlinked = stubSources(0, 'not-connected');
+  eq(await runDailyWorkflows(world, run, '2026-07-16', EMAIL, unlinked.sources), null, 'not-connected stays quiet');
+  ran.splice(0);
+  const inbox = stubSources(0, 3);
+  const mail = await runDailyWorkflows(world, run, '2026-07-16', EMAIL, inbox.sources);
+  if (!mail) throw new Error('unread mail fires the watch');
+  eq(inbox.calls, ['inbox'], 'the source was fetched lazily, once');
+
+  eq(await runDailyWorkflows(watcher({ paused: true }), run, '2026-07-16'), null, 'a paused watch sleeps');
+});
+
+Deno.test('v50: check my watches reports every watch and fires the true ones', async () => {
+  const { ran, run } = stubRunner();
+  const none = await tryAgent('check my watches', EMAIL, {}, run);
+  if (!none?.reply.includes("Nothing's watching")) throw new Error('no watches is honest: ' + none?.reply);
+
+  const profile: Profile = {
+    reminders: [{ text: 'pray', created: 'now' }],
+    workflows: [
+      { name: 'desk', steps: ['list my reminders'], created: 'now', watch: 'a reminder is due' },
+      { name: 'clear', steps: ['encourage me'], created: 'now', watch: 'no reminders are due' },
+    ],
+  };
+  const checked = await tryAgent('check my watched workflows', EMAIL, profile, run);
+  if (!checked?.reply.includes('Checked 2 watches')) throw new Error('the count heads the reply: ' + checked?.reply);
+  if (!checked?.reply.includes('"desk" fired')) throw new Error('the true watch fired: ' + checked?.reply);
+  if (!checked?.reply.includes('not yet; the condition is false')) throw new Error('the false watch is honest: ' + checked?.reply);
+  eq(ran.splice(0), ['list my reminders'], 'only the true watch ran');
+  const desk = checked?.profile?.workflows?.find((w) => w.name === 'desk');
+  if (!desk?.lastRun) throw new Error('the fired watch is stamped');
+  const log = checked?.profile?.workflowLog!;
+  eq(log[log.length - 1].via, 'watch', 'the receipt says watch');
+
+  const again = await tryAgent('check my watches', EMAIL, checked!.profile!, run);
+  if (!again?.reply.includes('already fired today')) throw new Error('once a day is honest: ' + again?.reply);
+  eq(ran.splice(0), [], 'nothing ran the second time');
+
+  eq(isAgentAsk('run my triage workflow whenever i have new email'), true, 'watch set is an agent ask');
+  eq(isAgentAsk('stop watching my triage workflow'), true, 'watch off is an agent ask');
+  eq(isAgentAsk('check my watches'), true, 'the check is an agent ask');
+  const anon = await tryAgent('check my watches', '', {}, run);
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous checks get the sign-in prompt: ' + anon?.reply);
+});
+
+Deno.test('v50: a watched sender still never sends unasked', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = {
+    reminders: [{ text: 'pray', created: 'now' }],
+    workflows: [{ name: 'mailer', steps: ['send an email to me about the day', 'a verse about peace'], created: 'now' }],
+  };
+  const set = await tryAgent('run my mailer workflow whenever a reminder is due', EMAIL, profile, run);
+  if (!set?.reply.includes('held back when the watch fires')) throw new Error('the set warns about sends: ' + set?.reply);
+  if (!set?.reply.includes("It's true right now")) throw new Error('the live verdict rides back: ' + set?.reply);
+
+  const fired = await runDailyWorkflows(set!.profile!, run, '2026-07-16');
+  if (!fired) throw new Error('the watch fires');
+  eq(ran.splice(0), ['a verse about peace'], 'the send step never executed');
+  if (!fired.report.includes('a scheduled run never sends')) throw new Error('the hold is honest: ' + fired.report);
+});
+
+Deno.test('v50: ordinary conversation still falls through the watch parsers', async () => {
+  const { run } = stubRunner();
+  eq(await tryAgent('whenever i pray i feel better', EMAIL, {}, run), null, 'reflection untouched');
+  eq(await tryAgent('i check my watch all the time', EMAIL, {}, run), null, 'a wristwatch is not a command');
+  eq(await tryAgent('run my errands whenever you can', EMAIL, {}, run), null, 'no workflow word, no parse');
 });

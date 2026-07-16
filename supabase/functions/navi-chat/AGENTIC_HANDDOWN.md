@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-16, at **v48** (the anthology round).
+Last updated: 2026-07-16, at **v50** (the sentinel round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -278,6 +278,16 @@ an optional trailing `hourNow` param on evalCondition (tests pin it, callers
 omit it). ONE parsing rule mattered: weekly-ON demands "every"/"each" — never
 "on <day>", because "run my study workflow on friday" must stay a topic run.
 
+v50 additions: NO new wiring at all — watched workflows ride the EXISTING
+runDailyWorkflows call in the session-start block (the due filter now also
+admits `Workflow.watch`, whose condition is evaluated LAZILY per workflow —
+only when a watch exists, and only its own sources — so calendar schedules
+stay free; runDailyWorkflows can now return null AFTER filtering, when every
+watcher stayed quiet). The set/off/check commands are tryAgent branches in a
+new v50 cluster right after the dailySet block. ONE behavioural nuance: a
+false watch does NOT stamp lastRun, so it keeps checking on every session
+start of the same day until it fires — the stamp is the fire, not the check.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -288,7 +298,42 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v47) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+### agent.ts — workflows & missions (v25→v50) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+
+**v50 — the sentinel round** (all agent.ts + two memory.ts type touches:
+Workflow += `watch`, WorkflowRun.via += 'watch' — built under Dian's renewed
+"keep developing NAVI LLM / focus on agentic features" direction, 2026-07-16;
+the workflow engine learns to act on the WORLD, not just the clock, the
+phrase, or the command):
+- **Watched workflows**: "run my triage workflow whenever i have new email" /
+  "whenever a reminder is due, run my desk workflow" makes the schedule a
+  CONDITION — the closed evalCondition vocabulary (all of it: profile, world,
+  calendar, clock, device), VALIDATED AT SET TIME so no watch is ever promised
+  that can't be checked (unknown vocabulary teaches KNOWN_CONDITIONS; the live
+  verdict rides back in the confirm reply as a bonus). THE PARSING LAW: ON
+  demands the word "whenever" — a bare "when" belongs to triggers ("when i
+  say …") and conditional steps, and "run my X workflow on friday" must stay
+  a topic run. Fires from the session-start channel ONLY on a clean true
+  (false and can't-check verdicts stay silent — a passive channel never
+  guesses and never nags), at most once a day via the shared lastRun stamp;
+  an unfired watch keeps checking on later session starts the same day.
+  Exclusive with daily/day/monthDay (setting either side clears the other);
+  "stop watching my X workflow" (or "stop running … whenever …") lifts it;
+  pause sleeps it; slotted workflows refuse (no topic to fill); the step law
+  refuses it inside workflow steps automatically (carries the word
+  "workflow", isn't the chain form). Watch-fired runs are SCHEDULED runs:
+  sends held back with the honest v42 note, receipts say via 'watch', the
+  report header reads `— Your watched "X" workflow (<condition>) (N of M
+  steps ran) —`.
+- **"check my watches"** (also "check my watched workflows"): the ACTIVE half
+  of the feature — reports every watch honestly (paused / already fired
+  today / false / unreachable / not-connected / no-longer-recognised) and
+  fires the clean-true ones right now, stamping lastRun and receipts exactly
+  like the passive channel. Nothing watched answers with the how-to.
+- Read-backs everywhere: list ("— watching: whenever …"), show ("Watching:
+  runs itself whenever … — checked when you start a chat, fired at most once
+  a day"), pause names the sleeping watch, HELP_TEXT teaches the family,
+  isAgentAsk covers set/off/check for the anonymous sign-in prompt.
 
 **v49 — the elevation round** (compose.ts + understand.ts + brief.ts — built
 under Dian's explicit "Enhance and Elevate the NAVI LLM" direction,
@@ -1224,6 +1269,21 @@ direct Share posting (per-platform OAuth apps). The share bridge (share.ts)
 remains ungated and unbuilt. Otherwise: ask Dian for the next direction
 before inventing.
 
+Post-v50 status: Dian's renewed "keep developing NAVI LLM / focus on agentic
+features" (2026-07-16) opened the workflow ENGINE again — the sentinel round
+completed the trigger family: manual (v25), phrase (v25), calendar
+(v26/v38/v41), and now the WORLD (watched workflows, v50). The schedule
+family is closed: a workflow runs on command, on a phrase, on a calendar, or
+on a condition — one schedule at a time, all honest, all send-law-safe.
+Natural continuations if the direction returns: watch receipts in the
+briefing (brief.ts already reads workflows — a "watching: N" line is sync
+and free), a watch on MISSIONS ("nudge me whenever my mission is idle" —
+though missionNudge half-covers it), or the share bridge (share.ts — still
+ungated and unbuilt, reads the navi-share storage JSON). Still gated: #19
+reply threading + the navi_choices table drop (both the management token),
+direct Share posting (per-platform OAuth apps). Otherwise: ask Dian for the
+next direction before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1258,7 +1318,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v47 | `073a288` | chronicle round: per-step run receipts (WorkflowRun.topic/steps + "what did my last run do"), the re-run form ("run my X workflow again" replays the receipt topic), mission deadlines (set/show/clear + status countdown + session-start nudge + due-soon/overdue conditions) |
 | v48 | (see git) | anthology round: assembled songs (verse/chorus/verse-2/bridge banks, 256 songs), new kinds congrats/comfort/rap, multi-piece asks on caption/quote/affirmation (numbered, clamped honestly), {sender}-signed letters, conversational CRISIS_RX guard on parseCompose |
 | v49 | (see git) | elevation round: assembled poems (opening/heart/closing stanza banks, 64 poems, stanzas rhyme as wholes), funny/formal tones on the short kinds (toned banks + honest note elsewhere), deadline-aware briefing (deadlineCountdown shared with brief.ts), counted summaries ("summarize in N sentences", two–five) |
+| v50 | (see git) | sentinel round: watched workflows ("run my X workflow whenever <condition>" — the closed evalCondition vocabulary as a schedule, validated at set time, session-start fires on clean true only, once a day, exclusive with calendar schedules, sends held, via 'watch') + "check my watches" (the active check-and-fire) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → **281** (v49). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → **287** (v50). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
