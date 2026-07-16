@@ -1031,7 +1031,9 @@ export function parseMissionDeadline(message: string): string | null {
 
 // v47: "due tomorrow" / "due 2026-07-20 — 4 days left" / "2 days past its
 // deadline" — one honest countdown everywhere a deadline is spoken.
-function deadlineCountdown(deadline: string, todayISO: string): string {
+// Exported for brief.ts (v49) — the briefing's mission line reuses the exact
+// countdown wording "mission status" speaks.
+export function deadlineCountdown(deadline: string, todayISO: string): string {
   const diff = Math.round((Date.parse(deadline) - Date.parse(todayISO)) / 86400000);
   if (!Number.isFinite(diff)) return `due ${deadline}`;
   if (diff === 0) return 'due TODAY';

@@ -84,11 +84,28 @@ const KIND_RX: Array<[RegExp, Kind]> = [
 const COMPOSE_CMD =
   /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+|can you\s+|could you\s+|will you\s+)?(?:write|compose|make|create|give)\s+(?:me\s+|us\s+)?(?:a\s+|an\s+|some\s+)?(?:short\s+|quick\s+|little\s+|powerful\s+)?/i;
 
+// v49: tones — a closed vocabulary of two, carried only where per-tone banks
+// exist (the short kinds). Everything else answers honestly with its regular
+// voice rather than faking a register it doesn't have.
+export type Tone = 'funny' | 'formal';
+
+const TONE_WORDS: Record<string, Tone> = {
+  funny: 'funny', humorous: 'funny', witty: 'funny', playful: 'funny',
+  formal: 'formal', professional: 'formal', polished: 'formal', serious: 'formal',
+};
+
+function takeTone(rest: string): { tone?: Tone; rest: string } {
+  const m = rest.match(/^(\w+)\s+(.+)$/);
+  const tone = m ? TONE_WORDS[m[1]] : undefined;
+  return tone ? { tone, rest: m![2] } : { rest };
+}
+
 export interface ComposeAsk {
   kind: Kind;
   topic: string;      // "strength", "my new song" — '' when none given
   recipient: string;  // "my brother", "Thandi" — '' when none given
   count?: number;     // v48: "3 captions" — ≥2 when a count was asked
+  tone?: Tone;        // v49: "funny caption", "formal quote"
 }
 
 // Topic: "about X" / "on X"; recipient: "for X" / "to X". Articles are kept —
@@ -123,7 +140,8 @@ export function parseCompose(message: string): ComposeAsk | null {
   const rest = m.replace(COMPOSE_CMD, '').toLowerCase().replace(/[.!?]+\s*$/, '').trim();
   if (!rest || rest.length > 140) return null;
 
-  const { count, rest: body } = takeCount(rest);
+  const { count, rest: afterCount } = takeCount(rest);
+  const { tone, rest: body } = takeTone(afterCount);
   let kind: Kind | null = null;
   for (const [rx, k] of KIND_RX) {
     if (rx.test(body)) { kind = k; break; }
@@ -135,7 +153,7 @@ export function parseCompose(message: string): ComposeAsk | null {
 
   const { topic: t, recipient: r } = extractSlots(body);
   if (t.split(/\s+/).length > 6 || r.split(/\s+/).length > 5) return null;
-  return { kind, topic: t, recipient: r, ...(count ? { count } : {}) };
+  return { kind, topic: t, recipient: r, ...(count ? { count } : {}), ...(tone ? { tone } : {}) };
 }
 
 // ── v40: the /write slash command ─────────────────────────────────────────────
@@ -162,7 +180,7 @@ export const WRITE_USAGE =
   `• /write a rap about the grind\n` +
   `• /write 3 captions about the gym\n` +
   `• /write a letter to my future self\n` +
-  `I can write stories, poems, songs, raps, prayers, letters, speeches, quotes, affirmations, captions, congratulations, condolences, apologies, thank-yous, and motivational pieces — and for captions, quotes, and affirmations you can ask for up to six at once.`;
+  `I can write stories, poems, songs, raps, prayers, letters, speeches, quotes, affirmations, captions, congratulations, condolences, apologies, thank-yous, and motivational pieces — and for captions, quotes, and affirmations you can ask for up to six at once, or add funny or formal (like /write a formal quote about discipline).`;
 
 // Asking ABOUT the command must teach it, deterministically — the fuzzy node
 // layer loses these asks to older writing/creativity nodes, so the anchored
@@ -203,7 +221,8 @@ export function parseWriteSlash(message: string): ComposeAsk | 'malformed' | 'cr
     .trim();
   if (!rest) return 'malformed';
 
-  const { count, rest: body } = takeCount(rest);
+  const { count, rest: afterCount } = takeCount(rest);
+  const { tone, rest: body } = takeTone(afterCount);
   let kind: Kind | null = null;
   for (const [rx, k] of KIND_RX) {
     if (rx.test(body)) { kind = k; break; }
@@ -213,7 +232,9 @@ export function parseWriteSlash(message: string): ComposeAsk | 'malformed' | 'cr
   if (!kind) {
     // No kind named: "to <someone>" reads as a letter; anything else is a
     // story prompt and the whole prompt is its topic (a leading number stays
-    // part of the topic — "/write 3 dragons" is a story about 3 dragons).
+    // part of the topic — "/write 3 dragons" is a story about 3 dragons;
+    // a tone word with no kind is topic too — "/write funny things" is a
+    // story about funny things).
     if (!topic && recipient) {
       kind = 'letter';
     } else {
@@ -223,7 +244,7 @@ export function parseWriteSlash(message: string): ComposeAsk | 'malformed' | 'cr
     }
   }
   if (recipient.split(/\s+/).length > 5) recipient = '';
-  return { kind, topic: clip(topic), recipient, ...(count ? { count } : {}) };
+  return { kind, topic: clip(topic), recipient, ...(count ? { count } : {}), ...(tone ? { tone } : {}) };
 }
 
 function clip(topic: string): string {
@@ -258,13 +279,30 @@ const CAPTIONS = [
   `Started with a prayer and a plan. {Topic} is the receipt.`,
 ];
 
-const POEMS = [
-  `They said wait, but the fire said now,\nso I carried {topic} like a vow.\nThrough the doubt, through the late-night ache,\nI kept a promise I refused to break.\nWhat was heavy became my proof —\nevery scar on me is truth.`,
-  `{Topic} sat quiet in my chest,\na seed that never needed rest.\nI watered it with early days,\nwith stubborn faith and unseen praise.\nNow watch it break the ground and rise —\nwhat grows in secret fills the skies.`,
-  `Morning found me building still,\n{topic} bending to my will.\nNot by force, but by return —\nshow up, fall down, stand up, learn.\nThe road is long, my step is sure;\nwhat's built on purpose will endure.`,
-  `There is a door that has your name,\nand {topic} is the key.\nIt never asked that you be fearless —\nonly that you turn it, quietly.\nSo turn it now, and let the light\nspill out across the years:\nthe rooms you feared were empty\nwere waiting for you here.`,
-  `Some plant in spring and boast in June;\nI planted in the dark.\n{Topic} was my winter seed,\nmy stubborn, buried spark.\nLet others count the blossoms —\nI learned to count the rain,\nand everything I lost to it\ncame back as gold again.`,
-  `Small hours, small steps, a small flame kept alive —\nthis is how {topic} learns to survive.\nNot in the roar of one great day,\nbut in the thousand ordinary ways\na heart returns to what it loves\nand quietly obeys.`,
+// v49: poems are ASSEMBLED like stories and songs — an opening stanza, a
+// heart, and a closing picked independently by the seed (4 × 4 × 4 = 64
+// poems). Stanzas rhyme AS WHOLES — each is a self-contained rhyming unit,
+// first person, with {topic} woven in, so any combination reads as one poem.
+
+const POEM_OPENINGS = [
+  `They said wait, but the fire said now,\nso I carried {topic} like a vow.\nThrough the doubt, through the late-night ache,\nI kept a promise I refused to break.`,
+  `{Topic} sat quiet in my chest,\na seed that never needed rest.\nI watered it with early days,\nwith stubborn faith and unseen praise.`,
+  `Morning found me building still,\n{topic} bending to my will —\nnot by force, but by return:\nshow up, fall down, stand up, learn.`,
+  `There is a door that bears my name,\nand {topic} is the key.\nIt never asked that I be fearless —\nonly that I turn it, quietly.`,
+];
+
+const POEM_HEARTS = [
+  `Some plant in spring and boast in June;\nI planted in the dark.\n{Topic} was my winter seed,\nmy stubborn, buried spark.`,
+  `The road taxed more than it explained —\nit took my sleep, my ease;\nbut every mile {topic} claimed\ngave something back to me.`,
+  `I learned to count the quiet wins\nno passer-by could see:\neach small return to {topic}\nwas laying brick in me.`,
+  `There were nights the flame burned low\nand doubt pulled up a chair;\nI gave {topic} one more hour\nand morning found me there.`,
+];
+
+const POEM_CLOSINGS = [
+  `What was heavy became my proof —\nevery scar on me is truth.\n{Topic} paid me back in gold\nfor every seed the winter stole.`,
+  `So let the harvest speak for me\nin rooms I prayed to see:\n{topic} built on purpose stands,\nand it was built by these two hands.`,
+  `The road is long, my step is sure;\nwhat's built on purpose will endure.\nI walk with {topic} into light —\nthe dawn was worth the night.`,
+  `And if they ask me how it's done,\nI'll say: begin, and don't outrun\nthe slow and sacred daily part —\n{topic} first, and then the heart.`,
 ];
 
 const MOTIVATIONS = [
@@ -404,7 +442,7 @@ const BANKS: Record<Kind, string[]> = {
   prayer: PRAYERS,
   affirmation: AFFIRMATIONS,
   caption: CAPTIONS,
-  poem: POEMS,
+  poem: [],  // v49: assembled from the three poem stanza banks, never looked up here
   motivation: MOTIVATIONS,
   apology: APOLOGIES,
   thanks: THANKS,
@@ -483,6 +521,52 @@ const OPENERS: Record<Kind, string> = {
 // is composed one at a time (and says so when a count was asked).
 const MULTI_KINDS = new Set<Kind>(['caption', 'quote', 'affirmation']);
 
+// v49: per-tone banks for the short kinds — the only kinds small enough to
+// carry a genuine second register without the banks bloating. Everything
+// else answers in NAVI's own voice with an honest note.
+const TONED: Record<Tone, Partial<Record<Kind, string[]>>> = {
+  funny: {
+    caption: [
+      `Day 1 of {topic}. The couch has filed a missing persons report.`,
+      `Me and {topic}: a love story nobody asked for and everybody's getting.`,
+      `Warning: {topic} in progress. Side effects include glow, gloating, and unsolicited advice.`,
+      `They said follow your dreams, so I followed {topic}. It walks fast.`,
+    ],
+    quote: [
+      `"{Topic} is 10% inspiration and 90% pretending the snooze button doesn't exist."`,
+      `"They say {topic} takes time. So does my kettle, and I still trust the tea."`,
+      `"The secret to {topic}? Start before your excuses finish their coffee."`,
+      `"{Topic} doesn't build itself — I checked, twice, from the couch."`,
+    ],
+    affirmation: [
+      `I am powerful, I am focused, and {topic} is lucky to have me. The feeling is occasionally mutual.`,
+      `I attract success, good coffee, and progress on {topic} — in whichever order the day allows.`,
+      `I do not chase, I attract — except {topic}, which I am absolutely chasing, professionally.`,
+      `I am becoming the kind of person {topic} writes home about: slightly tired, entirely unstoppable.`,
+    ],
+  },
+  formal: {
+    caption: [
+      `A milestone worth marking: {topic}. Grateful for the journey and focused on what lies ahead.`,
+      `Quiet work, steady progress — {topic} continues. Thank you to everyone walking it with me.`,
+      `Honoured to share this chapter: {topic}. The best of it is still being built.`,
+      `{Topic} — a commitment, not a moment. Onwards.`,
+    ],
+    quote: [
+      `"Discipline is the bridge between intention and {topic} — cross it daily."`,
+      `"{Topic} is not achieved by force, but by the quiet arithmetic of consistent days."`,
+      `"Those who honour the process are, in time, honoured by {topic} itself."`,
+      `"Excellence in {topic} is never an accident; it is the residue of deliberate practice."`,
+    ],
+    affirmation: [
+      `I approach {topic} with clarity, diligence, and composure. Each measured step compounds in my favour.`,
+      `I am equal to the demands of {topic}. I prepare thoroughly, act decisively, and review honestly.`,
+      `My conduct around {topic} reflects my standards: consistent effort, patient execution, unshaken resolve.`,
+      `I commit to {topic} with professional discipline — present today, prepared tomorrow, accountable always.`,
+    ],
+  },
+};
+
 const KIND_PLURAL: Record<Kind, string> = {
   prayer: 'prayers', affirmation: 'affirmations', caption: 'captions',
   poem: 'poems', motivation: 'motivational pieces', apology: 'apologies',
@@ -494,6 +578,12 @@ const KIND_PLURAL: Record<Kind, string> = {
 
 /** Assemble/pick ONE piece for the ask (no opener). */
 function renderOne(kind: Kind, topic: string, recipient: string, sender: string, seed: number): string {
+  if (kind === 'poem') {
+    const o = POEM_OPENINGS[seed % POEM_OPENINGS.length];
+    const h = POEM_HEARTS[Math.floor(seed / 4) % POEM_HEARTS.length];
+    const c = POEM_CLOSINGS[Math.floor(seed / 16) % POEM_CLOSINGS.length];
+    return [o, h, c].map(t => fill(t, topic, recipient, sender)).join('\n\n');
+  }
   if (kind === 'story') {
     const o = STORY_OPENINGS[seed % STORY_OPENINGS.length];
     const m = STORY_MIDDLES[Math.floor(seed / 4) % STORY_MIDDLES.length];
@@ -524,19 +614,32 @@ function renderCompose(ask: ComposeAsk, profile: ComposeProfile, seed: number): 
   const recipient = ask.recipient || profile.name || 'you';
   const sender = profile.name || 'me';
 
+  // v49: tones live where per-tone banks exist — the short kinds. Anywhere
+  // else the tone is acknowledged honestly and NAVI keeps its own voice.
+  const tonedBank = ask.tone ? TONED[ask.tone][ask.kind] : undefined;
+  if (ask.tone && !tonedBank) {
+    return `Funny and formal I keep for captions, quotes and affirmations (for now) — here's one in my own voice:\n\n` +
+      renderOne(ask.kind, topic, recipient, sender, seed);
+  }
+
   if (ask.count && ask.count >= 2) {
     if (MULTI_KINDS.has(ask.kind)) {
-      const bank = BANKS[ask.kind];
+      const bank = tonedBank ?? BANKS[ask.kind];
+      const label = ask.tone ? `${ask.tone} ${KIND_PLURAL[ask.kind]}` : KIND_PLURAL[ask.kind];
       const n = Math.min(ask.count, bank.length);
       const items = Array.from({ length: n }, (_, i) =>
         `${i + 1}) ${fill(bank[(seed + i) % bank.length], topic, recipient, sender)}`);
-      let out = `Here are ${n} ${KIND_PLURAL[ask.kind]} for you:\n\n${items.join('\n\n')}`;
-      if (n < ask.count) out += `\n\n(That's my whole shelf of ${KIND_PLURAL[ask.kind]} — all ${n} of them.)`;
+      let out = `Here are ${n} ${label} for you:\n\n${items.join('\n\n')}`;
+      if (n < ask.count) out += `\n\n(That's my whole shelf of ${label} — all ${n} of them.)`;
       return out;
     }
     // The long forms come one at a time — compose one and say so honestly.
     return `I do ${KIND_PLURAL[ask.kind]} one at a time — here's one:\n\n` +
       renderOne(ask.kind, topic, recipient, sender, seed);
+  }
+
+  if (tonedBank) {
+    return `${OPENERS[ask.kind]}${fill(tonedBank[seed % tonedBank.length], topic, recipient, sender)}`;
   }
 
   return `${OPENERS[ask.kind]}${renderOne(ask.kind, topic, recipient, sender, seed)}`;

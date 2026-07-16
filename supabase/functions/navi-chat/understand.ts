@@ -108,6 +108,14 @@ const SUMMARIZE_CMD =
 // knowledge/web path.
 const ONE_SENTENCE_CMD =
   /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+|can you\s+|could you\s+)?(?:summari[sz]e|sum up|boil down)(?:\s+this)?\s+(?:in|to|into) (?:one|a single) sentence\s*[:\-–—,]?\s*/i;
+// v49: the counted sibling — "summarize in three sentences: <text>". Closed
+// two–five vocabulary (one has its own shape above; more than five is just a
+// plain summary anyway).
+const N_SENTENCES_CMD =
+  /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+|can you\s+|could you\s+)?(?:summari[sz]e|sum up|boil down)(?:\s+this)?\s+(?:in|to|into) (two|three|four|five|[2-5]) sentences\s*[:\-–—,]?\s*/i;
+const N_SENTENCE_WORDS: Record<string, number> = {
+  two: 2, '2': 2, three: 3, '3': 3, four: 4, '4': 4, five: 5, '5': 5,
+};
 const KEY_POINTS_CMD =
   /^(?:hey\s+|hi\s+)?(?:navi[,:\s]+)?(?:please\s+|can you\s+|could you\s+)?(?:(?:give me\s+|list\s+)?(?:the\s+)?key points(?:\s+(?:of|from|in))?(?:\s+this)?|bullet[\s-]?point(?:s)?(?:\s+(?:of|from|in))?(?:\s+this)?)\s*[:\-–—,]?\s*/i;
 
@@ -126,6 +134,23 @@ export function trySummarize(message: string): string {
   if (ONE_SENTENCE_CMD.test(m)) {
     const text = m.replace(ONE_SENTENCE_CMD, '').trim();
     return text.length >= MIN_PASTED_CHARS ? applyRewrite(text, 'one-sentence') : '';
+  }
+  const nAsk = m.match(N_SENTENCES_CMD);
+  if (nAsk) {
+    const text = m.replace(N_SENTENCES_CMD, '').trim();
+    if (text.length < MIN_PASTED_CHARS) return '';
+    const n = N_SENTENCE_WORDS[nAsk[1].toLowerCase()];
+    const sents = splitSentences(text.replace(/\s+/g, ' ').trim());
+    if (sents.length === 0) return '';
+    const picked = topSentenceIndexes(sents, n).map(i => sents[i]);
+    const used: string[] = [];
+    let len = 0;
+    for (const s of picked) {
+      if (used.length && (len + 1 + s.length) > 200 * n) break;
+      used.push(s);
+      len += (used.length > 1 ? 1 : 0) + s.length;
+    }
+    return `Here's the heart of it in ${used.length} sentence${used.length === 1 ? '' : 's'}: ${used.join(' ')}`;
   }
   if (KEY_POINTS_CMD.test(m)) {
     const text = m.replace(KEY_POINTS_CMD, '').trim();

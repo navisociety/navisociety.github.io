@@ -18,6 +18,7 @@ import { streakLine } from './habit.ts';
 import { todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
 import { inboxUnreadCount } from './mail.ts';
+import { deadlineCountdown } from './agent.ts';
 
 // v39 (roadmap #24): the briefing's one look at the world — board count and
 // unread count, injected so tests stub them (v35 seam pattern). This is the
@@ -96,11 +97,14 @@ export function buildBriefing(profile: Profile, today = todayISO(), world?: stri
   const name = profile.name ? `, ${profile.name}` : '';
   lines.push(`Your briefing${name} — here's where everything stands.`);
 
-  // Mission — the one thing being executed right now leads.
+  // Mission — the one thing being executed right now leads. v49: a committed
+  // deadline (v47) rides along as a countdown, so the briefing carries the
+  // WHEN next to the WHAT.
   if (profile.mission) {
     const m = profile.mission;
+    const when = m.deadline ? ` Deadline: ${deadlineCountdown(m.deadline, today)}.` : '';
     lines.push(
-      `MISSION — "${m.goal}": ${m.done} of ${m.steps.length} steps done. In front of you now (step ${m.done + 1}):\n${m.steps[m.done]}`,
+      `MISSION — "${m.goal}": ${m.done} of ${m.steps.length} steps done.${when} In front of you now (step ${m.done + 1}):\n${m.steps[m.done]}`,
     );
   } else {
     lines.push('MISSION — none active. When you\'re ready to build something, say "start a mission to…" and I\'ll break it down.');

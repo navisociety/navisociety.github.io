@@ -891,6 +891,72 @@ Deno.test('v48: letters sign with the stored name; crisis guards the conversatio
   eq(tryCompose('write me a story about how i want to die'), '', 'conversational crisis steps aside too');
 });
 
+// ── v49: the elevation round — assembled poems, tones, deadline briefing ─────
+
+Deno.test('v49: poems are assembled — three stanzas, topic woven, variants rotate', () => {
+  const a = tryCompose('write me a poem about hope');
+  if (!a.startsWith("Here's your poem:")) throw new Error('poem opener missing: ' + a.slice(0, 40));
+  eq(a.replace("Here's your poem:\n\n", '').split('\n\n').length, 3, 'three stanzas');
+  if (!a.toLowerCase().includes('hope')) throw new Error('topic woven: ' + a);
+  if (a.includes('{')) throw new Error('no unfilled slots: ' + a);
+  const b = tryCompose('write me a poem about the long road home');
+  if (a === b) throw new Error('different asks must rotate the assembly');
+  if (!b.includes('the long road home')) throw new Error('topic woven in b: ' + b);
+});
+
+Deno.test('v49: tones parse on both paths — closed vocabulary, synonyms mapped', () => {
+  const ask = parseCompose('write me a funny caption about the gym');
+  eq(ask?.kind, 'caption', 'kind survives the tone');
+  eq(ask?.tone, 'funny', 'funny parsed');
+  eq(ask?.topic, 'the gym', 'topic survives the tone');
+  const slash = parseWriteSlash('/write 3 formal quotes about discipline');
+  if (!slash || slash === 'malformed' || slash === 'crisis') throw new Error('slash tone ask must parse');
+  eq(slash.count, 3, 'count rides with tone');
+  eq(slash.tone, 'formal', 'formal parsed');
+  eq(slash.kind, 'quote', 'kind found after count + tone');
+  eq(parseCompose('write me a professional affirmation about my career')?.tone, 'formal', 'professional maps to formal');
+  eq(parseCompose('write me a caption about the gym')?.tone, undefined, 'no tone stays untoned');
+});
+
+Deno.test('v49: toned rendering — banks, counted batches, honest clamp and honest note', () => {
+  const funny = tryCompose('write me a funny caption about the gym');
+  if (!funny.includes('the gym')) throw new Error('toned caption carries the topic: ' + funny);
+  const plain = tryCompose('write me a caption about the gym');
+  if (funny === plain) throw new Error('the tone must change the bank');
+  const three = tryCompose('/write 3 formal quotes about discipline');
+  if (!three.startsWith('Here are 3 formal quotes')) throw new Error('counted toned batch names the tone: ' + three.slice(0, 60));
+  if (!three.includes('1) ') || !three.includes('3) ')) throw new Error('batch is numbered: ' + three);
+  const clamp = tryCompose('write me six funny captions about the gym');
+  if (!clamp.startsWith('Here are 4 funny captions')) throw new Error('toned bank clamps to its 4: ' + clamp.slice(0, 60));
+  if (!clamp.includes('whole shelf')) throw new Error('clamp is named honestly: ' + clamp);
+  const note = tryCompose('write me a funny story about the gym');
+  if (!note.startsWith('Funny and formal I keep for captions')) throw new Error('tone on a long kind gets the honest note: ' + note.slice(0, 60));
+  if (!note.includes('the gym')) throw new Error('the piece still composes: ' + note);
+  eq(tryCompose('that was a funny caption'), '', 'talk about a caption is not a command');
+  eq(tryCompose('i wrote a formal letter yesterday'), '', 'past tense stays conversation');
+});
+
+Deno.test('v49: the briefing carries the mission deadline countdown', () => {
+  const today = '2026-07-16';
+  const soon = buildBriefing({ mission: { goal: 'finish the ep', steps: ['a', 'b'], done: 0, created: 'now', deadline: '2026-07-18' } }, today);
+  if (!soon.includes('Deadline: due 2026-07-18 — 2 days left')) throw new Error('countdown missing:\n' + soon);
+  const overdue = buildBriefing({ mission: { goal: 'finish the ep', steps: ['a'], done: 0, created: 'now', deadline: '2026-07-14' } }, today);
+  if (!overdue.includes('2 days past its 2026-07-14 deadline')) throw new Error('overdue named:\n' + overdue);
+  const none = buildBriefing({ mission: { goal: 'finish the ep', steps: ['a'], done: 0, created: 'now' } }, today);
+  if (none.includes('Deadline:')) throw new Error('no deadline, no deadline line:\n' + none);
+});
+
+Deno.test('v49: summarize in N sentences — counted shape, honest count, floor holds', () => {
+  const two = trySummarize(`summarize in two sentences: ${PASTED}`);
+  const m2 = two.match(/^Here's the heart of it in (\d) sentences?: /);
+  if (!m2 || Number(m2[1]) > 2) throw new Error('two-sentence shape failed: ' + two);
+  const digits = trySummarize(`sum up in 3 sentences: ${PASTED}`);
+  if (!digits.startsWith("Here's the heart of it in ")) throw new Error('digit form failed: ' + digits);
+  eq(trySummarize('summarize in two sentences: too short'), '', 'a short paste is not a text');
+  const nine = trySummarize(`summarize in nine sentences: ${PASTED}`);
+  if (!nine.startsWith("Here's the heart of it:")) throw new Error('unknown counts fall back to the plain summary: ' + nine.slice(0, 60));
+});
+
 // ── v21: Goal Planner ────────────────────────────────────────────────────────
 
 Deno.test('parsePlanGoal extracts explicit goals only', () => {

@@ -288,7 +288,40 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v47) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v48) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+### agent.ts — workflows & missions (v25→v47) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+
+**v49 — the elevation round** (compose.ts + understand.ts + brief.ts — built
+under Dian's explicit "Enhance and Elevate the NAVI LLM" direction,
+2026-07-16; the three seams the v48 hand-down named, all deterministic,
+zero-I/O, zero external LLM):
+- **Assembled poems**: poems now build like stories and songs — opening /
+  heart / closing stanza banks (4 × 4 × 4 = 64 poems). THE STANZA LAW: each
+  stanza is a self-contained rhyming unit (v48's warning "stanzas rhyme as
+  wholes — don't split naively" honoured by construction), first person,
+  {topic} woven into every stanza so any assembly reads as one poem.
+  BANKS.poem is now [] like story and song.
+- **Tones** (closed vocabulary of TWO): funny (also humorous/witty/playful)
+  and formal (also professional/polished/serious), parsed on BOTH paths
+  (parseCompose and parseWriteSlash — takeTone runs after takeCount, so
+  "3 funny captions" reads naturally). Per-tone banks exist ONLY for the
+  short kinds (caption/quote/affirmation — TONED, 4 variants each, 24
+  templates total); counted batches use the toned bank and name the tone
+  ("Here are 3 formal quotes…"), clamping honestly to its 4. A tone on any
+  other kind answers with the honest note ("Funny and formal I keep for
+  captions, quotes and affirmations (for now) — here's one in my own
+  voice:") — never a faked register. A tone word with no kind stays a story
+  topic ("/write funny things"). WRITE_USAGE + both /write help nodes name
+  the feature.
+- **Deadline-aware briefing** (the rung v47 left named): the briefing's
+  MISSION line carries the v47 deadline as a countdown — agent.ts's
+  deadlineCountdown is now exported and brief.ts reuses it, so "brief me"
+  and "mission status" speak the WHEN in the same words. No deadline, no
+  line.
+- **Counted summaries** (understand.ts): "summarize in three sentences:
+  <text>" / "sum up in 2 sentences: <text>" — the counted sibling of v43's
+  one-sentence shape, closed two–five vocabulary (digits or words), same
+  160-char pasted-text floor, honest about how many sentences actually came
+  back. Unknown counts ("in nine sentences") fall back to the plain summary.
 
 **v48 — the anthology round** (all compose.ts + the help-node refresh — built
 under Dian's explicit "enhance NAVI creative writing / the /write feature"
@@ -1179,6 +1212,18 @@ sign-in gate) applies unchanged; bare/malformed/help asks are TAUGHT
 guard (an "and" inside a goal is goal); help nodes added to index.ts NODES
 + the navi-model.ts mirror. Tests 273 → 276.
 
+Post-v49 status: Dian's "Enhance and Elevate the NAVI LLM" (2026-07-16)
+consumed the three seams the v48 hand-down named — poem assembly, tone
+banks, and the deadline-aware briefing — plus the counted-summary shape.
+Tests 276 → 281. Compose seams left if the direction returns: per-user
+variant memory (tryCompose would have to return a profile — a try* contract
+change, weigh it), a third tone (only with real banks), assembled prayers
+or raps (the two biggest remaining single-bank kinds). Still gated: #19
+reply threading + the navi_choices table drop (both the management token),
+direct Share posting (per-platform OAuth apps). The share bridge (share.ts)
+remains ungated and unbuilt. Otherwise: ask Dian for the next direction
+before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1212,7 +1257,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v46 | `f574f04` | orchestration round: nested workflow steps (run my X workflow, depth 1, send-law-safe), "otherwise:" else-steps (clean-false only), pause/resume with optional wake date |
 | v47 | `073a288` | chronicle round: per-step run receipts (WorkflowRun.topic/steps + "what did my last run do"), the re-run form ("run my X workflow again" replays the receipt topic), mission deadlines (set/show/clear + status countdown + session-start nudge + due-soon/overdue conditions) |
 | v48 | (see git) | anthology round: assembled songs (verse/chorus/verse-2/bridge banks, 256 songs), new kinds congrats/comfort/rap, multi-piece asks on caption/quote/affirmation (numbered, clamped honestly), {sender}-signed letters, conversational CRISIS_RX guard on parseCompose |
+| v49 | (see git) | elevation round: assembled poems (opening/heart/closing stanza banks, 64 poems, stanzas rhyme as wholes), funny/formal tones on the short kinds (toned banks + honest note elsewhere), deadline-aware briefing (deadlineCountdown shared with brief.ts), counted summaries ("summarize in N sentences", two–five) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → **276** (the 2026-07-16 /vision slash round). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → **281** (v49). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
