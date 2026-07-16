@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-15, at **v45** (the almanac round).
+Last updated: 2026-07-16, at **v46** (the orchestration round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -192,6 +192,27 @@ recurring cadence mirrors the workflow schedule laws EXACTLY (weekly needs
 "every"/"each", monthly is 1-28 with an honest refusal, bare "every month"
 means the 1st and says so); no bare "daily" ("the daily standup" is a topic).
 
+v46 additions: no new pipeline position — everything lives in agent.ts (plus
+two memory.ts type touches: Workflow.paused, WorkflowRun.via += 'nested').
+THE STEP LAW CHANGED: the creation meta rule now ALLOWS the exact form
+"run my <name> workflow [on <topic>]" as a step (stepProblem/bodyOf), so one
+workflow can chain another — depth 1, enforced at run time (a nested run may
+not nest again), self-reference refused at creation AND at run. THE SEND LAW
+GREW EYES: sendStepsOf(wf, all) expands nested references one level, so a
+workflow that chains into a sending workflow is offered/held exactly like one
+that sends itself — every call site passes the live workflows list. A nested
+run stamps its own receipt (via 'nested') and threads profile changes back.
+"otherwise: <step>" is the else-branch of the conditional step immediately
+before it — fires ONLY on a clean false (can't-check verdicts quiet BOTH
+branches: an else on a guess is a guess), orphans teach; runWorkflow and
+previewWorkflow both carry the same prevCond state machine. Pause/resume:
+Workflow.paused (true | wake-date ISO string, isPaused() computes — expired
+pauses just stop holding, no cleanup pass); ALL FOUR doors respect it
+(manual runs, both trigger forms, the v42 confirmed re-run, and the
+runDailyWorkflows due filter — schedules skip silently, spoken asks answer
+honestly pointing at resume). agent.ts now imports remind.ts parseWhen for
+"pause … until friday" (no cycle: remind.ts only imports memory/skills).
+
 v45 additions: ONE new pipeline position + ONE new session-start position.
 tryDates (dates.ts, NEW — the special-dates book) sits right after tryEscalate
 in BOTH the main path and answerIntent — BEFORE the forget layer on purpose,
@@ -241,7 +262,29 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v45) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+### agent.ts — workflows & missions (v25→v46) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+
+**v46 — the orchestration round** (all agent.ts + two memory.ts types — the
+workflow line learns flow control, self-control, and composition; built under
+Dian's explicit "focus on agentic features" direction, all sync and free):
+- **Nested workflows** (composition): a step may be exactly "run my <name>
+  workflow [on <topic>]" — the whole saved routine runs in place, ONE level
+  deep. "run my study workflow on *" passes the outer topic through. Depth,
+  self-reference, a vanished inner, a paused inner, and an unfilled slot are
+  all skipped honestly mid-run; creation refuses self-reference up front.
+  Both runs leave receipts (the inner's via is 'nested'). THE SEND LAW HOLDS:
+  the v42 gate expands nested references, so chaining into a sender is
+  offered/held exactly like sending yourself.
+- **"otherwise:" steps** (flow control): the else-branch of the conditional
+  step right before it — fires only on a CLEAN false; unreachable /
+  not-connected / unknown-vocabulary verdicts quiet both branches (never act
+  on a guess); an orphaned otherwise teaches. Previews walk the same state
+  machine and show which branch fires right now.
+- **Pause/resume** (self-control): "pause my morning workflow" (indefinite) /
+  "… until friday" / "… for a week" (parseWhen vocabulary, unknown phrasing
+  teaches, today/past refused) — schedule, triggers, manual runs, and the
+  confirmed re-run all sleep; a dated pause wakes on the day by itself;
+  "resume/unpause" wakes it early. List and show name the pause.
 
 **v45 — the almanac round** (dates.ts NEW + remind.ts + agent.ts conditions —
 the YEARLY cadence, the one rhythm v44 left out; built under Dian's standing
@@ -979,6 +1022,17 @@ Still gated: #19 (DDL), new bridges (no backend tables). The genuinely
 ungated seams left are brain/compose deepening (understand.ts shapes,
 compose.ts banks) — or ask Dian for a new direction before inventing.
 
+Post-v46 status: Dian's "focus on agentic features" (2026-07-16) opened the
+workflow ENGINE itself as the seam — the orchestration round gave it
+composition (nested runs, depth 1), flow control (otherwise), and
+self-control (pause/resume). Natural continuations on these seams, none
+needing Dian: deeper receipts (per-step outcomes on the workflowLog so
+"what did my last run do" answers), a "run my X workflow again" re-run
+form, mission deadlines ("finish this mission by friday" + nudges). Still
+gated: #19 (DDL), new bridges. The step law is now: ordinary asks + the
+mission literal + the chain form — anything else that smells of
+workflow/mission management stays refused.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1008,8 +1062,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v42 | `526e147`+`fa0c6fb` | trust round: run-time send confirm (#17 — Profile.runSend, three-level yes precedence, scheduled runs never send), report headline (#27 reshaped, zero-cost), help refresh, runner set up on Dian's PC |
 | v43 | `89fef8d` | reader round: /email/…/send (#21, confirm-gated, client steps aside), single-mail digest (#22, format=full + cleanEmailText), shaped summaries (one-sentence / key-points), runner scheduled polling + log on Dian's PC |
 | v44 | `559ecd5` | cadence round: recurring reminders (every day / weekday / 1-28 monthly, roll-on-surface, done rolls, delete stops), snooze, day-of-month conditions, remind.ts crisis guard (v22 gap closed) |
-| v45 | (see git) | almanac round: special-dates book (dates.ts — others' birthdays/anniversaries, yearly, day-of + day-before heads-ups), yearly reminders (every year on {month, day}), event-proximity + special-day conditions |
+| v45 | `6fc45b7` | almanac round: special-dates book (dates.ts — others' birthdays/anniversaries, yearly, day-of + day-before heads-ups), yearly reminders (every year on {month, day}), event-proximity + special-day conditions |
+| v46 | (see git) | orchestration round: nested workflow steps (run my X workflow, depth 1, send-law-safe), "otherwise:" else-steps (clean-false only), pause/resume with optional wake date |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → **247**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → **256**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

@@ -99,8 +99,9 @@ export type SpecialDate = { what: string; month: number; day: number; noted?: st
 // the runner's receipt (set once, read-and-cleared by "any results from …").
 export type DeviceTask = { device: string; text: string; created: string; auto?: boolean; result?: string };
 
-// v39: one workflow run receipt — `via` says who started it. (+v41 monthly)
-export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' };
+// v39: one workflow run receipt — `via` says who started it. (+v41 monthly,
+// +v46 nested: the run was a step inside another workflow.)
+export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested' };
 
 // v42: one pending run-with-sends offer. A workflow whose steps SEND email
 // never runs unconfirmed — the run itself is offered ("this run wants to
@@ -140,7 +141,10 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // v38: `day` schedules ONE weekday; v41: `monthDay` schedules ONE day of the
 // month (1-28 only, so every month has it). A workflow carries at most one of
 // daily/day/monthDay — setting one clears the others.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; lastRun?: string };
+// v46: `paused` puts the whole workflow to sleep — true indefinitely, or an
+// ISO date (yyyy-mm-dd) it wakes on. Schedules skip it, triggers answer
+// honestly, manual runs point at "resume". Managed by agent.ts.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; lastRun?: string; paused?: boolean | string };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.

@@ -54,6 +54,7 @@ import {
   missionNudge, evalCondition, parseConditionStep, parseMissionQueue,
   parseWorkflowShow, parseWorkflowStepEdit, parseWorkflowStepMove, parseWorkflowRename,
   parseWorkflowPreview,
+  parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -2491,9 +2492,13 @@ Deno.test('v31: workflow editing — show, add, replace, remove, and every guard
   if (!lastOne?.reply.includes('delete my tiny workflow')) throw new Error('the last step points at delete: ' + lastOne?.reply);
   eq(lastOne?.profile, undefined, 'the shell is never emptied');
 
-  const meta = await tryAgent('replace step 1 of my morning workflow with run my evening workflow', EMAIL, profile, run);
-  if (!meta?.reply.includes('ordinary asks')) throw new Error('workflows never run workflows: ' + meta?.reply);
+  // v46 changed this law: the RUN form is now a sanctioned chain step, so the
+  // meta guard is tested on management phrasing instead.
+  const meta = await tryAgent('replace step 1 of my morning workflow with delete my evening workflow', EMAIL, profile, run);
+  if (!meta?.reply.includes('ordinary asks')) throw new Error('workflows never manage workflows: ' + meta?.reply);
   eq(meta?.profile, undefined, 'the meta guard refuses without changing anything');
+  const chain = await tryAgent('replace step 1 of my morning workflow with run my evening workflow', EMAIL, profile, run);
+  if (!chain?.profile) throw new Error('v46: the chain form is edit-legal now: ' + chain?.reply);
 
   const anon = await tryAgent('remove step 2 from my morning workflow', '', profile, run);
   if (!anon?.reply.includes('signed in')) throw new Error('anonymous editing points at sign-in: ' + anon?.reply);
@@ -3702,4 +3707,164 @@ Deno.test('v43: shaped summaries — one sentence and key points', () => {
   eq(trySummarize('summarize in one sentence: too short'), '', 'a short paste is not a text');
   const plain = trySummarize(`summarize: ${PASTED}`);
   if (!plain.startsWith("Here's the heart of it:")) throw new Error(`the classic shape still works: ${plain}`);
+});
+
+// ── v46: orchestration — nested workflows, otherwise steps, pause/resume ──────
+
+Deno.test('v46: parseOtherwiseStep, pause/resume parsers, and isPaused', () => {
+  eq(parseOtherwiseStep('otherwise: encourage me'), 'encourage me', 'colon form');
+  eq(parseOtherwiseStep('otherwise — a verse about rest'), 'a verse about rest', 'dash form');
+  eq(parseOtherwiseStep('when it is monday: a verse'), null, 'conditions are not otherwise');
+  eq(parseOtherwiseStep('encourage me'), null, 'plain step');
+  eq(parseWorkflowPause('pause my morning workflow'), { name: 'morning' }, 'bare pause');
+  eq(parseWorkflowPause('suspend the night routine until friday'), { name: 'night', until: 'friday' }, 'until phrase');
+  eq(parseWorkflowPause('pause my morning workflow for a week'), { name: 'morning', until: 'a week' }, 'for phrase');
+  eq(parseWorkflowPause('pause for a moment'), null, 'conversation is not a pause');
+  eq(parseWorkflowResume('resume my morning workflow'), 'morning', 'resume');
+  eq(parseWorkflowResume('unpause the night routine'), 'night', 'unpause');
+  eq(parseWorkflowResume('resume where we left off'), null, 'conversation is not a resume');
+  const wf = { name: 'm', steps: ['x y z'], created: 'now' };
+  eq(isPaused({ ...wf, paused: true }, '2026-07-16'), true, 'indefinite pause holds');
+  eq(isPaused({ ...wf, paused: '2026-07-20' }, '2026-07-16'), true, 'dated pause holds before the date');
+  eq(isPaused({ ...wf, paused: '2026-07-20' }, '2026-07-20'), false, 'wakes on the day itself');
+  eq(isPaused(wf, '2026-07-16'), false, 'no pause field');
+});
+
+Deno.test('v46: creation allows the chain form, refuses self-reference and management', async () => {
+  const { run } = stubRunner();
+  const okay = await tryAgent('create a workflow called day: run my morning workflow, then encourage me', EMAIL, { workflows: [{ name: 'morning', steps: ['a verse about strength'], created: 'now' }] }, run);
+  if (!okay?.profile?.workflows?.some((w) => w.name === 'day')) throw new Error(`chain step must save: ${okay?.reply}`);
+
+  const self = await tryAgent('create a workflow called loop: run my loop workflow', EMAIL, {}, run);
+  if (!self?.reply.includes("can't run itself") || self.profile) throw new Error(`self-reference must refuse: ${self?.reply}`);
+
+  const manage = await tryAgent('create a workflow called bad: delete my morning workflow', EMAIL, {}, run);
+  if (!manage?.reply.includes('ordinary asks') || manage.profile) throw new Error(`management steps still refused: ${manage?.reply}`);
+});
+
+Deno.test('v46: a nested step runs the whole inner workflow, one level deep', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'outer', steps: ['run my inner workflow', 'encourage me'], created: 'now' },
+    { name: 'inner', steps: ['a verse about strength', 'run my outer workflow'], created: 'now' },
+  ] };
+  const out = await tryAgent('run my outer workflow', EMAIL, profile, run);
+  eq(ran, ['a verse about strength', 'encourage me'], 'inner steps ran in place, nested-nested did not');
+  if (!out?.reply.includes('one level deep')) throw new Error(`depth guard must speak: ${out?.reply}`);
+  const log = out?.profile?.workflowLog ?? [];
+  eq(log.map((r) => `${r.name}:${r.via}`), ['inner:nested', 'outer:manual'], 'both runs left receipts');
+
+  const missing = await tryAgent('run my outer workflow', EMAIL, { workflows: [{ name: 'outer', steps: ['run my gone workflow'], created: 'now' }] }, run);
+  if (!missing?.reply.includes('no workflow called "gone"')) throw new Error(`missing inner must be honest: ${missing?.reply}`);
+});
+
+Deno.test('v46: a nested topic slot passes the outer topic through', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'outer', steps: ['run my study workflow on *'], created: 'now' },
+    { name: 'study', steps: ['a verse about *'], created: 'now' },
+  ] };
+  await tryAgent('run my outer workflow on grace', EMAIL, profile, run);
+  eq(ran, ['a verse about grace'], 'the topic flowed outer to inner to step');
+});
+
+Deno.test('v46: chaining into a sending workflow is gated like sending yourself', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'outer', steps: ['run my mailer workflow'], created: 'now' },
+    { name: 'mailer', steps: ['send an email to me about the day'], created: 'now' },
+  ] };
+  const out = await tryAgent('run my outer workflow', EMAIL, profile, run);
+  eq(ran, [], 'nothing ran before the confirm');
+  if (!out?.reply.includes('sends real email')) throw new Error(`the chain must be offered, not run: ${out?.reply}`);
+  if (!out?.profile?.runSend) throw new Error('the runSend stamp must ride the profile');
+});
+
+Deno.test('v46: otherwise fires on a clean skip, stays quiet otherwise', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [{
+    name: 'either',
+    steps: ['when i have a mission: my next mission step', 'otherwise: encourage me'],
+    created: 'now',
+  }] };
+
+  const noMission = await tryAgent('run my either workflow', EMAIL, profile, run);
+  eq(ran, ['encourage me'], 'the otherwise ran when the condition failed');
+  if (!noMission?.reply.includes('[did: encourage me]')) throw new Error(`otherwise must report: ${noMission?.reply}`);
+
+  ran.length = 0;
+  const withMission: Profile = { ...profile, mission: { goal: 'ship it', steps: ['step one'], done: 0, created: 'now' } };
+  const quiet = await tryAgent('run my either workflow', EMAIL, withMission, run);
+  eq(ran, [], 'the mission literal ran instead (no engine call), the otherwise stayed quiet');
+  if (!quiet?.reply.includes('otherwise stays quiet')) throw new Error(`quiet otherwise must say why: ${quiet?.reply}`);
+
+  const orphanProfile: Profile = { workflows: [{ name: 'o', steps: ['otherwise: encourage me'], created: 'now' }] };
+  const orphan = await tryAgent('run my o workflow', EMAIL, orphanProfile, run);
+  if (!orphan?.reply.includes('right before it')) throw new Error(`orphan must teach: ${orphan?.reply}`);
+
+  const unknownProfile: Profile = { workflows: [{ name: 'u', steps: ['when the moon is full: a verse', 'otherwise: encourage me'], created: 'now' }] };
+  ran.length = 0;
+  const unknown = await tryAgent('run my u workflow', EMAIL, unknownProfile, run);
+  eq(ran, [], 'an unknown condition quiets both branches');
+  if (!unknown?.reply.includes('stays quiet too')) throw new Error(`unknown-condition otherwise must say why: ${unknown?.reply}`);
+});
+
+Deno.test('v46: pause holds every door — manual, trigger, schedule — and resume opens them', async () => {
+  const { ran, run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'morning', steps: ['a verse about strength'], created: 'now', daily: true, trigger: 'good morning' }] };
+
+  const paused = await tryAgent('pause my morning workflow', EMAIL, profile, run);
+  eq(paused?.profile?.workflows?.[0].paused, true, 'pause stored');
+  profile = paused!.profile!;
+
+  const manual = await tryAgent('run my morning workflow', EMAIL, profile, run);
+  eq(ran, [], 'a paused workflow never runs');
+  if (!manual?.reply.includes('paused')) throw new Error(`manual run must name the pause: ${manual?.reply}`);
+
+  const trig = await tryAgent('good morning', EMAIL, profile, run);
+  if (!trig?.reply.includes('paused')) throw new Error(`trigger must name the pause: ${trig?.reply}`);
+  eq(ran, [], 'the trigger slept too');
+
+  eq(await runDailyWorkflows(profile, run, '2026-07-16', EMAIL), null, 'the schedule sleeps silently');
+
+  const listed = await tryAgent('list my workflows', EMAIL, profile, run);
+  if (!listed?.reply.includes('paused')) throw new Error(`the list must name the pause: ${listed?.reply}`);
+
+  const resumed = await tryAgent('resume my morning workflow', EMAIL, profile, run);
+  eq(resumed?.profile?.workflows?.[0].paused, undefined, 'resume clears the field');
+  profile = resumed!.profile!;
+  const daily = await runDailyWorkflows(profile, run, '2026-07-16', EMAIL);
+  if (!daily) throw new Error('the schedule works again after resume');
+  eq(ran, ['a verse about strength'], 'the run is real again');
+});
+
+Deno.test('v46: a dated pause wakes by itself; bad pause phrases teach or refuse', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'm', steps: ['a verse about hope'], created: 'now', daily: true }] };
+
+  const until = await tryAgent('pause my m workflow until tomorrow', EMAIL, profile, run);
+  const stamp = until?.profile?.workflows?.[0].paused;
+  if (typeof stamp !== 'string') throw new Error(`dated pause must store the date: ${until?.reply}`);
+  eq(await runDailyWorkflows(until!.profile!, run, stamp, EMAIL) !== null, true, 'awake on the wake day itself');
+
+  const unknown = await tryAgent('pause my m workflow until the cows come home', EMAIL, profile, run);
+  if (!unknown?.reply.includes('until friday') || unknown.profile) throw new Error(`unknown phrase teaches: ${unknown?.reply}`);
+  const past = await tryAgent('pause my m workflow until today', EMAIL, profile, run);
+  if (!past?.reply.includes('after today') || past.profile) throw new Error(`today refused: ${past?.reply}`);
+  const nothing = await tryAgent('resume my m workflow', EMAIL, profile, run);
+  if (!nothing?.reply.includes("isn't paused") || nothing.profile) throw new Error(`resuming the unpaused answers honestly: ${nothing?.reply}`);
+});
+
+Deno.test('v46: previews see otherwise branches and name chained workflows', async () => {
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [
+    { name: 'either', steps: ['when i have a mission: my next mission step', 'otherwise: encourage me'], created: 'now' },
+    { name: 'outer', steps: ['run my inner workflow'], created: 'now' },
+    { name: 'inner', steps: ['a verse about strength', 'encourage me'], created: 'now' },
+  ] };
+  const p1 = await tryAgent('preview my either workflow', EMAIL, profile, run);
+  if (!p1?.reply.includes('this otherwise fires')) throw new Error(`preview must show the live branch: ${p1?.reply}`);
+  const p2 = await tryAgent('preview my outer workflow', EMAIL, profile, run);
+  if (!p2?.reply.includes('runs your "inner" workflow — 2 steps of its own')) throw new Error(`preview must name the chain: ${p2?.reply}`);
+  eq(ran, [], 'previews never execute');
 });

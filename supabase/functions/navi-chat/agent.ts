@@ -146,6 +146,7 @@ import { hourInTZ, todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
 import { inboxUnreadCount, isSendStep, tryMail } from './mail.ts';
 import { chatsIdleCount } from './chats.ts';
+import { parseWhen } from './remind.ts'; // v46: "pause my X workflow until friday"
 
 export type AgentRunner = (
   part: string,
@@ -274,12 +275,95 @@ const RUN_CONFIRM_WINDOW_MS = 10 * 60 * 1000;
 const RUN_YES_RX = /^(?:yes|yes please|yep|yeah|do it|go ahead|run it|confirm)$/;
 const RUN_NO_RX = /^(?:no|nope|don'?t|never ?mind|cancel(?: the run)?)$/;
 
-/** The send steps of a workflow (condition prefixes read through). */
-function sendStepsOf(wf: Workflow): string[] {
-  return wf.steps.filter((s) => {
-    const cond = parseConditionStep(s);
-    return isSendStep(cond ? cond.body : s);
-  });
+// v46: an "otherwise:" step — the else-branch of the conditional step right
+// before it. Same body bounds as a condition's.
+const OTHERWISE_RX = /^otherwise ?[:—-] ?(.{3,120})$/;
+
+/** v46: the body of an "otherwise: <step>" step, or null for an ordinary one. */
+export function parseOtherwiseStep(step: string): string | null {
+  const m = step.match(OTHERWISE_RX);
+  return m ? m[1].trim() : null;
+}
+
+// v46: what a step would actually EXECUTE — condition and otherwise prefixes
+// read through. The meta rule and the send gate both judge this body.
+function bodyOf(step: string): string {
+  const other = parseOtherwiseStep(step);
+  const inner = other ?? step;
+  const cond = parseConditionStep(inner);
+  return cond ? cond.body : inner;
+}
+
+/**
+ * The send steps of a workflow (condition/otherwise prefixes read through).
+ * v46: a nested "run my X workflow" step is expanded ONE level through `all`,
+ * so a workflow that chains into a sending workflow is gated exactly like one
+ * that sends itself — the confirm law never has a blind spot.
+ */
+function sendStepsOf(wf: Workflow, all: Workflow[] = []): string[] {
+  const out: string[] = [];
+  for (const s of wf.steps) {
+    const body = bodyOf(s);
+    const nestedRef = parseWorkflowRun(body);
+    if (nestedRef) {
+      if (nestedRef.name === wf.name) continue; // self-reference never runs
+      const inner = all.find((w) => w.name === nestedRef.name);
+      if (inner) {
+        for (const is of inner.steps) {
+          const ib = bodyOf(is);
+          if (!parseWorkflowRun(ib) && isSendStep(ib)) out.push(ib);
+        }
+      }
+      continue;
+    }
+    if (isSendStep(body)) out.push(body);
+  }
+  return out;
+}
+
+/**
+ * v46: is this workflow asleep today? `paused: true` sleeps until resumed;
+ * a date sleeps UNTIL that date (it wakes on the day itself) — computed, so
+ * an expired pause simply stops holding, no cleanup pass needed.
+ */
+export function isPaused(wf: Workflow, todayISO: string): boolean {
+  if (wf.paused === true) return true;
+  if (typeof wf.paused === 'string') return todayISO < wf.paused;
+  return false;
+}
+
+// "paused" / "paused until 2026-07-20" — how a pause reads back.
+function pauseLabel(wf: Workflow): string {
+  return typeof wf.paused === 'string' ? `paused until ${wf.paused}` : 'paused';
+}
+
+const PAUSE_RX = new RegExp(
+  `^(?:please )?(?:pause|suspend) (?:my |the )?(${NAME_CHARS}?) (?:workflow|routine)(?: (?:until|till) (.+?)| for (.+?))?$`,
+);
+const RESUME_RX = new RegExp(
+  `^(?:please )?(?:resume|unpause|reactivate|wake(?: up)?) (?:my |the )?(${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+
+/** v46: { name, until? } from a pause ask ('' until = indefinite), or null. */
+export function parseWorkflowPause(message: string): { name: string; until?: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 100) return null;
+  const m = t.match(PAUSE_RX);
+  if (!m) return null;
+  const name = m[1].trim();
+  if (!name || /^(?:a|the|my|me)$/.test(name)) return null;
+  const phrase = (m[2] ?? m[3])?.trim();
+  return phrase ? { name, until: phrase } : { name };
+}
+
+/** v46: the workflow name from a resume ask, or null. */
+export function parseWorkflowResume(message: string): string | null {
+  const t = tidy(message);
+  if (!t || t.length > 80) return null;
+  const m = t.match(RESUME_RX);
+  if (!m) return null;
+  const name = m[1].trim();
+  return !name || /^(?:a|the|my|me)$/.test(name) ? null : name;
 }
 
 // The offer: nothing runs, the stamp rides the profile, a fresh yes re-runs.
@@ -729,17 +813,19 @@ export function parseWorkflowRename(message: string): { from: string; to: string
   return { from, to };
 }
 
-// The one gate every step entering a workflow passes (creation shares the meta
-// rule inline): sane length, and no workflow/mission phrasing except the
-// read-only "my next mission step" literal — conditions are read through.
+// The one gate every step entering a workflow passes (creation uses it too):
+// sane length, and no workflow/mission phrasing except the read-only
+// "my next mission step" literal and — v46 — the "run my <name> workflow"
+// chaining form. Condition and otherwise prefixes are read through.
 function stepProblem(step: string): string | null {
   if (step.length < 3 || step.length > 120) {
     return 'A step needs to be an ordinary ask — between 3 and 120 characters.';
   }
-  const cond = parseConditionStep(step);
-  const body = cond ? cond.body : step;
-  if (!MISSION_STEP_LITERAL_RX.test(body) && /\b(workflow|routine|mission)\b/.test(body)) {
-    return 'Workflow steps have to be ordinary asks — a workflow can\'t run other workflows or missions. (The one exception: the read-only step "my next mission step".)';
+  const body = bodyOf(step);
+  if (MISSION_STEP_LITERAL_RX.test(body)) return null;
+  if (parseWorkflowRun(body)) return null; // v46: one workflow may chain another
+  if (/\b(workflow|routine|mission)\b/.test(body)) {
+    return 'Workflow steps have to be ordinary asks — a workflow can\'t manage other workflows or missions. (Two exceptions: the read-only step "my next mission step", and "run my <name> workflow" to chain a saved workflow in.)';
   }
   return null;
 }
@@ -919,6 +1005,9 @@ WORKFLOWS — saved routines I run on command:
 - when I say good morning, run my morning workflow (sets a trigger phrase)
 - end the trigger with * (when I say study *, run my study workflow on it) and whatever follows the phrase becomes the topic
 - start a step with a condition and it only runs when it's true: when i haven't logged my prayer habit: remind me to pray — negations work too (when no reminders are due / when my mood isn't low / when my prayer streak is under 3)
+- follow a conditional step with "otherwise: …" and that step runs exactly when the one before it was skipped — a real either/or in one routine
+- a step can be "run my study workflow" (or "run my study workflow on *" to pass the topic through) — one workflow chains another, one level deep
+- pause my morning workflow / pause my morning workflow until friday (schedule, trigger, and manual runs all sleep; a dated pause wakes itself) / resume my morning workflow
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
 - conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting
@@ -968,6 +1057,8 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowRename(message) !== null ||
     parseTriggerSet(message) !== null ||
     parseDailySet(message) !== null ||
+    parseWorkflowPause(message) !== null ||
+    parseWorkflowResume(message) !== null ||
     parseMissionStart(message) !== null ||
     parseMissionQueue(message) !== null ||
     LIST_RX.test(t) ||
@@ -987,11 +1078,15 @@ export function isAgentAsk(message: string): boolean {
 // ── Formatting ──────────────────────────────────────────────────────────────
 
 function nameList(workflows: Workflow[]): string {
+  const t = todayInTZ('Africa/Johannesburg');
+  const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
   return workflows
     .map((w) => {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
       const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : w.monthDay ? ` — runs monthly on the ${ordinal(w.monthDay)}` : '';
-      return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}`;
+      // v46: a sleeping workflow says so wherever it's listed.
+      const nap = isPaused(w, todayISO) ? ` — ${pauseLabel(w)}` : '';
+      return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}${nap}`;
     })
     .join('\n');
 }
@@ -1042,12 +1137,17 @@ async function runWorkflow(
   sources?: ConditionSources,
   via: WorkflowRun['via'] = 'manual', // v39: who started this run
   allowSend = false, // v42: true ONLY on the yes-confirmed re-run
+  depth = 0, // v46: 0 = top-level; a nested run is 1 and may not nest again
 ): Promise<{ reply: string; profile?: Profile; counts?: { executed: number; total: number } }> {
   let prof = profile;
   let changed = false;
   let executed = 0;
   let skipped = 0;
   let held = 0; // v42: send steps a scheduled run held back
+  // v46: how the previous step's condition resolved — the "otherwise:" step
+  // right after it reads this. 'skipped' fires the otherwise; 'ran' quiets it;
+  // 'unknown' (can't-check) quiets it too — an else on a guess is a guess.
+  let prevCond: 'ran' | 'skipped' | 'unknown' | null = null;
   const t = todayInTZ('Africa/Johannesburg');
   const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
   const onTopic = topic ? ` on "${topic}"` : '';
@@ -1057,35 +1157,66 @@ async function runWorkflow(
   for (let i = 0; i < wf.steps.length; i++) {
     // v27: a topic fills every * slot, so one saved routine serves any subject.
     let step = topic ? wf.steps[i].replaceAll('*', topic) : wf.steps[i];
+    const wasCond = prevCond;
+    prevCond = null;
 
-    // v29: conditional steps — evaluate "when <condition>:" against the
-    // profile as it stands NOW (earlier steps' changes included).
-    const cond = parseConditionStep(step);
-    if (cond) {
-      const holds = await evalCondition(cond.cond, prof, todayISO, email, sources);
-      if (holds === null) {
+    // v46: "otherwise: <step>" — the else-branch of the conditional step
+    // immediately before it. Fires only on a clean false; a can't-check
+    // verdict quiets both branches (never guess), and an orphaned otherwise
+    // teaches instead of running.
+    const other = parseOtherwiseStep(step);
+    if (other) {
+      if (wasCond === 'ran') {
         skipped++;
-        blocks.push(`Step ${i + 1} — skipped: I don't know the condition "${cond.cond}". I understand: ${KNOWN_CONDITIONS}.`);
+        blocks.push(`Step ${i + 1} — skipped (the "when …" step before it ran, so the otherwise stays quiet).`);
         continue;
       }
-      // v35: world conditions can honestly fail to answer — skip, say why,
-      // never guess.
-      if (holds === 'unreachable') {
+      if (wasCond === 'unknown') {
         skipped++;
-        blocks.push(`Step ${i + 1} — skipped: I couldn't check "${cond.cond}" just now (the source wasn't reachable), so I played it safe.`);
+        blocks.push(`Step ${i + 1} — skipped (I couldn't check the condition before it, so its otherwise stays quiet too).`);
         continue;
       }
-      if (holds === 'not-connected') {
+      if (wasCond === null) {
         skipped++;
-        blocks.push(`Step ${i + 1} — skipped: "${cond.cond}" needs your Gmail, and it isn't connected. Open Email in the Tools menu and tap Connect Gmail.`);
+        blocks.push(`Step ${i + 1} — skipped: an "otherwise:" step needs a "when <condition>: …" step right before it.`);
         continue;
       }
-      if (!holds) {
-        skipped++;
-        blocks.push(`Step ${i + 1} — skipped ("when ${cond.cond}" isn't the case right now).`);
-        continue;
+      step = other; // the when-step was skipped — the otherwise runs
+    } else {
+      // v29: conditional steps — evaluate "when <condition>:" against the
+      // profile as it stands NOW (earlier steps' changes included).
+      const cond = parseConditionStep(step);
+      if (cond) {
+        const holds = await evalCondition(cond.cond, prof, todayISO, email, sources);
+        if (holds === null) {
+          skipped++;
+          prevCond = 'unknown';
+          blocks.push(`Step ${i + 1} — skipped: I don't know the condition "${cond.cond}". I understand: ${KNOWN_CONDITIONS}.`);
+          continue;
+        }
+        // v35: world conditions can honestly fail to answer — skip, say why,
+        // never guess.
+        if (holds === 'unreachable') {
+          skipped++;
+          prevCond = 'unknown';
+          blocks.push(`Step ${i + 1} — skipped: I couldn't check "${cond.cond}" just now (the source wasn't reachable), so I played it safe.`);
+          continue;
+        }
+        if (holds === 'not-connected') {
+          skipped++;
+          prevCond = 'unknown';
+          blocks.push(`Step ${i + 1} — skipped: "${cond.cond}" needs your Gmail, and it isn't connected. Open Email in the Tools menu and tap Connect Gmail.`);
+          continue;
+        }
+        if (!holds) {
+          skipped++;
+          prevCond = 'skipped';
+          blocks.push(`Step ${i + 1} — skipped ("when ${cond.cond}" isn't the case right now).`);
+          continue;
+        }
+        prevCond = 'ran';
+        step = cond.body;
       }
-      step = cond.body;
     }
 
     // v29: the mission-aware step — read the current mission step directly,
@@ -1095,6 +1226,49 @@ async function runWorkflow(
       blocks.push(`Step ${i + 1} — ${step}:\n` + (prof.mission
         ? `Mission "${prof.mission.goal}" — step ${prof.mission.done + 1} of ${prof.mission.steps.length}:\n${prof.mission.steps[prof.mission.done]}\n(Say "done" outside the workflow when it's finished.)`
         : 'No active mission right now — nothing waiting here.'));
+      continue;
+    }
+
+    // v46: nested workflows — "run my <name> workflow [on <topic>]" as a step
+    // runs the whole saved routine in place, ONE level deep. Self-reference,
+    // missing names, pauses, and unfilled slots are skipped honestly; sends
+    // inside the nested run obey the same allowSend this run obeys (the outer
+    // gate expanded nested send steps before anything ran).
+    const nestedRef = parseWorkflowRun(step);
+    if (nestedRef) {
+      if (depth >= 1) {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: nested workflows go one level deep, so "${nestedRef.name}" doesn't run from inside a run that's already nested.`);
+        continue;
+      }
+      if (nestedRef.name === wf.name) {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: "${wf.name}" can't run itself.`);
+        continue;
+      }
+      const inner = (prof.workflows ?? []).find((w) => w.name === nestedRef.name);
+      if (!inner) {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: there's no workflow called "${nestedRef.name}" on the shelf anymore.`);
+        continue;
+      }
+      if (isPaused(inner, todayISO)) {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: "${inner.name}" is ${pauseLabel(inner)}. Say "resume my ${inner.name} workflow" to wake it.`);
+        continue;
+      }
+      if (hasSlot(inner) && !nestedRef.topic) {
+        skipped++;
+        blocks.push(`Step ${i + 1} — skipped: "${inner.name}" has a * slot and this step names no topic. Write the step as "run my ${inner.name} workflow on <topic>" (or on * to pass this run's topic through).`);
+        continue;
+      }
+      const out = await runWorkflow(inner, prof, run, nestedRef.topic, email, sources, 'nested', allowSend, depth + 1);
+      if (out.profile) {
+        prof = out.profile;
+        changed = true;
+      }
+      executed++;
+      blocks.push(`Step ${i + 1} — ${step}:\n${out.reply}`);
       continue;
     }
 
@@ -1200,29 +1374,70 @@ async function previewWorkflow(
   const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
   const lines: string[] = [];
   let wouldRun = 0;
+  // v46: the same else-tracking the real run does, so "otherwise:" previews true.
+  let prevCond: 'ran' | 'skipped' | 'unknown' | null = null;
   for (let i = 0; i < wf.steps.length; i++) {
-    const step = topic ? wf.steps[i].replaceAll('*', topic) : wf.steps[i];
-    const cond = parseConditionStep(step);
+    let step = topic ? wf.steps[i].replaceAll('*', topic) : wf.steps[i];
+    const wasCond = prevCond;
+    prevCond = null;
+
+    const other = parseOtherwiseStep(step);
+    let otherNote = '';
+    if (other) {
+      if (wasCond === 'ran') {
+        lines.push(`${i + 1}. would skip — the "when …" step before it would run, so the otherwise stays quiet`);
+        continue;
+      }
+      if (wasCond === 'unknown') {
+        lines.push(`${i + 1}. can't tell — it depends on the step before it, which I couldn't check`);
+        continue;
+      }
+      if (wasCond === null) {
+        lines.push(`${i + 1}. would skip — an "otherwise:" step needs a "when <condition>: …" step right before it`);
+        continue;
+      }
+      step = other;
+      otherNote = ' (the step before it would skip, so this otherwise fires)';
+    }
+
+    const cond = other ? null : parseConditionStep(step);
+    const body = cond ? cond.body : step;
     // v42: send steps are named in the preview — the real run pauses for a yes.
-    const sendTag = isSendStep(cond ? cond.body : step)
+    const sendTag = isSendStep(body)
       ? ' [sends real email — the run itself will ask for your yes first]'
       : '';
+    // v46: nested steps are named, one level, without walking their insides —
+    // a preview stays one workflow's preview.
+    const nestedRef = parseWorkflowRun(body);
+    const nestedTag = (() => {
+      if (!nestedRef) return '';
+      if (nestedRef.name === wf.name) return ' [chains a workflow — but a workflow can\'t run itself, so this would skip]';
+      const inner = (profile.workflows ?? []).find((w) => w.name === nestedRef.name);
+      if (!inner) return ` [chains "${nestedRef.name}" — which isn't on the shelf, so this would skip]`;
+      if (isPaused(inner, todayISO)) return ` [chains "${inner.name}" — currently ${pauseLabel(inner)}, so this would skip]`;
+      return ` [runs your "${inner.name}" workflow — ${inner.steps.length} step${inner.steps.length === 1 ? '' : 's'} of its own, conditions checked when it runs]`;
+    })();
     if (!cond) {
       wouldRun++;
-      lines.push(`${i + 1}. would run — ${step}${sendTag}`);
+      lines.push(`${i + 1}. would run — ${step}${otherNote}${sendTag}${nestedTag}`);
       continue;
     }
     const holds = await evalCondition(cond.cond, profile, todayISO, email, sources);
     if (holds === true) {
+      prevCond = 'ran';
       wouldRun++;
-      lines.push(`${i + 1}. would run — ${cond.body} ("when ${cond.cond}" holds right now)${sendTag}`);
+      lines.push(`${i + 1}. would run — ${cond.body} ("when ${cond.cond}" holds right now)${sendTag}${nestedTag}`);
     } else if (holds === false) {
+      prevCond = 'skipped';
       lines.push(`${i + 1}. would skip — "when ${cond.cond}" isn't the case right now`);
     } else if (holds === 'unreachable') {
+      prevCond = 'unknown';
       lines.push(`${i + 1}. can't tell — I couldn't check "${cond.cond}" just now; on a real run I'd skip it to be safe`);
     } else if (holds === 'not-connected') {
+      prevCond = 'unknown';
       lines.push(`${i + 1}. can't tell — "${cond.cond}" needs your Gmail, and it isn't connected; on a real run I'd skip it`);
     } else {
+      prevCond = 'unknown';
       lines.push(`${i + 1}. would skip — I don't know the condition "${cond.cond}". I understand: ${KNOWN_CONDITIONS}.`);
     }
   }
@@ -1381,6 +1596,14 @@ export async function tryAgent(
     const wf = workflows.find((w) => w.name === pendingRun.name);
     if (!wf) {
       return { reply: `The "${pendingRun.name}" workflow isn't on the shelf anymore — nothing ran, nothing was sent.`, profile: cleared };
+    }
+    // v46: a pause landing between the offer and the yes still holds.
+    {
+      const td = todayInTZ('Africa/Johannesburg');
+      const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+      if (isPaused(wf, todayISO)) {
+        return { reply: `"${wf.name}" is ${pauseLabel(wf)} — nothing ran, nothing was sent. Say "resume my ${wf.name} workflow" first.`, profile: cleared };
+      }
     }
     return await runWorkflow(wf, cleared, run, pendingRun.topic, email, sources, 'manual', true);
   }
@@ -1559,8 +1782,14 @@ export async function tryAgent(
       : wf.day
       ? `\nRuns every ${wf.day}, on your first chat that day.`
       : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.` : '';
+    // v46: a sleeping workflow says so when shown.
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    const nap = isPaused(wf, todayISO)
+      ? `\nCurrently ${pauseLabel(wf)} — "resume my ${wf.name} workflow" wakes it.`
+      : '';
     return {
-      reply: `"${wf.name}" — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}${trig}${daily}\n\nEdit it in place: "replace step 2 of my ${wf.name} workflow with …", "remove step 2 from my ${wf.name} workflow", or "add a step to my ${wf.name} workflow: …".`,
+      reply: `"${wf.name}" — ${wf.steps.length} step${wf.steps.length === 1 ? '' : 's'}:\n${stepLines(wf)}${trig}${daily}${nap}\n\nEdit it in place: "replace step 2 of my ${wf.name} workflow with …", "remove step 2 from my ${wf.name} workflow", or "add a step to my ${wf.name} workflow: …".`,
     };
   }
 
@@ -1699,15 +1928,16 @@ export async function tryAgent(
     // v29: the guard reads THROUGH a "when …:" condition (conditions may
     // legitimately mention the mission) and allows the one safe, read-only
     // mission phrase — "my next mission step".
-    const badStep = created.steps.some((s) => {
-      const cond = parseConditionStep(s);
-      const body = cond ? cond.body : s;
-      if (MISSION_STEP_LITERAL_RX.test(body)) return false;
-      return /\b(workflow|routine|mission)\b/.test(body);
-    });
+    const badStep = created.steps.map(stepProblem).find((p) => p !== null);
     if (badStep) {
+      return { reply: badStep };
+    }
+    // v46: a workflow may chain OTHER workflows, never itself — the depth
+    // guard would refuse it at run time anyway, but honesty starts at creation.
+    const selfRef = created.steps.some((s) => parseWorkflowRun(bodyOf(s))?.name === created.name);
+    if (selfRef) {
       return {
-        reply: 'Workflow steps have to be ordinary asks — a verse, a reminder, a calculation, a word of encouragement. A workflow can\'t run other workflows or missions. (The one exception: the read-only step "my next mission step".)',
+        reply: `A workflow can't run itself — "${created.name}" chaining into "${created.name}" would never end. Chain a DIFFERENT saved workflow, or make the step an ordinary ask.`,
       };
     }
     const existing = workflows.findIndex((w) => w.name === created.name);
@@ -1731,7 +1961,8 @@ export async function tryAgent(
     const stepLines = wf.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
     const replaced = existing >= 0 ? ` (replaced the old "${created.name}")` : '';
     // v42: name the send steps up front, so the run-time confirm never surprises.
-    const sendsNote = sendStepsOf(wf).length
+    // v46: nested references expanded, so a chained sender is named here too.
+    const sendsNote = sendStepsOf(wf, nextList).length
       ? '\n\nHeads up: this workflow sends real email, so every run will pause and ask for your yes first — and scheduled auto-runs will hold those steps back entirely.'
       : '';
     return {
@@ -1766,6 +1997,7 @@ export async function tryAgent(
       daily: 'daily auto-run',
       weekly: 'weekly auto-run',
       monthly: 'monthly auto-run',
+      nested: 'ran as a step inside another workflow',
     };
     return {
       reply: `Ran today (${today.length}):\n${today.map((r) => `- "${r.name}" — ${label[r.via]}`).join('\n')}`,
@@ -1854,6 +2086,70 @@ export async function tryAgent(
     };
   }
 
+  // ── v46: pause / resume — a workflow can sleep without being deleted ──────
+  const pauseAsk = parseWorkflowPause(message);
+  if (pauseAsk) {
+    const idx = workflows.findIndex((w) => w.name === pauseAsk.name);
+    if (idx < 0) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${pauseAsk.name}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${pauseAsk.name}" to pause.` };
+    }
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    let until: string | undefined;
+    if (pauseAsk.until) {
+      const phrase = pauseAsk.until
+        .replace(/^(?:a|one)\s+(day|week)$/i, '1 $1')
+        .replace(/^(\d{1,2})\s+(day|week)s?$/i, 'in $1 $2s');
+      const { due } = parseWhen(phrase, td);
+      if (!due) {
+        return { reply: 'I can pause "until friday", "until 25 december", or "for a week" — that phrasing I don\'t know yet. (A bare "pause my … workflow" pauses it until you resume it.)' };
+      }
+      if (due <= todayISO) {
+        return { reply: `That wouldn't pause anything — pick a day after today, like "pause my ${pauseAsk.name} workflow until friday".` };
+      }
+      until = due;
+    }
+    const wf = workflows[idx];
+    const nextList = workflows.map((w, i) => (i === idx ? { ...w, paused: until ?? true } : w));
+    const sleeps: string[] = [];
+    if (wf.daily || wf.day || wf.monthDay) sleeps.push('its schedule');
+    if (wf.trigger) sleeps.push(`its trigger ("${wf.trigger}")`);
+    const what = sleeps.length ? ` ${sleeps.join(' and ')} sleep${sleeps.length === 1 ? 's' : ''} too;` : '';
+    return {
+      reply: until
+        ? `Paused — "${wf.name}" sleeps until ${until} and wakes that day by itself.${what} manual runs will wait too. "resume my ${wf.name} workflow" wakes it early.`
+        : `Paused — "${wf.name}" is asleep until you say "resume my ${wf.name} workflow".${what} nothing about it runs while it sleeps.`,
+      profile: { ...profile, workflows: nextList },
+    };
+  }
+  const resumeAsk = parseWorkflowResume(message);
+  if (resumeAsk) {
+    const idx = workflows.findIndex((w) => w.name === resumeAsk);
+    if (idx < 0) {
+      return workflows.length
+        ? { reply: `I don't have a workflow called "${resumeAsk}". Here's what I'm holding:\n${nameList(workflows)}` }
+        : { reply: `No workflows saved yet, so there's nothing called "${resumeAsk}" to resume.` };
+    }
+    const wf = workflows[idx];
+    if (wf.paused === undefined) {
+      return { reply: `"${wf.name}" isn't paused — it's already on duty. Run it anytime: "run my ${wf.name} workflow".` };
+    }
+    const nextList = workflows.map((w, i) => {
+      if (i !== idx) return w;
+      const { paused: _paused, ...rest } = w;
+      return rest as Workflow;
+    });
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    const early = isPaused(wf, todayISO) ? '' : ' (its pause had already run out — now the shelf says so too)';
+    return {
+      reply: `Awake — "${wf.name}" is back on duty${early}. Schedule, trigger, and manual runs all work again.`,
+      profile: { ...profile, workflows: nextList },
+    };
+  }
+
   const toRun = parseWorkflowRun(message);
   if (toRun) {
     const wf = workflows.find((w) => w.name === toRun.name);
@@ -1862,6 +2158,14 @@ export async function tryAgent(
         ? { reply: `I don't have a workflow called "${toRun.name}". Here's what I'm holding:\n${nameList(workflows)}` }
         : { reply: `No workflows saved yet, so I can't run "${toRun.name}". Create it first:\ncreate a workflow called ${toRun.name}: a verse about strength, then list my reminders` };
     }
+    // v46: a paused workflow doesn't run — it says so and points at resume.
+    {
+      const td = todayInTZ('Africa/Johannesburg');
+      const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+      if (isPaused(wf, todayISO)) {
+        return { reply: `"${wf.name}" is ${pauseLabel(wf)} — nothing ran. Say "resume my ${wf.name} workflow" and it's back on duty.` };
+      }
+    }
     // v27: a slotted workflow needs its topic before it can run.
     if (hasSlot(wf) && !toRun.topic) {
       return {
@@ -1869,15 +2173,22 @@ export async function tryAgent(
       };
     }
     // v42: send steps gate the run itself — offer first, run on the yes.
-    const sends = sendStepsOf(wf);
+    // v46: nested references are expanded, so a chained sender is gated too.
+    const sends = sendStepsOf(wf, workflows);
     if (sends.length) return offerRunWithSends(wf, toRun.topic, profile, sends);
     return await runWorkflow(wf, profile, run, toRun.topic, email, sources);
   }
 
   // ── Trigger phrases — an exact match runs the whole routine ───────────────
   if (!CRISIS_RX.test(t)) {
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
     const fired = workflows.find((w) => w.trigger && w.trigger === t);
     if (fired) {
+      // v46: a paused workflow's trigger sleeps with it — honestly.
+      if (isPaused(fired, todayISO)) {
+        return { reply: `That trigger belongs to "${fired.name}", which is ${pauseLabel(fired)} — nothing ran. Say "resume my ${fired.name} workflow" to wake it.` };
+      }
       // v27: a bare trigger phrase carries no topic to fill a * slot with.
       if (hasSlot(fired)) {
         return {
@@ -1885,7 +2196,7 @@ export async function tryAgent(
         };
       }
       // v42: a trigger is spoken live, so the send confirm works here too.
-      const sends = sendStepsOf(fired);
+      const sends = sendStepsOf(fired, workflows);
       if (sends.length) return offerRunWithSends(fired, undefined, profile, sends);
       return await runWorkflow(fired, profile, run, undefined, email, sources, 'trigger');
     }
@@ -1898,7 +2209,10 @@ export async function tryAgent(
       if (!t.startsWith(prefix)) continue;
       const topic = t.slice(prefix.length).trim();
       if (!topic || topic.length > 60 || CRISIS_RX.test(topic)) continue;
-      const sends = sendStepsOf(w);
+      if (isPaused(w, todayISO)) {
+        return { reply: `That trigger belongs to "${w.name}", which is ${pauseLabel(w)} — nothing ran. Say "resume my ${w.name} workflow" to wake it.` };
+      }
+      const sends = sendStepsOf(w, workflows);
       if (sends.length) return offerRunWithSends(w, topic, profile, sends);
       return await runWorkflow(w, profile, run, topic, email, sources, 'trigger');
     }
@@ -1927,9 +2241,11 @@ export async function runDailyWorkflows(
   // v27: slotted workflows never auto-run — there's no topic to fill the * with.
   const dow = weekdayOf(todayISO);
   const dom = parseInt(todayISO.slice(8, 10), 10);
+  // v46: a paused workflow sleeps through its schedule — silently, that's the
+  // point of a pause; a dated pause simply stops holding on its wake day.
   const due = (profile.workflows ?? []).filter((w) =>
     (w.daily || (w.day && w.day === dow) || (w.monthDay && w.monthDay === dom)) &&
-    w.lastRun !== todayISO && !hasSlot(w));
+    w.lastRun !== todayISO && !hasSlot(w) && !isPaused(w, todayISO));
   if (!due.length) return null;
 
   let prof = profile;
