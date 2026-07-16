@@ -55,6 +55,7 @@ import {
   parseWorkflowShow, parseWorkflowStepEdit, parseWorkflowStepMove, parseWorkflowRename,
   parseWorkflowPreview,
   parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
+  parseLastRun, parseWorkflowRunAgain, parseMissionDeadline, isAgentAsk,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -3336,7 +3337,8 @@ Deno.test('v39: workflow runs leave receipts; "which workflows ran today" reads 
 
   const manual = await tryAgent('run my calm workflow', EMAIL, profile, run);
   eq(manual?.profile?.workflowLog?.length, 1, 'a manual run stamps one receipt');
-  eq(manual?.profile?.workflowLog?.[0], { name: 'calm', date: t, via: 'manual' }, 'receipt shape');
+  // v47 grew the receipt: per-step outcomes ride along now.
+  eq(manual?.profile?.workflowLog?.[0], { name: 'calm', date: t, via: 'manual', steps: [{ s: 'a verse about peace', o: 'ran' }] }, 'receipt shape');
   profile = manual!.profile!;
 
   const triggered = await tryAgent('study grace', EMAIL, profile, run);
@@ -3867,4 +3869,232 @@ Deno.test('v46: previews see otherwise branches and name chained workflows', asy
   const p2 = await tryAgent('preview my outer workflow', EMAIL, profile, run);
   if (!p2?.reply.includes('runs your "inner" workflow — 2 steps of its own')) throw new Error(`preview must name the chain: ${p2?.reply}`);
   eq(ran, [], 'previews never execute');
+});
+
+
+// ── v47: the chronicle round — per-step receipts, the re-run form, deadlines ─
+
+Deno.test('v47: parseLastRun reads bare and named receipt asks, nothing else', () => {
+  eq(parseLastRun('what did my last run do'), {}, 'bare form');
+  eq(parseLastRun('what did my last workflow run do'), {}, 'bare with the workflow word');
+  eq(parseLastRun('how did my last run go'), {}, 'go form');
+  eq(parseLastRun('show me my last workflow run'), {}, 'show form');
+  eq(parseLastRun('what did my last study run do'), { name: 'study' }, 'named form');
+  eq(parseLastRun('what did my last study workflow run do'), { name: 'study' }, 'named with the workflow word');
+  eq(parseLastRun('show my last morning run'), { name: 'morning' }, 'named show form');
+  eq(parseLastRun('what did my last run do yesterday'), null, 'trailing words are not the ask');
+  eq(parseLastRun('what did the teacher do'), null, 'ordinary conversation untouched');
+});
+
+Deno.test('v47: parseWorkflowRunAgain reads named and bare re-run asks', () => {
+  eq(parseWorkflowRunAgain('run my study workflow again'), { name: 'study' }, 'named again');
+  eq(parseWorkflowRunAgain('rerun my study workflow'), { name: 'study' }, 'rerun verb');
+  eq(parseWorkflowRunAgain('re-run the morning routine'), { name: 'morning' }, 'hyphenated + routine');
+  eq(parseWorkflowRunAgain('run that again'), {}, 'bare form');
+  eq(parseWorkflowRunAgain('run the last run again'), {}, 'last-run form');
+  eq(parseWorkflowRunAgain('run my last workflow again'), {}, 'my-last form stays bare, never a name');
+  eq(parseWorkflowRunAgain('run my study workflow'), null, 'a plain run is not ours');
+  eq(parseWorkflowRunAgain('play that song again'), null, 'ordinary conversation untouched');
+});
+
+Deno.test('v47: a run stamps per-step outcomes and the read-back tells the story', async () => {
+  const { run } = stubRunner('encourage me');
+  const profile: Profile = { workflows: [{
+    name: 'mixed',
+    steps: ['a verse about *', 'when i have a mission: my next mission step', 'encourage me'],
+    created: 'now',
+  }] };
+  const out = await tryAgent('run my mixed workflow on grace', EMAIL, profile, run);
+  const log = out?.profile?.workflowLog;
+  if (!log?.length) throw new Error('the run must leave a receipt');
+  eq(log[0].topic, 'grace', 'the receipt keeps the topic');
+  eq(log[0].steps?.map((s) => s.o), ['ran', 'skipped', 'failed'], 'each step fate recorded');
+  if (!log[0].steps?.[1].w?.includes("wasn't the case")) throw new Error('the skip keeps its why: ' + JSON.stringify(log[0].steps));
+
+  const read = await tryAgent('what did my last run do', EMAIL, out!.profile!, run);
+  if (!read?.reply.includes('"mixed" on "grace"')) throw new Error('the read-back names run and topic: ' + read?.reply);
+  if (!read?.reply.includes('✓ ran — a verse about grace')) throw new Error('ran steps read back: ' + read?.reply);
+  if (!read?.reply.includes('– skipped')) throw new Error('skipped steps read back: ' + read?.reply);
+  if (!read?.reply.includes("✗ couldn't execute — encourage me")) throw new Error('failed steps read back: ' + read?.reply);
+  if (!read?.reply.includes('1 of 3 steps ran')) throw new Error('the count is honest: ' + read?.reply);
+  eq(read?.profile, undefined, 'the read-back changes nothing');
+});
+
+Deno.test('v47: the named read-back finds that workflow; empty and pre-v47 receipts answer honestly', async () => {
+  const { run } = stubRunner();
+  eq((await tryAgent('what did my last run do', EMAIL, {}, run))?.reply.includes('No runs on the receipts yet'), true, 'empty log is honest');
+
+  const p: Profile = { workflowLog: [
+    { name: 'old', date: '2026-07-10', via: 'manual' },
+    { name: 'fresh', date: '2026-07-15', via: 'daily', steps: [{ s: 'a verse about hope', o: 'ran' }] },
+  ] };
+  const named = await tryAgent('what did my last old run do', EMAIL, p, run);
+  if (!named?.reply.includes('predates per-step receipts')) throw new Error('a pre-v47 receipt says so: ' + named?.reply);
+  const bare = await tryAgent('what did my last run do', EMAIL, p, run);
+  if (!bare?.reply.includes('"fresh"')) throw new Error('bare takes the newest: ' + bare?.reply);
+  if (!bare?.reply.includes('daily auto-run')) throw new Error('the via is named: ' + bare?.reply);
+  const missing = await tryAgent('what did my last ghost run do', EMAIL, p, run);
+  if (!missing?.reply.includes('No "ghost" run on the receipts')) throw new Error('an unknown name is honest: ' + missing?.reply);
+});
+
+Deno.test('v47: "run my X workflow again" replays the receipt topic; bare "run that again" takes the newest', async () => {
+  const { ran, run } = stubRunner();
+  let profile: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+
+  const first = await tryAgent('run my study workflow on grace', EMAIL, profile, run);
+  profile = first!.profile!;
+  eq(ran, ['a verse about grace'], 'the first run filled the slot');
+
+  ran.length = 0;
+  const again = await tryAgent('run my study workflow again', EMAIL, profile, run);
+  eq(ran, ['a verse about grace'], 'again replays the same topic');
+  if (!again?.reply.includes('replaying the last run\'s topic, "grace"')) throw new Error('the replay is named: ' + again?.reply);
+  profile = again!.profile!;
+
+  ran.length = 0;
+  const bare = await tryAgent('run that again', EMAIL, profile, run);
+  eq(ran, ['a verse about grace'], 'bare form replays the newest receipt');
+  if (!bare?.profile?.workflowLog?.length) throw new Error('the re-run leaves its own receipt');
+});
+
+Deno.test('v47: the re-run form keeps every gate — slot, pause, send confirm, honesty', async () => {
+  const { ran, run } = stubRunner();
+
+  // A slotted workflow with no receipt has nothing to replay.
+  const slotted: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+  const noReceipt = await tryAgent('run my study workflow again', EMAIL, slotted, run);
+  eq(ran, [], 'nothing ran without a topic');
+  if (!noReceipt?.reply.includes('nothing to replay')) throw new Error('the missing topic is honest: ' + noReceipt?.reply);
+
+  // A plain workflow with no receipt just runs fresh — "again" can only mean "run it".
+  const plain: Profile = { workflows: [{ name: 'm', steps: ['a verse about hope'], created: 'now' }] };
+  const fresh = await tryAgent('run my m workflow again', EMAIL, plain, run);
+  eq(ran, ['a verse about hope'], 'no slot means a fresh run is the honest again');
+  if (!fresh?.profile?.workflowLog?.length) throw new Error('and it leaves a receipt');
+
+  // Paused workflows stay asleep.
+  ran.length = 0;
+  const paused: Profile = { workflows: [{ name: 'm', steps: ['a verse about hope'], created: 'now', paused: true }], workflowLog: [{ name: 'm', date: '2026-07-15', via: 'manual' }] };
+  const held = await tryAgent('run my m workflow again', EMAIL, paused, run);
+  eq(ran, [], 'a paused workflow never re-runs');
+  if (!held?.reply.includes('paused')) throw new Error('the pause is named: ' + held?.reply);
+
+  // The send law never sleeps: a re-run of a sender is offered, not run.
+  const sender: Profile = {
+    workflows: [{ name: 'mailer', steps: ['send an email to me about *'], created: 'now' }],
+    workflowLog: [{ name: 'mailer', date: '2026-07-15', via: 'manual', topic: 'the day' }],
+  };
+  const offer = await tryAgent('run my mailer workflow again', EMAIL, sender, run);
+  eq(ran, [], 'nothing ran before the confirm');
+  if (!offer?.reply.includes('sends real email')) throw new Error('the re-run is offered: ' + offer?.reply);
+  eq(offer?.profile?.runSend?.topic, 'the day', 'the replayed topic rides the offer stamp');
+
+  // A vanished workflow answers honestly on the bare form.
+  const ghost: Profile = { workflowLog: [{ name: 'gone', date: '2026-07-15', via: 'manual' }] };
+  const gone = await tryAgent('run that again', EMAIL, ghost, run);
+  if (!gone?.reply.includes("isn't on the shelf anymore")) throw new Error('a vanished workflow is honest: ' + gone?.reply);
+  eq((await tryAgent('run that again', EMAIL, {}, run))?.reply.includes('No runs on the receipts yet'), true, 'an empty log is honest');
+});
+
+Deno.test('v47: parseMissionDeadline reads the deadline forms, nothing else', () => {
+  eq(parseMissionDeadline('finish this mission by friday'), 'friday', 'finish by');
+  eq(parseMissionDeadline('complete my mission by 25 december'), '25 december', 'complete by');
+  eq(parseMissionDeadline('set my mission deadline to tomorrow'), 'tomorrow', 'set to');
+  eq(parseMissionDeadline('my mission is due on friday'), 'friday', 'due on');
+  eq(parseMissionDeadline('finish this mission'), null, 'no date, no deadline');
+  eq(parseMissionDeadline('i finished the mission'), null, 'past tense is the done path');
+});
+
+Deno.test('v47: mission deadline lifecycle — set, status, show, clear, teach, refuse', async () => {
+  const { run } = stubRunner();
+  let profile: Profile = { mission: { goal: 'ship the ep', steps: ['a', 'b', 'c'], done: 1, created: 'now' } };
+
+  const teach = await tryAgent('finish this mission by the twelfth of never', EMAIL, profile, run);
+  if (!teach?.reply.includes('by friday') || teach.profile) throw new Error('unknown phrasing teaches: ' + teach?.reply);
+
+  const set = await tryAgent('finish this mission by tomorrow', EMAIL, profile, run);
+  const due = set?.profile?.mission?.deadline;
+  if (!due) throw new Error('the deadline must be stored: ' + set?.reply);
+  if (!set?.reply.includes('due tomorrow')) throw new Error('the countdown speaks: ' + set?.reply);
+  if (!set?.reply.includes('2 steps')) throw new Error('the remaining steps are named: ' + set?.reply);
+  profile = set!.profile!;
+
+  const status = await tryAgent('mission status', EMAIL, profile, run);
+  if (!status?.reply.includes('Deadline: due tomorrow')) throw new Error('status counts it down: ' + status?.reply);
+  const show = await tryAgent('when is my mission due', EMAIL, profile, run);
+  if (!show?.reply.includes('due tomorrow')) throw new Error('the show form answers: ' + show?.reply);
+
+  const cleared = await tryAgent('clear my mission deadline', EMAIL, profile, run);
+  eq(cleared?.profile?.mission?.deadline, undefined, 'clear removes the date');
+  if (!cleared?.reply.includes('back on your own clock')) throw new Error('clear says so: ' + cleared?.reply);
+
+  const noneToClear = await tryAgent('clear my mission deadline', EMAIL, cleared!.profile!, run);
+  if (!noneToClear?.reply.includes('no deadline to clear') || noneToClear.profile) throw new Error('clearing nothing is honest: ' + noneToClear?.reply);
+  const noneToShow = await tryAgent('when is my mission due', EMAIL, cleared!.profile!, run);
+  if (!noneToShow?.reply.includes('no deadline')) throw new Error('showing nothing is honest: ' + noneToShow?.reply);
+
+  const noMission = await tryAgent('finish this mission by friday', EMAIL, {}, run);
+  if (!noMission?.reply.includes('No active mission')) throw new Error('deadline talk with no mission is honest: ' + noMission?.reply);
+});
+
+Deno.test('v47: the deadline nudge speaks as the date closes in, once per day, above the idle rule', () => {
+  const mk = (deadline: string): Profile => ({
+    mission: { goal: 'ship it', steps: ['a', 'b'], done: 0, created: '2026-07-15T00:00:00Z', touched: '2026-07-15T00:00:00Z', deadline },
+  });
+
+  eq(missionNudge(mk('2026-07-20'), '2026-07-16'), null, 'four days out stays quiet');
+  const soon = missionNudge(mk('2026-07-18'), '2026-07-16');
+  if (!soon?.note.includes('due in 2 days')) throw new Error('two days out speaks: ' + soon?.note);
+  eq(soon?.profile.mission?.deadlineNudged, '2026-07-16', 'the day is stamped');
+  eq(missionNudge(soon!.profile, '2026-07-16'), null, 'once per day only');
+
+  const today = missionNudge(mk('2026-07-16'), '2026-07-16');
+  if (!today?.note.includes('due TODAY')) throw new Error('due today speaks: ' + today?.note);
+  const late = missionNudge(mk('2026-07-14'), '2026-07-16');
+  if (!late?.note.includes('the date passed, the goal didn\'t')) throw new Error('overdue is honest: ' + late?.note);
+
+  // The idle rule still works when no deadline presses (v27 behaviour intact).
+  const idle: Profile = { mission: { goal: 'ship it', steps: ['a'], done: 0, created: '2026-07-10T00:00:00Z', touched: '2026-07-10T00:00:00Z' } };
+  const nudged = missionNudge(idle, '2026-07-16');
+  if (!nudged?.note.includes('still open')) throw new Error('the idle nudge survives: ' + nudged?.note);
+});
+
+Deno.test('v47: deadline conditions — due soon and overdue, sync and honest', async () => {
+  const t = '2026-07-16';
+  const withDl = (d: string): Profile => ({ mission: { goal: 'g', steps: ['a'], done: 0, created: 'now', deadline: d } });
+  eq(await evalCondition('my mission is due soon', withDl('2026-07-18'), t), true, 'two days out is soon');
+  eq(await evalCondition('my mission is due soon', withDl('2026-07-25'), t), false, 'nine days out is not');
+  eq(await evalCondition('my mission is due soon', withDl('2026-07-14'), t), false, 'overdue is not "due soon"');
+  eq(await evalCondition('my mission is due soon', {}, t), false, 'no mission, nothing due');
+  eq(await evalCondition("my mission isn't due soon", withDl('2026-07-25'), t), true, 'negation holds far out');
+  eq(await evalCondition('my mission is overdue', withDl('2026-07-14'), t), true, 'past the date is overdue');
+  eq(await evalCondition('my mission is overdue', withDl('2026-07-16'), t), false, 'due today is not overdue yet');
+  eq(await evalCondition('my mission is overdue', {}, t), false, 'no deadline, never overdue');
+  eq(await evalCondition("my mission isn't overdue", {}, t), true, 'and the negation is honestly true');
+});
+
+Deno.test('v47: mission completion names a beaten deadline; the new asks cover sign-in', async () => {
+  const { run } = stubRunner();
+  const future = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  const profile: Profile = { mission: { goal: 'ship it', steps: ['only step'], done: 0, created: 'now', deadline: future } };
+  const won = await tryAgent('done', EMAIL, profile, run);
+  if (!won?.reply.includes('ahead of your')) throw new Error('a beaten deadline is celebrated: ' + won?.reply);
+  eq(won?.profile?.mission, undefined, 'mission closed');
+
+  eq(isAgentAsk('what did my last run do'), true, 'read-back is an agent ask');
+  eq(isAgentAsk('run my study workflow again'), true, 're-run is an agent ask');
+  eq(isAgentAsk('finish this mission by friday'), true, 'deadline set is an agent ask');
+  eq(isAgentAsk('clear my mission deadline'), true, 'deadline clear is an agent ask');
+  eq(isAgentAsk('when is my mission due'), true, 'deadline show is an agent ask');
+  const anon = await tryAgent('finish this mission by friday', '', {}, run);
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous deadline asks get the sign-in prompt: ' + anon?.reply);
+});
+
+Deno.test('v47: ordinary conversation still falls through the new parsers', async () => {
+  const { run } = stubRunner();
+  eq(await tryAgent('i will finish my homework by friday', EMAIL, {}, run), null, 'homework is not a mission');
+  eq(await tryAgent('what did the last prophet do', EMAIL, {}, run), null, 'history questions untouched');
+  eq(await tryAgent('again', EMAIL, {}, run), null, 'a bare "again" is conversation');
+  eq(await tryAgent('run it back one more time', EMAIL, {}, run), null, 'loose replay talk untouched');
+  eq(parseWorkflowRun('run my study workflow again') === null, true, 'the plain run parser never eats the again form');
 });

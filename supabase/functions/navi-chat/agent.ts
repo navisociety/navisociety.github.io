@@ -2,6 +2,26 @@
 //
 // NAVI v25 — Agentic workflow execution. (+v26 daily runs, +v27/v29/v30/v35-v42 below)
 //
+// v47 additions (the chronicle round — the named post-v46 rungs, none gated):
+//   - PER-STEP RUN RECEIPTS — every real run's receipt (WorkflowRun) now
+//     carries the topic and each step's fate (StepOutcome: ran / skipped /
+//     held / failed + the short honest why). "what did my last run do"
+//     (bare or named: "what did my last study run do") reads the newest
+//     matching receipt back step by step; pre-v47 receipts answer honestly.
+//   - THE RE-RUN FORM — "run my study workflow again" / "rerun my study
+//     workflow" / bare "run that again" replays the newest receipt: same
+//     workflow, same topic. All the fresh-run gates hold (pause, * slot —
+//     which needs a recorded topic — and the v42 send confirm).
+//   - MISSION DEADLINES — "finish this mission by friday" (parseWhen
+//     vocabulary; unknown phrasing teaches, the past is refused) commits the
+//     active mission to Mission.deadline. "mission status" counts it down;
+//     "when is my mission due" answers; "clear my mission deadline" lets go;
+//     completion names a beaten (or missed) deadline. missionNudge speaks at
+//     2 days out / due / overdue — once per SA day (deadlineNudged stamp),
+//     outranking the idle rule, on the SAME session-start wiring. Conditions:
+//     "when my mission is due soon:" (3 days) / "when my mission is
+//     overdue:" (+ negations) — sync, free, profile-only.
+//
 // v42 additions (the trust round — roadmap #17, built at Dian's explicit ask):
 //   - RUN-TIME SEND CONFIRM — a workflow whose steps SEND email ("send an
 //     email to me about *", "send draft 2") never runs unconfirmed. The RUN
@@ -140,7 +160,7 @@
 // the whole message, bare "done"/"what's next" are only intercepted while a
 // mission is actually active, and crisis language is never treated as a goal.
 
-import type { Mission, Profile, RunSend, Workflow, WorkflowRun } from './memory.ts';
+import type { Mission, Profile, RunSend, StepOutcome, Workflow, WorkflowRun } from './memory.ts';
 import { stepsForGoal } from './plan.ts';
 import { hourInTZ, todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
@@ -233,6 +253,54 @@ const LIST_RX = /^(?:please )?(?:list|show|show me|what are)(?: all)?(?: my| the
 // v39: execution receipts — "which workflows ran today" reads the run log.
 const RAN_TODAY_RX =
   /^(?:which|what) workflows? (?:ran|has run|have run)(?: so far)? today$|^what ran today$|^did any(?:thing| workflows?) run today$|^show(?: me)? today'?s (?:workflow )?runs$/;
+
+// v47: the deep receipt — "what did my last run do" reads the newest receipt
+// back step by step (per-step outcomes ride WorkflowRun.steps since v47).
+// The bare form takes the newest run of anything; the named form the newest
+// run of that workflow. Checked bare-first, so "my last workflow run" is
+// never read as a workflow named "workflow".
+const LAST_RUN_RX =
+  /^(?:what did (?:my|the) last (?:workflow )?run do|how did (?:my|the) last (?:workflow )?run go|show(?: me)? (?:my|the) last (?:workflow )?run)$/;
+const LAST_RUN_NAMED_RX = new RegExp(
+  `^(?:what did (?:my|the) last (${NAME_CHARS}?) (?:workflow |routine )?run do|how did (?:my|the) last (${NAME_CHARS}?) (?:workflow |routine )?run go|show(?: me)? (?:my|the) last (${NAME_CHARS}?) (?:workflow |routine )?run)$`,
+);
+
+/** v47: { name? } from a last-run receipt ask, or null. */
+export function parseLastRun(message: string): { name?: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 80) return null;
+  if (LAST_RUN_RX.test(t)) return {};
+  const m = t.match(LAST_RUN_NAMED_RX);
+  if (!m) return null;
+  const name = (m[1] ?? m[2] ?? m[3])?.trim();
+  if (!name || /^(?:a|the|my|me|workflow|routine)$/.test(name)) return null;
+  return { name };
+}
+
+// v47: the re-run form — "run my study workflow again" / "rerun my study
+// workflow" replays the workflow's newest receipt (same topic); the bare
+// "run that again" replays the newest receipt of anything. "again"/"rerun"
+// keep these clear of the plain run parsers, which end at "workflow".
+const RUN_AGAIN_NAMED_RX = new RegExp(
+  `^(?:please )?(?:run|re-?run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) again$`,
+);
+const RERUN_NAMED_RX = new RegExp(
+  `^(?:please )?re-?run(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+const RUN_AGAIN_BARE_RX =
+  /^(?:please )?(?:run (?:that|it|that workflow|the last (?:workflow|run)|my last workflow) again|re-?run (?:that|it|that workflow|the last (?:workflow|run)|my last workflow))$/;
+
+/** v47: { name? } from a re-run ask, or null. Bare form = the newest receipt. */
+export function parseWorkflowRunAgain(message: string): { name?: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 80) return null;
+  if (RUN_AGAIN_BARE_RX.test(t)) return {};
+  const m = t.match(RUN_AGAIN_NAMED_RX) ?? t.match(RERUN_NAMED_RX);
+  if (!m) return null;
+  const name = m[1].trim();
+  if (!name || /^(?:a|the|my|me|last)$/.test(name)) return null;
+  return { name };
+}
 
 // v26: "run my morning workflow every day" / "make my morning workflow daily"
 const DAILY_ON_RX = new RegExp(
@@ -495,7 +563,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "i have an event today", "i have no events today", "i have an event this week", "i have no events this week", "it's a special day", "it isn't a special day", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my mission is due soon", "my mission isn't due soon", "my mission is overdue", "my mission isn't overdue", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "i have an event today", "i have no events today", "i have an event this week", "i have no events this week", "it's a special day", "it isn't a special day", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -590,6 +658,29 @@ export async function evalCondition(
   if (/^i have (?:a|an)(?: active)? mission$/.test(cond)) return !!profile.mission;
   // v30: the mission negation — "when i have no mission: …" nudges the restart.
   if (/^i (?:don'?t have a|have no)(?: active)? mission$/.test(cond)) return !profile.mission;
+  // v47: deadline awareness — sync, free reads over Mission.deadline. "Due
+  // soon" is within 3 days including today; no mission or no deadline is a
+  // clean false (nothing is due), and "isn't overdue" is honestly true then.
+  if (/^my mission (?:is due soon|deadline is (?:close|near))$/.test(cond)) {
+    const d = profile.mission?.deadline;
+    if (!d) return false;
+    const diff = Math.round((Date.parse(d) - Date.parse(todayISO)) / 86400000);
+    return Number.isFinite(diff) && diff >= 0 && diff <= 3;
+  }
+  if (/^my mission (?:isn'?t|is not) due soon$/.test(cond)) {
+    const d = profile.mission?.deadline;
+    if (!d) return true;
+    const diff = Math.round((Date.parse(d) - Date.parse(todayISO)) / 86400000);
+    return !(Number.isFinite(diff) && diff >= 0 && diff <= 3);
+  }
+  if (/^my mission is (?:overdue|late|past its deadline)$/.test(cond)) {
+    const d = profile.mission?.deadline;
+    return !!d && d < todayISO;
+  }
+  if (/^my mission (?:isn'?t|is not) (?:overdue|late|past its deadline)$/.test(cond)) {
+    const d = profile.mission?.deadline;
+    return !d || d >= todayISO;
+  }
 
   // v36: booked-send awareness — the schedule lives ON the profile, so this
   // pair is sync and free (no network, no source).
@@ -914,6 +1005,43 @@ const MISSION_SKIP_RX =
 const MISSION_ADD_RX =
   /^(?:please )?add (?:a |another |one more )?(?:mission )?step(?: to (?:my |the )?mission)? ?[:—-] ?(.+)$/;
 
+// v47: mission deadlines — "finish this mission by friday" commits the active
+// mission to a date (remind.ts parseWhen vocabulary; unknown phrasing teaches,
+// the past is refused). MISSION_DONE_RX only knows the past-tense whole-match
+// forms ("finished", "completed"), so these imperatives can never collide.
+const MISSION_DEADLINE_RX =
+  /^(?:please )?(?:finish|complete|wrap up|land) (?:this|my|the) mission by (.+)$/;
+const MISSION_DEADLINE_SET_RX =
+  /^(?:please )?(?:set|give) (?:my|the|this) mission(?:'s)? (?:a )?deadline(?: ?[:—-] ?| to | of | for )(.+)$/;
+const MISSION_DUE_RX = /^(?:my|the|this) mission is due(?: by| on)? (.+)$/;
+const MISSION_DEADLINE_CLEAR_RX =
+  /^(?:please )?(?:clear|remove|drop|forget) (?:my|the|this) mission(?:'s)? deadline$/;
+const MISSION_DEADLINE_SHOW_RX =
+  /^(?:when(?:'s| is) (?:my|the|this) mission due|what(?:'s| is) (?:my|the|this) mission(?:'s)? deadline)$/;
+
+/** v47: the deadline phrase from a set-deadline ask, or null. */
+export function parseMissionDeadline(message: string): string | null {
+  const t = tidy(message);
+  if (!t || t.length > 120) return null;
+  const m = t.match(MISSION_DEADLINE_RX) ?? t.match(MISSION_DEADLINE_SET_RX) ?? t.match(MISSION_DUE_RX);
+  if (!m) return null;
+  const phrase = m[1].trim();
+  return phrase && phrase.length <= 40 ? phrase : null;
+}
+
+// v47: "due tomorrow" / "due 2026-07-20 — 4 days left" / "2 days past its
+// deadline" — one honest countdown everywhere a deadline is spoken.
+function deadlineCountdown(deadline: string, todayISO: string): string {
+  const diff = Math.round((Date.parse(deadline) - Date.parse(todayISO)) / 86400000);
+  if (!Number.isFinite(diff)) return `due ${deadline}`;
+  if (diff === 0) return 'due TODAY';
+  if (diff === 1) return 'due tomorrow';
+  if (diff > 1) return `due ${deadline} — ${diff} days left`;
+  return diff === -1
+    ? `1 day past its ${deadline} deadline`
+    : `${-diff} days past its ${deadline} deadline`;
+}
+
 const MAX_MISSION_STEPS = 10;
 
 /** The goal from a "start a mission to X" ask, or null. Crisis-guarded. */
@@ -1010,10 +1138,11 @@ WORKFLOWS — saved routines I run on command:
 - pause my morning workflow / pause my morning workflow until friday (schedule, trigger, and manual runs all sleep; a dated pause wakes itself) / resume my morning workflow
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
-- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting
+- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting / when my mission is due soon / when my mission is overdue
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
 - list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
+- what did my last run do (the newest receipt, step by step — what ran, what skipped and why) / run my study workflow again (repeats the last run, same topic and all)
 - show my morning workflow (reads the steps back numbered), then edit in place: replace step 2 of my morning workflow with … / remove step 2 from my morning workflow / add a step to my morning workflow: …
 - preview my morning workflow (or "what would my morning workflow do right now?") — I check every condition against the live world and report what would run and what would skip, without executing anything
 
@@ -1022,6 +1151,7 @@ MISSIONS — a goal I break into steps and walk you through:
 - what's next? / done / mission status / abandon mission
 - what would finish my mission? (reads every remaining step back, read-only — nothing advances)
 - skip (drops the step in front of you) / add a step to my mission: …
+- finish this mission by friday (sets a deadline — mission status counts it down, and I speak up as it closes in) / when is my mission due / clear my mission deadline
 - queue a mission to X (up to 3 wait behind the active one and auto-start when it completes) / show my mission queue
 - move X to the front of the queue / start the queued mission X now (the active one steps back into the queue)
 - if a mission sits still for 3+ days, I'll bring it up when you come back
@@ -1061,8 +1191,13 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowResume(message) !== null ||
     parseMissionStart(message) !== null ||
     parseMissionQueue(message) !== null ||
+    parseMissionDeadline(message) !== null ||
+    parseLastRun(message) !== null ||
+    parseWorkflowRunAgain(message) !== null ||
     LIST_RX.test(t) ||
     RAN_TODAY_RX.test(t) ||
+    MISSION_DEADLINE_CLEAR_RX.test(t) ||
+    MISSION_DEADLINE_SHOW_RX.test(t) ||
     MISSION_STATUS_RX.test(t) ||
     MISSION_PREVIEW_RX.test(t) ||
     MISSION_ABANDON_RX.test(t) ||
@@ -1099,7 +1234,11 @@ function missionStatus(mission: Mission, queue: string[] = []): string {
     : `${total} steps ahead, none done yet.`;
   // v29: the queue rides along in the status report.
   const queued = queue.length ? `\n\nQueued next:\n${queueLines(queue)}` : '';
-  return `Mission: ${mission.goal}\n${done}\n\nCurrent step (${current} of ${total}):\n${mission.steps[mission.done]}${queued}\n\nSay "done" when it's finished, "what's next" to hear it again, or "abandon mission" to drop it.`;
+  // v47: a committed deadline rides along too, counted down honestly.
+  const t = todayInTZ('Africa/Johannesburg');
+  const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
+  const due = mission.deadline ? `\nDeadline: ${deadlineCountdown(mission.deadline, todayISO)}.` : '';
+  return `Mission: ${mission.goal}\n${done}${due}\n\nCurrent step (${current} of ${total}):\n${mission.steps[mission.done]}${queued}\n\nSay "done" when it's finished, "what's next" to hear it again, or "abandon mission" to drop it.`;
 }
 
 // v37: the mission dry-run — the whole remaining tail, numbered as the
@@ -1122,11 +1261,37 @@ function missionPreview(mission: Mission): string {
 // workflows ran today" reads these back. Stamped by every real run; the
 // v36 dry-run never stamps because it never comes through runWorkflow.
 const MAX_RUN_LOG = 10;
-function stampRun(log: WorkflowRun[] | undefined, name: string, date: string, via: WorkflowRun['via']): WorkflowRun[] {
-  const next = [...(log ?? []), { name, date, via }];
+function stampRun(
+  log: WorkflowRun[] | undefined,
+  name: string,
+  date: string,
+  via: WorkflowRun['via'],
+  topic?: string, // v47: replayed by "run my X workflow again"
+  steps?: StepOutcome[], // v47: read back by "what did my last run do"
+): WorkflowRun[] {
+  const entry: WorkflowRun = { name, date, via };
+  if (topic) entry.topic = topic;
+  if (steps?.length) entry.steps = steps;
+  const next = [...(log ?? []), entry];
   while (next.length > MAX_RUN_LOG) next.shift();
   return next;
 }
+
+// v47: step text inside a receipt is clipped so ten runs of five steps stay a
+// small profile field, never an unbounded transcript.
+function clipStep(s: string): string {
+  return s.length > 60 ? s.slice(0, 57) + '…' : s;
+}
+
+// v47: how the read-back and the today-list name each way a run can start.
+const VIA_LABEL: Record<WorkflowRun['via'], string> = {
+  manual: 'you ran it',
+  trigger: 'fired by its trigger phrase',
+  daily: 'daily auto-run',
+  weekly: 'weekly auto-run',
+  monthly: 'monthly auto-run',
+  nested: 'ran as a step inside another workflow',
+};
 
 async function runWorkflow(
   wf: Workflow,
@@ -1148,6 +1313,12 @@ async function runWorkflow(
   // right after it reads this. 'skipped' fires the otherwise; 'ran' quiets it;
   // 'unknown' (can't-check) quiets it too — an else on a guess is a guess.
   let prevCond: 'ran' | 'skipped' | 'unknown' | null = null;
+  // v47: every step's fate, kept on the receipt so "what did my last run do"
+  // answers with the whole story, not just the name.
+  const outcomes: StepOutcome[] = [];
+  const note = (o: StepOutcome['o'], s: string, w?: string) => {
+    outcomes.push(w ? { s: clipStep(s), o, w } : { s: clipStep(s), o });
+  };
   const t = todayInTZ('Africa/Johannesburg');
   const todayISO = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
   const onTopic = topic ? ` on "${topic}"` : '';
@@ -1168,16 +1339,19 @@ async function runWorkflow(
     if (other) {
       if (wasCond === 'ran') {
         skipped++;
+        note('skipped', step, 'the "when …" step before it ran, so the otherwise stayed quiet');
         blocks.push(`Step ${i + 1} — skipped (the "when …" step before it ran, so the otherwise stays quiet).`);
         continue;
       }
       if (wasCond === 'unknown') {
         skipped++;
+        note('skipped', step, "couldn't check the condition before it, so its otherwise stayed quiet");
         blocks.push(`Step ${i + 1} — skipped (I couldn't check the condition before it, so its otherwise stays quiet too).`);
         continue;
       }
       if (wasCond === null) {
         skipped++;
+        note('skipped', step, 'an "otherwise:" step needs a condition step right before it');
         blocks.push(`Step ${i + 1} — skipped: an "otherwise:" step needs a "when <condition>: …" step right before it.`);
         continue;
       }
@@ -1191,6 +1365,7 @@ async function runWorkflow(
         if (holds === null) {
           skipped++;
           prevCond = 'unknown';
+          note('skipped', step, `I don't know the condition "${cond.cond}"`);
           blocks.push(`Step ${i + 1} — skipped: I don't know the condition "${cond.cond}". I understand: ${KNOWN_CONDITIONS}.`);
           continue;
         }
@@ -1199,18 +1374,21 @@ async function runWorkflow(
         if (holds === 'unreachable') {
           skipped++;
           prevCond = 'unknown';
+          note('skipped', step, `couldn't check "${cond.cond}" — the source wasn't reachable`);
           blocks.push(`Step ${i + 1} — skipped: I couldn't check "${cond.cond}" just now (the source wasn't reachable), so I played it safe.`);
           continue;
         }
         if (holds === 'not-connected') {
           skipped++;
           prevCond = 'unknown';
+          note('skipped', step, `"${cond.cond}" needs Gmail, which wasn't connected`);
           blocks.push(`Step ${i + 1} — skipped: "${cond.cond}" needs your Gmail, and it isn't connected. Open Email in the Tools menu and tap Connect Gmail.`);
           continue;
         }
         if (!holds) {
           skipped++;
           prevCond = 'skipped';
+          note('skipped', step, `"when ${cond.cond}" wasn't the case`);
           blocks.push(`Step ${i + 1} — skipped ("when ${cond.cond}" isn't the case right now).`);
           continue;
         }
@@ -1223,6 +1401,7 @@ async function runWorkflow(
     // never through the engines, never advancing anything.
     if (MISSION_STEP_LITERAL_RX.test(step)) {
       executed++;
+      note('ran', step);
       blocks.push(`Step ${i + 1} — ${step}:\n` + (prof.mission
         ? `Mission "${prof.mission.goal}" — step ${prof.mission.done + 1} of ${prof.mission.steps.length}:\n${prof.mission.steps[prof.mission.done]}\n(Say "done" outside the workflow when it's finished.)`
         : 'No active mission right now — nothing waiting here.'));
@@ -1238,27 +1417,32 @@ async function runWorkflow(
     if (nestedRef) {
       if (depth >= 1) {
         skipped++;
+        note('skipped', step, 'nested workflows go one level deep');
         blocks.push(`Step ${i + 1} — skipped: nested workflows go one level deep, so "${nestedRef.name}" doesn't run from inside a run that's already nested.`);
         continue;
       }
       if (nestedRef.name === wf.name) {
         skipped++;
+        note('skipped', step, `"${wf.name}" can't run itself`);
         blocks.push(`Step ${i + 1} — skipped: "${wf.name}" can't run itself.`);
         continue;
       }
       const inner = (prof.workflows ?? []).find((w) => w.name === nestedRef.name);
       if (!inner) {
         skipped++;
+        note('skipped', step, `"${nestedRef.name}" wasn't on the shelf`);
         blocks.push(`Step ${i + 1} — skipped: there's no workflow called "${nestedRef.name}" on the shelf anymore.`);
         continue;
       }
       if (isPaused(inner, todayISO)) {
         skipped++;
+        note('skipped', step, `"${inner.name}" was paused`);
         blocks.push(`Step ${i + 1} — skipped: "${inner.name}" is ${pauseLabel(inner)}. Say "resume my ${inner.name} workflow" to wake it.`);
         continue;
       }
       if (hasSlot(inner) && !nestedRef.topic) {
         skipped++;
+        note('skipped', step, `"${inner.name}" has a * slot and the step named no topic`);
         blocks.push(`Step ${i + 1} — skipped: "${inner.name}" has a * slot and this step names no topic. Write the step as "run my ${inner.name} workflow on <topic>" (or on * to pass this run's topic through).`);
         continue;
       }
@@ -1268,6 +1452,7 @@ async function runWorkflow(
         changed = true;
       }
       executed++;
+      note('ran', step);
       blocks.push(`Step ${i + 1} — ${step}:\n${out.reply}`);
       continue;
     }
@@ -1278,6 +1463,7 @@ async function runWorkflow(
     if (isSendStep(step)) {
       if (!allowSend) {
         held++;
+        note('held', step, 'sends real email — a scheduled run never sends');
         blocks.push(`Step ${i + 1} — held back: this step sends real email, and a scheduled run never sends without you. Say "run my ${wf.name} workflow" yourself and I'll ask first.`);
         continue;
       }
@@ -1287,6 +1473,7 @@ async function runWorkflow(
         changed = true;
       }
       if (!drafted.reply) {
+        note('failed', step);
         blocks.push(`Step ${i + 1} — ${step}:\nI couldn't execute this one.`);
         continue;
       }
@@ -1315,6 +1502,7 @@ async function runWorkflow(
         }
       }
       executed++;
+      note('ran', step);
       blocks.push(block);
       continue;
     }
@@ -1326,8 +1514,10 @@ async function runWorkflow(
     }
     if (out.reply) {
       executed++;
+      note('ran', step);
       blocks.push(`Step ${i + 1} — ${step}:\n${out.reply}`);
     } else {
+      note('failed', step);
       blocks.push(`Step ${i + 1} — ${step}:\nI couldn't execute this one.`);
     }
   }
@@ -1348,7 +1538,8 @@ async function runWorkflow(
         : `Workflow "${wf.name}" finished — ${executed} of ${attempted} steps executed${skipNote}${holdNote}.`,
   );
   // v39: every real run leaves a receipt — the profile now always changes.
-  prof = { ...prof, workflowLog: stampRun(prof.workflowLog, wf.name, todayISO, via) };
+  // v47: the receipt carries the topic and every step's fate.
+  prof = { ...prof, workflowLog: stampRun(prof.workflowLog, wf.name, todayISO, via, topic, outcomes) };
   changed = true;
   return {
     reply: blocks.join('\n\n'),
@@ -1477,7 +1668,18 @@ function advanceMission(profile: Profile): { reply: string; profile: Profile } {
     while (wins.length > MAX_WINS) wins.shift();
     const next: Profile = { ...profile, wins };
     delete next.mission;
-    const base = `MISSION COMPLETE. All ${total} steps of "${mission.goal}" — done. You didn't just plan it, you EXECUTED it, and that's the difference that separates dreamers from builders. It's on your wins list now, permanently.`;
+    // v47: a deadline that was met (or missed) deserves a word on the way out.
+    const dl = (() => {
+      if (!mission.deadline) return '';
+      const td = todayInTZ('Africa/Johannesburg');
+      const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+      const diff = Math.round((Date.parse(mission.deadline) - Date.parse(todayISO)) / 86400000);
+      if (!Number.isFinite(diff)) return '';
+      if (diff > 0) return ` And you landed it ${diff} day${diff === 1 ? '' : 's'} ahead of your ${mission.deadline} deadline.`;
+      if (diff === 0) return ' And you landed it right on your deadline — cutting it fine still counts.';
+      return ' It came in past its deadline — but DONE beats on-time-someday, every time.';
+    })();
+    const base = `MISSION COMPLETE. All ${total} steps of "${mission.goal}" — done. You didn't just plan it, you EXECUTED it, and that's the difference that separates dreamers from builders. It's on your wins list now, permanently.${dl}`;
     // v29: the queue keeps the momentum — the next goal steps up immediately.
     const promoted = promoteQueued(next);
     if (promoted) {
@@ -1724,6 +1926,50 @@ export async function tryAgent(
     if (MISSION_PREVIEW_RX.test(t)) {
       return { reply: missionPreview(profile.mission) };
     }
+    // v47: mission deadlines — commit the active mission to a date, count it
+    // down, and let it go. Parsed before DONE (whose forms are all past-tense
+    // whole matches, so "finish this mission by friday" was never its ask).
+    const dlPhrase = parseMissionDeadline(message);
+    if (dlPhrase) {
+      const td = todayInTZ('Africa/Johannesburg');
+      const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+      const { due } = parseWhen(dlPhrase, td);
+      if (!due) {
+        return { reply: 'I can hold a deadline like "by friday", "by 25 december", or "by tomorrow" — that phrasing I don\'t know yet.' };
+      }
+      if (due < todayISO) {
+        return { reply: `That day is already behind us — a deadline needs to be today or later. Try "finish this mission by friday".` };
+      }
+      const mission: Mission = { ...profile.mission, deadline: due };
+      delete mission.deadlineNudged; // a fresh deadline speaks fresh
+      const remaining = mission.steps.length - mission.done;
+      return {
+        reply: `Deadline set — "${mission.goal}" is ${deadlineCountdown(due, todayISO)}, with ${remaining} step${remaining === 1 ? '' : 's'} between you and done. I'll count it down in "mission status" and speak up as it closes in. Say "clear my mission deadline" if plans change.`,
+        profile: { ...profile, mission },
+      };
+    }
+    if (MISSION_DEADLINE_CLEAR_RX.test(t)) {
+      if (!profile.mission.deadline) {
+        return { reply: `"${profile.mission.goal}" has no deadline to clear — it moves at your pace. Give it one with "finish this mission by friday".` };
+      }
+      const mission: Mission = { ...profile.mission };
+      delete mission.deadline;
+      delete mission.deadlineNudged;
+      return {
+        reply: `Deadline cleared — "${mission.goal}" is back on your own clock. The steps still stand; only the date is gone.`,
+        profile: { ...profile, mission },
+      };
+    }
+    if (MISSION_DEADLINE_SHOW_RX.test(t)) {
+      const td = todayInTZ('Africa/Johannesburg');
+      const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+      const remaining = profile.mission.steps.length - profile.mission.done;
+      return {
+        reply: profile.mission.deadline
+          ? `"${profile.mission.goal}" is ${deadlineCountdown(profile.mission.deadline, todayISO)} — ${remaining} step${remaining === 1 ? '' : 's'} to go.`
+          : `"${profile.mission.goal}" has no deadline — it moves at your pace. Commit to one with "finish this mission by friday".`,
+      };
+    }
     if (MISSION_DONE_RX.test(t)) return advanceMission(profile);
     // v27: mission editing — bare "skip" only means anything mid-mission.
     if (MISSION_SKIP_RX.test(t)) return skipStep(profile);
@@ -1754,7 +2000,11 @@ export async function tryAgent(
       };
     }
   } else {
-    if (MISSION_STATUS_RX.test(t) || MISSION_ABANDON_RX.test(t) || MISSION_PREVIEW_RX.test(t)) {
+    if (
+      MISSION_STATUS_RX.test(t) || MISSION_ABANDON_RX.test(t) || MISSION_PREVIEW_RX.test(t) ||
+      // v47: deadline talk with nothing active gets the same honest line.
+      parseMissionDeadline(message) !== null || MISSION_DEADLINE_CLEAR_RX.test(t) || MISSION_DEADLINE_SHOW_RX.test(t)
+    ) {
       return {
         reply: 'No active mission right now. Start one with "start a mission to…" and I\'ll break it into steps and walk you through them, one at a time.',
       };
@@ -1991,16 +2241,45 @@ export async function tryAgent(
     if (!today.length) {
       return { reply: 'Nothing has run today — no workflow has fired yet, manual or scheduled.' };
     }
-    const label: Record<WorkflowRun['via'], string> = {
-      manual: 'you ran it',
-      trigger: 'fired by its trigger phrase',
-      daily: 'daily auto-run',
-      weekly: 'weekly auto-run',
-      monthly: 'monthly auto-run',
-      nested: 'ran as a step inside another workflow',
-    };
     return {
-      reply: `Ran today (${today.length}):\n${today.map((r) => `- "${r.name}" — ${label[r.via]}`).join('\n')}`,
+      reply: `Ran today (${today.length}):\n${today.map((r) => `- "${r.name}" — ${VIA_LABEL[r.via]}`).join('\n')}\n\nSay "what did my last run do" for the step-by-step of the newest one.`,
+    };
+  }
+
+  // v47: the deep receipt — "what did my last run do" / "what did my last
+  // study run do" reads the newest matching receipt back step by step.
+  // Pure read; the outcomes were stamped by runWorkflow itself.
+  const lastAsk = parseLastRun(message);
+  if (lastAsk) {
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    const log = profile.workflowLog ?? [];
+    const hit = [...log].reverse().find((r) => !lastAsk.name || r.name === lastAsk.name);
+    if (!hit) {
+      return {
+        reply: lastAsk.name
+          ? `No "${lastAsk.name}" run on the receipts — I keep the last ${MAX_RUN_LOG}. Say "run my ${lastAsk.name} workflow" and the next one will be on record.`
+          : 'No runs on the receipts yet — I keep the last 10. Run a workflow ("run my <name> workflow") and I\'ll hold the step-by-step.',
+      };
+    }
+    const when = hit.date === todayISO ? 'today' : `on ${hit.date}`;
+    const onTopic = hit.topic ? ` on "${hit.topic}"` : '';
+    const head = `Your last${lastAsk.name ? ` "${hit.name}"` : ''} run — "${hit.name}"${onTopic}, ${when} (${VIA_LABEL[hit.via]}):`;
+    if (!hit.steps?.length) {
+      return { reply: `${head}\nThat run predates per-step receipts, so the receipt only says it happened. From now on every run keeps the full step-by-step.` };
+    }
+    const word: Record<StepOutcome['o'], string> = {
+      ran: '✓ ran',
+      skipped: '– skipped',
+      held: '✋ held back',
+      failed: "✗ couldn't execute",
+    };
+    const lines = hit.steps
+      .map((s, i) => `${i + 1}. ${word[s.o]} — ${s.s}${s.w ? ` (${s.w})` : ''}`)
+      .join('\n');
+    const ranCount = hit.steps.filter((s) => s.o === 'ran').length;
+    return {
+      reply: `${head}\n${lines}\n\n${ranCount} of ${hit.steps.length} step${hit.steps.length === 1 ? '' : 's'} ran. Say "run my ${hit.name} workflow again" to repeat it${hit.topic ? ' — same topic and all' : ''}.`,
     };
   }
 
@@ -2150,6 +2429,42 @@ export async function tryAgent(
     };
   }
 
+  // ── v47: the re-run form — replay the newest receipt, same topic ──────────
+  const again = parseWorkflowRunAgain(message);
+  if (again) {
+    const log = profile.workflowLog ?? [];
+    const hit = [...log].reverse().find((r) => !again.name || r.name === again.name);
+    if (!again.name && !hit) {
+      return { reply: 'No runs on the receipts yet — I keep the last 10, and the shelf is fresh. Say "run my <name> workflow" and "again" will mean something.' };
+    }
+    const name = again.name ?? hit!.name;
+    const wf = workflows.find((w) => w.name === name);
+    if (!wf) {
+      return again.name
+        ? workflows.length
+          ? { reply: `I don't have a workflow called "${name}". Here's what I'm holding:\n${nameList(workflows)}` }
+          : { reply: `No workflows saved yet, so there's nothing called "${name}" to run again.` }
+        : { reply: `The last run was "${name}", but that workflow isn't on the shelf anymore — nothing to run again.` };
+    }
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    if (isPaused(wf, todayISO)) {
+      return { reply: `"${wf.name}" is ${pauseLabel(wf)} — nothing ran. Say "resume my ${wf.name} workflow" and it's back on duty.` };
+    }
+    const topic = hit?.topic;
+    if (hasSlot(wf) && !topic) {
+      return {
+        reply: `"${wf.name}" has a * slot and ${hit ? "its last receipt didn't record a topic" : "I have no receipt of it running"}, so "again" has nothing to replay. Say it with the topic:\nrun my ${wf.name} workflow on grace`,
+      };
+    }
+    // The same gates as a fresh run — the send law never sleeps.
+    const sends = sendStepsOf(wf, workflows);
+    if (sends.length) return offerRunWithSends(wf, topic, profile, sends);
+    const echo = topic ? `Same again — replaying the last run's topic, "${topic}".\n\n` : '';
+    const out = await runWorkflow(wf, profile, run, topic, email, sources);
+    return { ...out, reply: `${echo}${out.reply}` };
+  }
+
   const toRun = parseWorkflowRun(message);
   if (toRun) {
     const wf = workflows.find((w) => w.name === toRun.name);
@@ -2279,7 +2594,30 @@ export function missionNudge(
   todayISO: string,
 ): { note: string; profile: Profile } | null {
   const mission = profile.mission;
-  if (!mission || mission.nudged === todayISO) return null;
+  if (!mission) return null;
+  // v47: a closing deadline outranks the idle rule — due within 2 days or
+  // overdue speaks once per SA day (its own stamp, so a mission that moved
+  // yesterday still hears its deadline).
+  if (mission.deadline && mission.deadlineNudged !== todayISO) {
+    const diff = Math.round((Date.parse(mission.deadline) - Date.parse(todayISO)) / 86400000);
+    if (Number.isFinite(diff) && diff <= 2) {
+      const remaining = mission.steps.length - mission.done;
+      const clock = diff < 0
+        ? `is ${deadlineCountdown(mission.deadline, todayISO)} — the date passed, the goal didn't. Finish it late or let it go, but decide`
+        : diff === 0
+          ? 'is due TODAY'
+          : diff === 1
+            ? 'is due TOMORROW'
+            : `is due in ${diff} days (${mission.deadline})`;
+      const note =
+        `Deadline check: "${mission.goal}" ${clock}. ${remaining} step${remaining === 1 ? '' : 's'} left, and you're on step ${mission.done + 1}:\n${mission.steps[mission.done]}\n\nSay "done" as you land them — or "clear my mission deadline" if the date no longer serves.`;
+      return {
+        note,
+        profile: { ...profile, mission: { ...mission, deadlineNudged: todayISO } },
+      };
+    }
+  }
+  if (mission.nudged === todayISO) return null;
   const last = Date.parse((mission.touched ?? mission.created).slice(0, 10));
   const idleDays = Math.round((Date.parse(todayISO) - last) / 86400000);
   if (!Number.isFinite(idleDays) || idleDays < 3) return null;

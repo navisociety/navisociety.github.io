@@ -101,7 +101,14 @@ export type DeviceTask = { device: string; text: string; created: string; auto?:
 
 // v39: one workflow run receipt — `via` says who started it. (+v41 monthly,
 // +v46 nested: the run was a step inside another workflow.)
-export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested' };
+// v47: `topic` is what filled the * slots (the re-run form replays it), and
+// `steps` holds per-step outcomes so "what did my last run do" answers with
+// the whole story. Step text is clipped at stamp time to keep the row small.
+export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested'; topic?: string; steps?: StepOutcome[] };
+
+// v47: one step's fate inside a run receipt — `s` is the (clipped) step text,
+// `o` what happened to it, `w` the short honest why when it didn't run.
+export type StepOutcome = { s: string; o: 'ran' | 'skipped' | 'held' | 'failed'; w?: string };
 
 // v42: one pending run-with-sends offer. A workflow whose steps SEND email
 // never runs unconfirmed — the run itself is offered ("this run wants to
@@ -174,7 +181,10 @@ export type ReviewSnapshot = {
 // v27: `touched` is the last time a step moved (advance/skip/add); a mission
 // idle 3+ days earns a session-start nudge, and `nudged` (yyyy-mm-dd) stops
 // the same nudge repeating within a day.
-export type Mission = { goal: string; steps: string[]; done: number; created: string; touched?: string; nudged?: string };
+// v47: `deadline` is an ISO date (yyyy-mm-dd, SA time) the user committed to
+// ("finish this mission by friday"); `deadlineNudged` stamps the day the
+// session-start deadline note last spoke, so it's one note per day, never a nag.
+export type Mission = { goal: string; steps: string[]; done: number; created: string; touched?: string; nudged?: string; deadline?: string; deadlineNudged?: string };
 
 // v23: one life event. `date` is an ISO date (yyyy-mm-dd) in SA time.
 export type LifeEvent = { text: string; date: string };

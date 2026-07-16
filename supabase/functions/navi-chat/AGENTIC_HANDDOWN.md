@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-16, at **v46** (the orchestration round).
+Last updated: 2026-07-16, at **v47** (the chronicle round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -192,6 +192,22 @@ recurring cadence mirrors the workflow schedule laws EXACTLY (weekly needs
 "every"/"each", monthly is 1-28 with an honest refusal, bare "every month"
 means the 1st and says so); no bare "daily" ("the daily standup" is a topic).
 
+v47 additions: NO new wiring at all — everything lives in agent.ts (plus two
+memory.ts type touches: WorkflowRun += topic/steps with the new StepOutcome
+type, Mission += deadline/deadlineNudged). runWorkflow collects a StepOutcome
+per step (ran/skipped/held/failed + the short why) and stamps it on the
+receipt with the topic; "what did my last run do" (and the named form) is a
+new read branch beside RAN_TODAY inside tryAgent; the re-run handler sits
+immediately BEFORE parseWorkflowRun (its "again"/"rerun" verbs can't collide
+with the plain run regexes, which end at "workflow"); the mission deadline
+commands sit in the active-mission cluster right after MISSION_PREVIEW and
+before MISSION_DONE (whose forms are all past-tense whole matches, so
+"finish this mission by friday" never was its ask). The deadline nudge is a
+new FIRST branch inside missionNudge itself — index.ts's existing call
+carries it, no session-start change; its own deadlineNudged stamp means a
+mission that moved yesterday still hears its deadline. VIA_LABEL was hoisted
+from the RAN_TODAY branch to module scope (the read-back shares it).
+
 v46 additions: no new pipeline position — everything lives in agent.ts (plus
 two memory.ts type touches: Workflow.paused, WorkflowRun.via += 'nested').
 THE STEP LAW CHANGED: the creation meta rule now ALLOWS the exact form
@@ -262,7 +278,40 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v46) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+### agent.ts — workflows & missions (v25→v47) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+
+**v47 — the chronicle round** (all agent.ts + two memory.ts types — the three
+post-v46 rungs the hand-down named, none needing Dian; the agentic layer
+learns to remember what it did and to commit to WHEN; all sync and free):
+- **Per-step run receipts**: every real run's WorkflowRun receipt now carries
+  `topic` and `steps` (StepOutcome: clipped step text ≤60 chars + 'ran' |
+  'skipped' | 'held' | 'failed' + the short honest why). "what did my last
+  run do" / "how did my last run go" / "show my last run" reads the newest
+  receipt back numbered; the NAMED form ("what did my last study run do")
+  finds that workflow's newest. Pre-v47 receipts (no steps) answer honestly
+  ("predates per-step receipts"); an empty log too. Pure read, never a
+  profile change. The v36 dry-run still never stamps anything.
+- **The re-run form**: "run my study workflow again" / "rerun my study
+  workflow" / bare "run that again" replays the newest matching receipt —
+  same workflow, same topic (the receipt's `topic`, echoed out loud). ALL the
+  fresh-run gates hold: pause answers honestly, a * slot without a recorded
+  topic refuses and teaches the topic form, and the v42 send confirm offers
+  instead of running (the replayed topic rides the runSend stamp). A named
+  re-run with no receipt and no slot just runs fresh — that's the honest
+  "again". A vanished workflow answers honestly.
+- **Mission deadlines**: "finish this mission by friday" / "set my mission
+  deadline to …" / "my mission is due on …" commits the ACTIVE mission to a
+  date (remind.ts parseWhen vocabulary — unknown phrasing teaches, the past
+  refuses, today is allowed). "mission status" adds a countdown line
+  (deadlineCountdown: due TODAY / due tomorrow / N days left / N days past);
+  "when is my mission due" answers alone; "clear my mission deadline" lets
+  go; completing the mission names a beaten, met, or missed deadline on the
+  way out. The session-start nudge (missionNudge, same index.ts wiring)
+  speaks at 2 days out / due / overdue — once per SA day via the separate
+  deadlineNudged stamp, OUTRANKING the 3-day idle rule. Conditions: "when my
+  mission is due soon:" (within 3 days incl. today) / "when my mission is
+  overdue:" + negations — sync, free, honest on no-mission/no-deadline
+  (nothing is due; "isn't overdue" is true).
 
 **v46 — the orchestration round** (all agent.ts + two memory.ts types — the
 workflow line learns flow control, self-control, and composition; built under
@@ -1033,6 +1082,14 @@ gated: #19 (DDL), new bridges. The step law is now: ordinary asks + the
 mission literal + the chain form — anything else that smells of
 workflow/mission management stays refused.
 
+Post-v47 status: the chronicle round consumed all three rungs the v46
+hand-down named (per-step receipts, the re-run form, mission deadlines) —
+the workflow line now remembers what it did, and the mission line knows
+when it's due. Still gated: #19 (DDL), new bridges (no backend tables).
+Genuinely ungated seams left are thin: brain/compose deepening, or small
+sibling polish (e.g. deadline-aware briefing line — the briefing already
+reads the mission). Ask Dian for a new direction before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1063,8 +1120,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v43 | `89fef8d` | reader round: /email/…/send (#21, confirm-gated, client steps aside), single-mail digest (#22, format=full + cleanEmailText), shaped summaries (one-sentence / key-points), runner scheduled polling + log on Dian's PC |
 | v44 | `559ecd5` | cadence round: recurring reminders (every day / weekday / 1-28 monthly, roll-on-surface, done rolls, delete stops), snooze, day-of-month conditions, remind.ts crisis guard (v22 gap closed) |
 | v45 | `6fc45b7` | almanac round: special-dates book (dates.ts — others' birthdays/anniversaries, yearly, day-of + day-before heads-ups), yearly reminders (every year on {month, day}), event-proximity + special-day conditions |
-| v46 | (see git) | orchestration round: nested workflow steps (run my X workflow, depth 1, send-law-safe), "otherwise:" else-steps (clean-false only), pause/resume with optional wake date |
+| v46 | `f574f04` | orchestration round: nested workflow steps (run my X workflow, depth 1, send-law-safe), "otherwise:" else-steps (clean-false only), pause/resume with optional wake date |
+| v47 | (see git) | chronicle round: per-step run receipts (WorkflowRun.topic/steps + "what did my last run do"), the re-run form ("run my X workflow again" replays the receipt topic), mission deadlines (set/show/clear + status countdown + session-start nudge + due-soon/overdue conditions) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → **256**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → **268**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
