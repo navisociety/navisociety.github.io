@@ -1,6 +1,7 @@
 // supabase/functions/navi-chat/compose.ts
 //
-// NAVI v21 — Creative Composer. Upgraded in v40 — the muse round.
+// NAVI v21 — Creative Composer. Upgraded in v40 (the muse round) and v48
+// (the anthology round).
 //
 // "Write me a prayer about strength." "Write a caption for my new song."
 // "Write an apology to my brother." NAVI COMPOSES — prayers, affirmations,
@@ -20,6 +21,24 @@
 //   - A char-code seed (not message length) so different topics rotate the
 //     banks properly. Still fully deterministic: same ask, same piece.
 //
+// v48 additions:
+//   - Songs are now ASSEMBLED like v40's stories: verse-1 / chorus / verse-2 /
+//     bridge banks (4 × 4 × 4 × 4 = 256 songs), the chorus reprised at the
+//     end so the sheet reads complete. First-person throughout; the topic
+//     lives in verse 1 and the chorus so any assembly reads as one song.
+//   - New kinds: congrats (congratulations messages), comfort (sympathy /
+//     condolence notes), and rap (verses with the topic woven in). "rap song"
+//     is a rap, not a song — its entry sits before the song entry.
+//   - Multi-piece asks: "write me 3 captions about the gym" / "/write 4
+//     quotes about discipline" — the SHORT kinds (caption, quote,
+//     affirmation) come back numbered and distinct, clamped honestly to the
+//     bank; the long forms still come one at a time and say so.
+//   - Letters sign with the user's stored name (the {sender} slot) instead
+//     of a bare "me".
+//   - The conversational path now carries the same CRISIS_RX step-aside the
+//     /write path shipped with (invariant #1 — the v44 remind.ts lesson:
+//     every parser that executes user language guards itself).
+//
 // Deterministic, zero-I/O, faith-true where it matters (prayers close on
 // Amen), and returns '' when the message isn't a composition ask so the
 // normal pipeline runs.
@@ -29,7 +48,8 @@ export type ComposeProfile = { name?: string };
 type Kind =
   | 'prayer' | 'affirmation' | 'caption' | 'poem' | 'motivation'
   | 'apology' | 'thanks' | 'goodmorning' | 'birthday'
-  | 'story' | 'song' | 'letter' | 'speech' | 'quote';
+  | 'story' | 'song' | 'letter' | 'speech' | 'quote'
+  | 'congrats' | 'comfort' | 'rap';
 
 // Crisis phrasing is never a writing prompt (invariant #1) — the parser steps
 // aside so the pipeline's crisis nodes answer with real support.
@@ -38,7 +58,8 @@ const CRISIS_RX =
 
 // Order matters: the compound kinds (thank-you letter, apology note,
 // motivational quote, birthday message) must win before the bare new kinds
-// (letter, quote, song) — earlier entries are checked first.
+// (letter, quote, song) — earlier entries are checked first. "rap" sits
+// before "song" so a "rap song" is a rap.
 const KIND_RX: Array<[RegExp, Kind]> = [
   [/\bprayer\b/, 'prayer'],
   [/\baffirmations?\b/, 'affirmation'],
@@ -49,7 +70,10 @@ const KIND_RX: Array<[RegExp, Kind]> = [
   [/\bthank[- ]?you (?:message|note|text|letter)\b/, 'thanks'],
   [/\bgood ?morning (?:message|text)\b/, 'goodmorning'],
   [/\bbirthday (?:message|wish|text)\b/, 'birthday'],
+  [/\bcongrats?\b|\bcongratulations?\b/, 'congrats'],
+  [/\bcondolences?\b|\bsympathy (?:message|note|text|card)\b|\bcomfort(?:ing)? (?:message|note|text|words?)\b/, 'comfort'],
   [/\b(?:short |bedtime )?stor(?:y|ies)\b|\btale\b/, 'story'],
+  [/\brap\b/, 'rap'],
   [/\bsong\b|\blyrics\b|\bchorus\b/, 'song'],
   [/\bletter\b/, 'letter'],
   [/\bspeech\b|\btoast\b/, 'speech'],
@@ -64,6 +88,7 @@ export interface ComposeAsk {
   kind: Kind;
   topic: string;      // "strength", "my new song" — '' when none given
   recipient: string;  // "my brother", "Thandi" — '' when none given
+  count?: number;     // v48: "3 captions" — ≥2 when a count was asked
 }
 
 // Topic: "about X" / "on X"; recipient: "for X" / "to X". Articles are kept —
@@ -77,25 +102,40 @@ function extractSlots(rest: string): { topic: string; recipient: string } {
   return { topic: clean(topic), recipient: clean(recipient) };
 }
 
+// v48: a leading count on the kind — "3 captions", "four quotes". Closed
+// vocabulary, ≥2 to count (a "1" is stripped but stays a single piece).
+const COUNT_WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6 };
+
+function takeCount(rest: string): { count?: number; rest: string } {
+  const m = rest.match(/^(\d{1,2}|two|three|four|five|six)\s+(.+)$/);
+  if (!m) return { rest };
+  const n = COUNT_WORDS[m[1]] ?? parseInt(m[1], 10);
+  return { count: n >= 2 ? n : undefined, rest: m[2] };
+}
+
 /** Parse a composition ask out of the message, or null when it isn't one. */
 export function parseCompose(message: string): ComposeAsk | null {
   const m = message.trim();
   if (!COMPOSE_CMD.test(m)) return null;
+  // v48: the conversational path steps aside on crisis phrasing exactly like
+  // the /write path — crisis language is never a topic to write around.
+  if (CRISIS_RX.test(m)) return null;
   const rest = m.replace(COMPOSE_CMD, '').toLowerCase().replace(/[.!?]+\s*$/, '').trim();
   if (!rest || rest.length > 140) return null;
 
+  const { count, rest: body } = takeCount(rest);
   let kind: Kind | null = null;
   for (const [rx, k] of KIND_RX) {
-    if (rx.test(rest)) { kind = k; break; }
+    if (rx.test(body)) { kind = k; break; }
   }
   if (!kind) return null;
   // "give me a quote from the bible" is a scripture ask, not a coined quote —
   // the Bible pipeline and nodes own it.
-  if (kind === 'quote' && /\b(bible|scripture|verse|psalm|proverbs)\b/.test(rest)) return null;
+  if (kind === 'quote' && /\b(bible|scripture|verse|psalm|proverbs)\b/.test(body)) return null;
 
-  const { topic: t, recipient: r } = extractSlots(rest);
+  const { topic: t, recipient: r } = extractSlots(body);
   if (t.split(/\s+/).length > 6 || r.split(/\s+/).length > 5) return null;
-  return { kind, topic: t, recipient: r };
+  return { kind, topic: t, recipient: r, ...(count ? { count } : {}) };
 }
 
 // ── v40: the /write slash command ─────────────────────────────────────────────
@@ -119,9 +159,10 @@ export const WRITE_USAGE =
   `To use /write, give me a prompt after the command — like:\n` +
   `• /write a poem about hope\n` +
   `• /write a story about a lion who lost his roar\n` +
-  `• /write a song about new beginnings\n` +
+  `• /write a rap about the grind\n` +
+  `• /write 3 captions about the gym\n` +
   `• /write a letter to my future self\n` +
-  `I can write stories, poems, songs, prayers, letters, speeches, quotes, affirmations, captions, apologies, thank-yous, and motivational pieces.`;
+  `I can write stories, poems, songs, raps, prayers, letters, speeches, quotes, affirmations, captions, congratulations, condolences, apologies, thank-yous, and motivational pieces — and for captions, quotes, and affirmations you can ask for up to six at once.`;
 
 // Asking ABOUT the command must teach it, deterministically — the fuzzy node
 // layer loses these asks to older writing/creativity nodes, so the anchored
@@ -162,30 +203,36 @@ export function parseWriteSlash(message: string): ComposeAsk | 'malformed' | 'cr
     .trim();
   if (!rest) return 'malformed';
 
+  const { count, rest: body } = takeCount(rest);
   let kind: Kind | null = null;
   for (const [rx, k] of KIND_RX) {
-    if (rx.test(rest)) { kind = k; break; }
+    if (rx.test(body)) { kind = k; break; }
   }
-  let { topic, recipient } = extractSlots(rest);
+  let { topic, recipient } = extractSlots(body);
 
   if (!kind) {
     // No kind named: "to <someone>" reads as a letter; anything else is a
-    // story prompt and the whole prompt is its topic.
+    // story prompt and the whole prompt is its topic (a leading number stays
+    // part of the topic — "/write 3 dragons" is a story about 3 dragons).
     if (!topic && recipient) {
       kind = 'letter';
     } else {
       kind = 'story';
       if (!topic) { topic = rest; recipient = ''; }
+      return { kind, topic: clip(topic), recipient: '' };
     }
   }
-  if (topic.length > 80) topic = topic.slice(0, 80).replace(/\s+\S*$/, '');
   if (recipient.split(/\s+/).length > 5) recipient = '';
-  return { kind, topic, recipient };
+  return { kind, topic: clip(topic), recipient, ...(count ? { count } : {}) };
+}
+
+function clip(topic: string): string {
+  return topic.length > 80 ? topic.slice(0, 80).replace(/\s+\S*$/, '') : topic;
 }
 
 // ── Template banks ────────────────────────────────────────────────────────────
-// {topic} — the subject; {recipient} — who it's for; both pre-defaulted before
-// filling so templates never render an empty hole.
+// {topic} — the subject; {recipient} — who it's for; {sender} — who it's from;
+// all pre-defaulted before filling so templates never render an empty hole.
 
 const PRAYERS = [
   `Father, thank You for this moment. I bring {topic} before You now — You see every part of it, even the parts I can't put into words. Give me strength where I am weak, clarity where I am confused, and peace that doesn't depend on how things look. I trust You with the outcome. In Jesus' name, Amen.`,
@@ -197,12 +244,18 @@ const AFFIRMATIONS = [
   `I am built for this season. {Topic} does not intimidate me — it is shaping me. I move with focus, I finish what I start, and I do not shrink to fit anyone's doubt. Today I take one real step forward, and that is enough.`,
   `I am not behind — I am becoming. {Topic} is in my hands and I handle it with patience and fire in the same breath. I speak life over my day: I am capable, I am chosen, I am consistent.`,
   `My mind is clear and my direction is set. {Topic} bends to discipline, and discipline is what I bring daily. I don't chase — I build. I don't doubt — I do.`,
+  `I release what I cannot control and grip what I can. {Topic} gets my best hours, not my leftovers. I am patient with the process and ruthless with my excuses.`,
+  `I was not made to blend in. {Topic} is my assignment, and assignments come with provision. I walk in focus, I speak with grace, and I finish strong.`,
+  `Today I choose momentum over mood. {Topic} moves because I move. Small steps, taken daily, are how mountains change their address.`,
 ];
 
 const CAPTIONS = [
   `Built in silence. Revealed on time. {Topic} — this one's from the heart.`,
   `Every level required a version of me that didn't exist yet. {Topic}. More coming.`,
   `Grace over grind — but I brought both. {Topic} is here.`,
+  `Proof over promises. {Topic} — delivered.`,
+  `They watched the glow-up and missed the grind. {Topic}, chapter one of many.`,
+  `Started with a prayer and a plan. {Topic} is the receipt.`,
 ];
 
 const POEMS = [
@@ -244,6 +297,20 @@ const BIRTHDAYS = [
   `It's your day, {recipient}. Happy birthday! May the year ahead out-do every year behind you — in health, in favour, in wins you can't even predict yet.`,
 ];
 
+// v48: the celebration and the condolence — both recipient-shaped.
+
+const CONGRATS = [
+  `{Recipient} — congratulations! You didn't stumble into this; you built it, brick by unseen brick. Enjoy every second of it, because moments like this are what the quiet work was for. Onwards and upwards!`,
+  `Congratulations, {recipient}! Some wins shout and some wins glow — this one does both. May this be the first line of a chapter even better than the last. So proud of you.`,
+  `It finally happened, {recipient} — congratulations! Talent opened the door, but consistency walked you through it. Celebrate properly today; tomorrow the next level is waiting.`,
+];
+
+const COMFORTS = [
+  `{Recipient}, I'm so sorry. There are no perfect words for a season like this, so I'll offer true ones instead: you don't have to be strong on a schedule, and you don't have to carry this alone. I'm here — today, and on the ordinary days after, when it often hurts most.`,
+  `Dear {recipient}, my heart is with you. Grief is love with nowhere to go, and the weight of it is proof of how much it mattered. Take it one hour at a time, and let people love you through this. Whatever you need — silence, stories, soup — I'm close.`,
+  `{Recipient}, I'm holding you in my prayers. May God's peace sit with you in the quiet places words can't reach, and may every memory that stings today become one that softly shines. You are deeply loved — lean on that, and on us.`,
+];
+
 // v40: stories are ASSEMBLED, not templated — an opening, a middle, and a
 // closing picked independently by the seed (4 × 4 × 4 = 64 stories). The
 // parts never name the protagonist outside the opening, so any combination
@@ -270,16 +337,52 @@ const STORY_CLOSINGS = [
   `And that is how {topic} stopped being a mystery and became a companion. Not tamed — never tamed — but known, the way the moon is known: distantly, faithfully, and enough.`,
 ];
 
-const SONGS = [
-  `(Verse 1)\nI've been carrying {topic} in my chest,\nthrough the long nights and the road with no rest,\nevery mile marker whispered my name,\nsaid the fire and the rain feel the same.\n\n(Chorus)\nBut I'm still here, still standing tall,\n{topic} couldn't make me fall,\nturn it up, let the whole world hear —\nwhat was meant to break me brought me here.\n\n(Verse 2)\nNow the morning's painting gold on my wall,\nI remember when I couldn't crawl,\nevery scar is a verse in my song,\nproof that I was right to hold on.`,
-  `(Verse 1)\nCity lights can't shine like this,\n{topic} started with a single wish,\nwrote it down on a paper heart,\nevery ending needs a start.\n\n(Chorus)\nSo sing it loud, sing it true,\n{topic} lives in what we do,\nhands up high, we came so far —\nwe became who we are.\n\n(Bridge)\nAnd if they ask us how we made it through,\nwe'll say: one day at a time — me and you.`,
-  `(Verse 1)\nQuiet room, an open door,\n{topic} waiting on the floor,\npicked it up and felt the weight,\nsome things heavy make you great.\n\n(Chorus)\nRise, rise — this is the sound\nof dreams that would not stay down,\n{topic} in every heartbeat's drum,\nthe best is still to come.`,
+// v48: songs are ASSEMBLED like the stories — a verse 1, a chorus, a verse 2,
+// and a bridge picked independently by the seed (4 × 4 × 4 × 4 = 256 songs),
+// with the chorus reprised at the end so the sheet reads complete. All parts
+// are first-person; the topic lives in verse 1 and the chorus, so any
+// assembly reads as one song.
+
+const SONG_V1S = [
+  `I've been carrying {topic} in my chest,\nthrough the long nights and the road with no rest,\nevery mile marker whispered my name,\nsaid the fire and the rain feel the same.`,
+  `City lights can't shine like this,\n{topic} started with a single wish,\nwrote it down on a paper heart,\nevery ending needs a start.`,
+  `Quiet room, an open door,\n{topic} waiting on the floor,\npicked it up and felt the weight,\nsome things heavy make you great.`,
+  `Dust on my shoes from the road I chose,\n{topic} calling where the cold wind blows,\ntraded my comfort for a compass and a flame,\nnever once looked back the way I came.`,
+];
+
+const SONG_CHORUSES = [
+  `But I'm still here, still standing tall,\n{topic} couldn't make me fall,\nturn it up, let the whole world hear —\nwhat was meant to break me brought me here.`,
+  `So sing it loud, sing it true,\n{topic} lives in what I do,\nhands up high, I came so far —\nI finally know who I am.`,
+  `Rise, rise — this is the sound\nof dreams that would not stay down,\n{topic} in every heartbeat's drum,\nthe best is still to come.`,
+  `Louder now — I found my voice,\n{topic} was never chance, it was choice,\nlet the echo carry down the years:\nI sang my way straight through the fears.`,
+];
+
+const SONG_V2S = [
+  `Now the morning's painting gold on my wall,\nI remember when I couldn't crawl,\nevery scar is a verse in my song,\nproof that I was right to hold on.`,
+  `Took the doubt and made it fuel,\nbroke the mold and bent the rule,\nwhat they said would slow me down\nis the reason I wear the crown.`,
+  `Phone light low at 2 a.m.,\nwrote my dreams then lived in them,\nsmall beginnings, steady hands,\nlittle rivers move the lands.`,
+  `I kept the promise no one heard,\nbuilt a life on a whispered word,\nnow the door I used to knock\nswings wide open when I walk.`,
+];
+
+const SONG_BRIDGES = [
+  `And if they ask me how I made it through,\nI'll say: one day at a time — and a little faith too.`,
+  `Quiet now… just the beat and my breath —\nI've come too far to fear what's left.`,
+  `This is for the ones still walking through the rain:\nhold on — gold gets made in flame.`,
+  `Every no was a detour, every fall was a seed —\nlook at the garden growing out of me.`,
+];
+
+// v48: raps — topic-woven verses with their own cadence.
+
+const RAPS = [
+  `Yeah — look,\nthey slept on {topic}, I stayed up instead,\nturned midnight oil to bread, vision in my head,\nno co-sign needed, I redeemed what they said,\nevery L was a lesson and I read them all twice,\nI'm in my prime like a decade of prep,\n{topic} on my shoulders and I ain't broke a sweat yet.`,
+  `Check —\n{topic} in my pocket like a promise I kept,\nclimbed out of the basement, took the stairs, never slept,\nthey counted me out, I was counting my steps,\nnow the count's in my favour — go ahead and check.\nHumble with the blessing, but I said what I said:\ncan't rewrite my story, I'm the author and the pen.`,
+  `Ayo —\nstarted with a whisper, now {topic} got a megaphone,\nbuilt it out of nothing, now the nothing is a home,\nkept my circle prayed up, kept the envy on read,\nlet the work make the noise while the critics make threads.\nLegacy talk — I'm just getting to page one,\nwhen they ask how it started, say: the work got done.`,
 ];
 
 const LETTERS = [
-  `Dear {recipient},\n\nI've started this letter more times than I can count, and every version comes back to the same thing: {topic}. Some things are too important to say in passing, so I'm saying this one properly.\n\nYou should know that none of it is taken for granted — not the time, not the patience, not the way you've carried what you've carried. Life moves fast and words move slow, but these ones are true and they'll keep.\n\nWith all my heart,\nme`,
-  `Dear {recipient},\n\nThere are letters you write because you must, and letters you write because your heart won't sit still until you do. This is the second kind, and it's about {topic}.\n\nI won't dress it up: it matters. It has mattered for longer than I've said out loud, and putting it on paper is my way of making it real. Whatever comes next, I wanted you to have this in your hands first.\n\nAlways,\nme`,
-  `Dear {recipient},\n\nBy the time you read this, I'll have found the courage I'm borrowing right now to write about {topic}. Funny how paper is braver than people.\n\nHere is what I know for certain: the things we don't say don't disappear — they just wait. I'm done letting this one wait. Thank you for being the kind of person a letter like this can be sent to.\n\nYours,\nme`,
+  `Dear {recipient},\n\nI've started this letter more times than I can count, and every version comes back to the same thing: {topic}. Some things are too important to say in passing, so I'm saying this one properly.\n\nYou should know that none of it is taken for granted — not the time, not the patience, not the way you've carried what you've carried. Life moves fast and words move slow, but these ones are true and they'll keep.\n\nWith all my heart,\n{sender}`,
+  `Dear {recipient},\n\nThere are letters you write because you must, and letters you write because your heart won't sit still until you do. This is the second kind, and it's about {topic}.\n\nI won't dress it up: it matters. It has mattered for longer than I've said out loud, and putting it on paper is my way of making it real. Whatever comes next, I wanted you to have this in your hands first.\n\nAlways,\n{sender}`,
+  `Dear {recipient},\n\nBy the time you read this, I'll have found the courage I'm borrowing right now to write about {topic}. Funny how paper is braver than people.\n\nHere is what I know for certain: the things we don't say don't disappear — they just wait. I'm done letting this one wait. Thank you for being the kind of person a letter like this can be sent to.\n\nYours,\n{sender}`,
 ];
 
 const SPEECHES = [
@@ -294,6 +397,7 @@ const QUOTES = [
   `"{Topic} whispers before it roars — blessed are those who listen early."`,
   `"Guard {topic} like a flame: shield it from the wind, feed it daily, and one day it will light more than your own path."`,
   `"Everyone wants {topic}; few want the mornings it costs. Be one of the few."`,
+  `"When {topic} feels far away, remember: the seed never sees the harvest on planting day."`,
 ];
 
 const BANKS: Record<Kind, string[]> = {
@@ -306,8 +410,11 @@ const BANKS: Record<Kind, string[]> = {
   thanks: THANKS,
   goodmorning: GOODMORNINGS,
   birthday: BIRTHDAYS,
+  congrats: CONGRATS,
+  comfort: COMFORTS,
   story: [], // assembled from the three story banks, never looked up here
-  song: SONGS,
+  song: [],  // v48: assembled from the four song banks, never looked up here
+  rap: RAPS,
   letter: LETTERS,
   speech: SPEECHES,
   quote: QUOTES,
@@ -321,8 +428,10 @@ const DEFAULT_TOPIC: Record<Kind, string> = {
   poem: 'the dream',
   motivation: 'what you are building',
   apology: '', thanks: '', goodmorning: '', birthday: '',
+  congrats: '', comfort: '',
   story: 'a dream that would not let go',
   song: 'this journey',
+  rap: 'the grind',
   letter: 'everything I never said out loud',
   speech: 'the road that brought us here',
   quote: 'purpose',
@@ -332,12 +441,13 @@ function cap(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
-function fill(template: string, topic: string, recipient: string): string {
+function fill(template: string, topic: string, recipient: string, sender: string): string {
   return template
     .replace(/\{Topic\}/g, cap(topic))
     .replace(/\{topic\}/g, topic)
     .replace(/\{Recipient\}/g, cap(recipient))
-    .replace(/\{recipient\}/g, recipient);
+    .replace(/\{recipient\}/g, recipient)
+    .replace(/\{sender\}/g, sender);
 }
 
 // v40: the seed sums char codes (stable, deterministic) instead of taking the
@@ -359,12 +469,50 @@ const OPENERS: Record<Kind, string> = {
   thanks: `Here's a way to say it:\n\n`,
   goodmorning: `Here you go:\n\n`,
   birthday: `Here you go:\n\n`,
+  congrats: `Here you go:\n\n`,
+  comfort: `Here's a way to say it, gently:\n\n`,
   story: `Here's your story:\n\n`,
   song: `Here's your song:\n\n`,
+  rap: `Here's your verse — say it with your chest:\n\n`,
   letter: `Here's your letter:\n\n`,
   speech: `Here's your speech:\n\n`,
   quote: `Here's one for you:\n\n`,
 };
+
+// v48: only the short kinds come back in numbered batches; everything longer
+// is composed one at a time (and says so when a count was asked).
+const MULTI_KINDS = new Set<Kind>(['caption', 'quote', 'affirmation']);
+
+const KIND_PLURAL: Record<Kind, string> = {
+  prayer: 'prayers', affirmation: 'affirmations', caption: 'captions',
+  poem: 'poems', motivation: 'motivational pieces', apology: 'apologies',
+  thanks: 'thank-yous', goodmorning: 'good-morning messages',
+  birthday: 'birthday messages', congrats: 'congratulations messages',
+  comfort: 'condolence messages', story: 'stories', song: 'songs',
+  rap: 'raps', letter: 'letters', speech: 'speeches', quote: 'quotes',
+};
+
+/** Assemble/pick ONE piece for the ask (no opener). */
+function renderOne(kind: Kind, topic: string, recipient: string, sender: string, seed: number): string {
+  if (kind === 'story') {
+    const o = STORY_OPENINGS[seed % STORY_OPENINGS.length];
+    const m = STORY_MIDDLES[Math.floor(seed / 4) % STORY_MIDDLES.length];
+    const c = STORY_CLOSINGS[Math.floor(seed / 16) % STORY_CLOSINGS.length];
+    return [o, m, c].map(t => fill(t, topic, recipient, sender)).join('\n\n');
+  }
+  if (kind === 'song') {
+    const v1 = SONG_V1S[seed % SONG_V1S.length];
+    const ch = SONG_CHORUSES[Math.floor(seed / 4) % SONG_CHORUSES.length];
+    const v2 = SONG_V2S[Math.floor(seed / 16) % SONG_V2S.length];
+    const br = SONG_BRIDGES[Math.floor(seed / 64) % SONG_BRIDGES.length];
+    return [
+      `(Verse 1)\n${v1}`, `(Chorus)\n${ch}`, `(Verse 2)\n${v2}`,
+      `(Bridge)\n${br}`, `(Chorus — one more time)\n${ch}`,
+    ].map(t => fill(t, topic, recipient, sender)).join('\n\n');
+  }
+  const bank = BANKS[kind];
+  return fill(bank[seed % bank.length], topic, recipient, sender);
+}
 
 /** Render a parsed ask into the finished piece. Shared by both entry paths. */
 function renderCompose(ask: ComposeAsk, profile: ComposeProfile, seed: number): string {
@@ -374,18 +522,24 @@ function renderCompose(ask: ComposeAsk, profile: ComposeProfile, seed: number): 
     || (ask.kind === 'caption' && ask.recipient ? ask.recipient : '')
     || DEFAULT_TOPIC[ask.kind];
   const recipient = ask.recipient || profile.name || 'you';
+  const sender = profile.name || 'me';
 
-  let piece: string;
-  if (ask.kind === 'story') {
-    const o = STORY_OPENINGS[seed % STORY_OPENINGS.length];
-    const m = STORY_MIDDLES[Math.floor(seed / 4) % STORY_MIDDLES.length];
-    const c = STORY_CLOSINGS[Math.floor(seed / 16) % STORY_CLOSINGS.length];
-    piece = [o, m, c].map(t => fill(t, topic, recipient)).join('\n\n');
-  } else {
-    const bank = BANKS[ask.kind];
-    piece = fill(bank[seed % bank.length], topic, recipient);
+  if (ask.count && ask.count >= 2) {
+    if (MULTI_KINDS.has(ask.kind)) {
+      const bank = BANKS[ask.kind];
+      const n = Math.min(ask.count, bank.length);
+      const items = Array.from({ length: n }, (_, i) =>
+        `${i + 1}) ${fill(bank[(seed + i) % bank.length], topic, recipient, sender)}`);
+      let out = `Here are ${n} ${KIND_PLURAL[ask.kind]} for you:\n\n${items.join('\n\n')}`;
+      if (n < ask.count) out += `\n\n(That's my whole shelf of ${KIND_PLURAL[ask.kind]} — all ${n} of them.)`;
+      return out;
+    }
+    // The long forms come one at a time — compose one and say so honestly.
+    return `I do ${KIND_PLURAL[ask.kind]} one at a time — here's one:\n\n` +
+      renderOne(ask.kind, topic, recipient, sender, seed);
   }
-  return `${OPENERS[ask.kind]}${piece}`;
+
+  return `${OPENERS[ask.kind]}${renderOne(ask.kind, topic, recipient, sender, seed)}`;
 }
 
 /**

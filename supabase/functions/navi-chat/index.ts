@@ -3269,7 +3269,7 @@ const KNOWLEDGE: KNode[] = [
   {
     triggers: ['/write', 'creative writing', 'what can you write', 'writing prompt', 'help me write', 'write something', 'write for me'],
     responses: [
-      'I love to write! Type /write followed by any prompt — like /write a poem about hope, /write a story about a lion who lost his roar, or /write a letter to my future self. I can write stories, poems, songs, prayers, letters, speeches, quotes, affirmations, captions, apologies, thank-yous, and motivational pieces. You can also just ask — "write me a prayer about strength" works too.',
+      'I love to write! Type /write followed by any prompt — like /write a poem about hope, /write a rap about the grind, /write 3 captions about the gym, or /write a letter to my future self. I can write stories, poems, songs, raps, prayers, letters, speeches, quotes, affirmations, captions, congratulations, condolences, apologies, thank-yous, and motivational pieces — and for captions, quotes, and affirmations you can ask for up to six at once. You can also just ask — "write me a prayer about strength" works too.',
     ],
     priority: 2,
   },

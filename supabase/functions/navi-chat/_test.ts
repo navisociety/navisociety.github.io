@@ -828,6 +828,69 @@ Deno.test('isWriteSlashAsk guards prompts; ordinary conversation untouched', () 
   eq(tryCompose('how do i write a cv'), '', 'question stays conversation');
 });
 
+// ── v48: the anthology round — multi-piece asks, new kinds, assembled songs ──
+
+Deno.test('v48: multi-piece asks come back numbered and distinct', () => {
+  const p = parseCompose('write me 3 captions about the gym');
+  eq(p?.kind, 'caption', 'count then kind still parses');
+  eq(p?.count, 3, 'count read');
+  eq(p?.topic, 'the gym', 'topic survives the count');
+  const out = tryCompose('write me 3 captions about the gym');
+  if (!out.includes('1) ') || !out.includes('2) ') || !out.includes('3) ')) throw new Error(`numbered: ${out}`);
+  const items = out.split('\n\n').filter(l => /^\d\) /.test(l));
+  eq(new Set(items).size, 3, 'all three are distinct');
+  eq(tryCompose('write me 3 captions about the gym'), out, 'deterministic');
+  const words = parseCompose('give me four quotes about discipline');
+  eq(words?.count, 4, 'word counts parse too');
+});
+
+Deno.test('v48: counts clamp honestly and long kinds stay one at a time', () => {
+  const many = tryCompose('/write 9 quotes about focus');
+  const items = many.split('\n\n').filter(l => /^\d\) /.test(l));
+  eq(items.length, 6, 'clamped to the bank');
+  if (!many.includes('whole shelf')) throw new Error(`clamp note missing: ${many}`);
+  const story = tryCompose('write me 3 stories about the sea');
+  if (!story.includes('one at a time')) throw new Error(`long-kind note: ${story}`);
+  if (story.includes('2) ')) throw new Error(`long kind must not batch: ${story}`);
+  eq(tryCompose('i wrote 3 songs last year'), '', 'past-tense mention stays conversation');
+});
+
+Deno.test('v48: new kinds — congrats, comfort, rap ("rap song" is a rap)', () => {
+  const c = parseCompose('write me a congratulations message for thandi');
+  eq(c?.kind, 'congrats', 'congrats kind');
+  eq(c?.recipient, 'thandi', 'congrats recipient');
+  const congrats = tryCompose('write me a congratulations message for thandi');
+  if (!congrats.toLowerCase().includes('congratulations') || !congrats.includes('Thandi')) throw new Error(`congrats: ${congrats}`);
+  const s = parseCompose('write a sympathy message for my aunt');
+  eq(s?.kind, 'comfort', 'sympathy is comfort');
+  const comfort = tryCompose('write a sympathy message for my aunt');
+  if (!comfort.toLowerCase().includes('my aunt')) throw new Error(`comfort recipient: ${comfort}`);
+  eq(parseCompose('write me a rap about the grind')?.kind, 'rap', 'rap kind');
+  eq(parseCompose('write me a rap song about the grind')?.kind, 'rap', 'rap song is a rap, not a song');
+  const rap = tryCompose('/write a rap about the grind');
+  if (!rap.includes('the grind')) throw new Error(`rap topic: ${rap}`);
+});
+
+Deno.test('v48: songs are assembled — verse/chorus/verse 2/bridge, chorus reprised', () => {
+  const song = tryCompose('/write a song about new beginnings');
+  for (const part of ['(Verse 1)', '(Chorus)', '(Verse 2)', '(Bridge)', '(Chorus — one more time)']) {
+    if (!song.includes(part)) throw new Error(`missing ${part}: ${song}`);
+  }
+  if (!song.toLowerCase().includes('new beginnings')) throw new Error(`topic: ${song}`);
+  eq(tryCompose('/write a song about new beginnings'), song, 'deterministic: same ask, same song');
+  const other = tryCompose('/write a song about leaving home');
+  if (other === song) throw new Error('different topics should rotate the banks');
+});
+
+Deno.test('v48: letters sign with the stored name; crisis guards the conversational path', () => {
+  const named = tryCompose('/write a letter to my future self', { name: 'Dian' });
+  if (!/\nDian$/.test(named)) throw new Error(`letter should sign Dian: ${named.slice(-80)}`);
+  const anon = tryCompose('/write a letter to my future self');
+  if (!/\nme$/.test(anon)) throw new Error(`anonymous letter signs me: ${anon.slice(-80)}`);
+  eq(parseCompose('write me a story about how i want to die'), null, 'crisis phrasing is never a topic');
+  eq(tryCompose('write me a story about how i want to die'), '', 'conversational crisis steps aside too');
+});
+
 // ── v21: Goal Planner ────────────────────────────────────────────────────────
 
 Deno.test('parsePlanGoal extracts explicit goals only', () => {

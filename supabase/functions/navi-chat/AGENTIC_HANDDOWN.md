@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-16, at **v47** (the chronicle round).
+Last updated: 2026-07-16, at **v48** (the anthology round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -148,6 +148,16 @@ carries its own CRISIS_RX) so the crisis nodes own the message. The /write
 help node lives in index.ts NODES with its navi-model.ts mirror (the
 sanctioned v34 pattern — the mirror is the offline fallback, not UI).
 
+v48 additions: NO new wiring at all — everything lives inside compose.ts
+(plus the /write help-node text refresh in index.ts NODES and its
+navi-model.ts mirror, the sanctioned v34 pattern). tryCompose was already in
+both paths and isWriteSlashAsk already guards splitIntents, so the new kinds,
+counts, and assembled songs ride everywhere (workflow steps included) for
+free. ONE invariant fix while in the file: parseCompose (the CONVERSATIONAL
+path) now carries the same CRISIS_RX step-aside the v40 slash path had —
+"write me a story about how i want to die" spoken plainly used to compose;
+it now falls through to the crisis nodes (the v44 remind.ts lesson applied).
+
 v42 additions: no new pipeline position — the run-time send confirm lives
 entirely inside tryAgent/runWorkflow (agent.ts) plus ONE mail.ts export
 (isSendStep). THE PRECEDENCE LAW GREW A LEVEL: tryAgent is the pipeline's
@@ -278,7 +288,35 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v47) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v40) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+### agent.ts — workflows & missions (v25→v47) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v48) · understand.ts (v21→v43) · remind.ts (v22→v45) · dates.ts (v45, NEW)
+
+**v48 — the anthology round** (all compose.ts + the help-node refresh — built
+under Dian's explicit "enhance NAVI creative writing / the /write feature"
+direction, 2026-07-16; deterministic, zero-I/O, zero external LLM as always):
+- **Assembled songs**: songs now build like v40's stories — verse-1 / chorus /
+  verse-2 / bridge banks (4 × 4 × 4 × 4 = 256 songs), the chorus reprised at
+  the end ("(Chorus — one more time)") so the sheet reads complete. All parts
+  first-person; the topic lives in verse 1 and the chorus so any assembly
+  reads as one song. BANKS.song is now [] like story — never looked up.
+- **New kinds**: congrats (congratulations messages), comfort (sympathy /
+  condolence notes — one variant faith-forward, recipient-shaped), and rap
+  (topic-woven verses). KIND_RX ORDER MATTERS: rap sits BEFORE song so a
+  "rap song" is a rap. Condolence asks that carry actual crisis words
+  (die/dying/death) still step aside to the crisis nodes — by design;
+  "who lost her husband" phrasings compose fine.
+- **Multi-piece asks**: "write me 3 captions about the gym" / "/write 4
+  quotes about discipline" — a leading count (digits or two…six, closed
+  vocabulary, ≥2) on the SHORT kinds (caption, quote, affirmation — the
+  MULTI_KINDS set) returns numbered DISTINCT variants, clamped honestly to
+  the bank size with a "whole shelf" note. Long kinds with a count compose
+  one and say so ("I do stories one at a time"). Deepened for this: captions
+  3→6, affirmations 3→6, quotes 5→6.
+- **Letters sign with the stored name**: the {sender} slot (profile.name,
+  'me' when anonymous) replaced the hardcoded "me" closings; fill() grew a
+  sender param.
+- **The conversational crisis guard** (invariant #1): parseCompose now tests
+  CRISIS_RX on the whole message and returns null — verified live: the SADAG
+  line answers instead of a composed story.
 
 **v47 — the chronicle round** (all agent.ts + two memory.ts types — the three
 post-v46 rungs the hand-down named, none needing Dian; the agentic layer
@@ -1090,6 +1128,17 @@ Genuinely ungated seams left are thin: brain/compose deepening, or small
 sibling polish (e.g. deadline-aware briefing line — the briefing already
 reads the mission). Ask Dian for a new direction before inventing.
 
+Post-v48 status: Dian's "enhance NAVI creative writing / the /write feature"
+(2026-07-16) opened compose.ts as the seam — the anthology round shipped
+assembled songs, three new kinds (congrats/comfort/rap), multi-piece asks on
+the short kinds, {sender}-signed letters, and closed the conversational
+crisis gap. Compose seams left if Dian asks again: tone/style modifiers
+(funny/formal — needs per-tone banks, weigh the size), poem assembly (the
+stanzas rhyme as wholes — don't split them naively), remembering recent
+variants per user (needs a profile stamp — tryCompose would have to return
+a profile, a try* contract change). Still gated: #19 (DDL), new bridges.
+Otherwise: ask Dian for the next direction before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1121,8 +1170,9 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v44 | `559ecd5` | cadence round: recurring reminders (every day / weekday / 1-28 monthly, roll-on-surface, done rolls, delete stops), snooze, day-of-month conditions, remind.ts crisis guard (v22 gap closed) |
 | v45 | `6fc45b7` | almanac round: special-dates book (dates.ts — others' birthdays/anniversaries, yearly, day-of + day-before heads-ups), yearly reminders (every year on {month, day}), event-proximity + special-day conditions |
 | v46 | `f574f04` | orchestration round: nested workflow steps (run my X workflow, depth 1, send-law-safe), "otherwise:" else-steps (clean-false only), pause/resume with optional wake date |
-| v47 | (see git) | chronicle round: per-step run receipts (WorkflowRun.topic/steps + "what did my last run do"), the re-run form ("run my X workflow again" replays the receipt topic), mission deadlines (set/show/clear + status countdown + session-start nudge + due-soon/overdue conditions) |
+| v47 | `073a288` | chronicle round: per-step run receipts (WorkflowRun.topic/steps + "what did my last run do"), the re-run form ("run my X workflow again" replays the receipt topic), mission deadlines (set/show/clear + status countdown + session-start nudge + due-soon/overdue conditions) |
+| v48 | (see git) | anthology round: assembled songs (verse/chorus/verse-2/bridge banks, 256 songs), new kinds congrats/comfort/rap, multi-piece asks on caption/quote/affirmation (numbered, clamped honestly), {sender}-signed letters, conversational CRISIS_RX guard on parseCompose |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → **268**. Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → **273**. Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
