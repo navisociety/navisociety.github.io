@@ -91,11 +91,12 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
-      - name: Deploy navi-choice function
+      # The Choice tool was removed (2026-07-16). This step deletes the old
+      # navi-choice function from Supabase; it fails harmlessly once gone.
+      - name: Delete retired navi-choice function
         continue-on-error: true
         run: |
-          supabase functions deploy navi-choice \
-            --project-ref irssegzkvxyewuxgqpwi \
-            --no-verify-jwt
+          supabase functions delete navi-choice \
+            --project-ref irssegzkvxyewuxgqpwi
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
