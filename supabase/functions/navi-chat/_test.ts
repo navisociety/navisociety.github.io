@@ -61,7 +61,7 @@ import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
 import { tryTasks, isTasksAsk, buildIcs, deviceReceipts } from './tasks.ts';
 import { isReviewAsk, buildReview, tryReview, reviewOffer } from './review.ts';
-import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision } from './vision.ts';
+import { parseVisionAdd, parseVisionRemove, isVisionListAsk, tryVision, isVisionSlashAsk, parseVisionSlash } from './vision.ts';
 import { parseCleanupAsk, isChatCountAsk, tryChats } from './chats.ts';
 import {
   parseMailDraft, isDraftListAsk, parseDraftDelete, parseDraftSend, tryMail,
@@ -2308,6 +2308,48 @@ Deno.test('v30: tryVision — sign-in gate, mission pin needs a mission, chatter
   eq(await tryVision('give me a verse about hope', EMAIL, {}), null, 'unrelated asks fall through');
   if (!Deno.env.get('SUPABASE_URL')) {
     const out = await tryVision('add win a grammy to my vision board', EMAIL, {});
+    if (!out?.reply.includes("couldn't reach")) throw new Error('an unreachable board must be reported honestly: ' + out?.reply);
+  }
+});
+
+// ── 2026-07-16: the /vision slash command ─────────────────────────────────────
+
+Deno.test('/vision slash: detection guards the split; ordinary talk untouched', () => {
+  eq(isVisionSlashAsk('/vision add finish my album'), true, 'slash ask detected');
+  eq(isVisionSlashAsk('  /vision list'), true, 'leading space tolerated');
+  eq(isVisionSlashAsk('/visionboard add a house'), true, 'joined board form');
+  eq(isVisionSlashAsk('/vision board add a house'), true, 'spaced board form');
+  eq(isVisionSlashAsk('my vision is to build a label'), false, 'plain sentence is not ours');
+  eq(isVisionSlashAsk('i love my vision board'), false, 'board talk is not a slash ask');
+});
+
+Deno.test('/vision slash: rewrites to the canonical phrases, taught when malformed', () => {
+  eq(parseVisionSlash('/vision add finish my album'), 'add finish my album to my vision board', 'add rewrites');
+  eq(parseVisionSlash('/vision add finish my album to my vision board'), 'add finish my album to my vision board', 'no doubled tail');
+  eq(parseVisionSlash('/vision add/buy the studio'), 'add buy the studio to my vision board', 'slash separator after the verb');
+  eq(parseVisionSlash('/vision remove finish my album'), 'remove finish my album from my vision board', 'remove rewrites');
+  eq(parseVisionSlash('/vision board remove world tour from my vision board'), 'remove world tour from my vision board', 'board form + no doubled tail');
+  eq(parseVisionSlash('/vision list'), 'show my vision board', 'list rewrites');
+  eq(parseVisionSlash("/vision what's on it"), 'show my vision board', 'casual list form');
+  eq(parseVisionSlash('/vision'), 'malformed', 'bare command is taught');
+  eq(parseVisionSlash('/vision help'), 'malformed', 'help is taught');
+  eq(parseVisionSlash('/vision dance'), 'malformed', 'unknown subcommand is taught, never dropped');
+  eq(parseVisionSlash('/vision add i want to die'), 'crisis', 'crisis steps aside for the crisis nodes');
+  eq(parseVisionSlash('add hope to my vision board'), null, 'phrase form is not a slash ask');
+  const rewritten = parseVisionSlash('/vision add win a grammy');
+  eq(typeof rewritten === 'string' ? parseVisionAdd(rewritten) : null, 'win a grammy', 'rewrite round-trips through parseVisionAdd');
+});
+
+Deno.test('/vision slash: tryVision teaches usage, steps aside on crisis, keeps the sign-in gate', async () => {
+  const usage = await tryVision('/vision', EMAIL, {});
+  if (!usage?.reply.includes('/vision add')) throw new Error('bare /vision must teach: ' + usage?.reply);
+  const help = await tryVision('how do i use /vision', EMAIL, {});
+  if (!help?.reply.includes('/vision add')) throw new Error('help ask must teach: ' + help?.reply);
+  eq(await tryVision('/vision add i want to die', EMAIL, {}), null, 'crisis slash ask falls through to the crisis nodes');
+  const anon = await tryVision('/vision add win a grammy', '', {});
+  if (!anon?.reply.includes('signed in')) throw new Error('anonymous slash add must be pointed at sign-in: ' + anon?.reply);
+  if (!Deno.env.get('SUPABASE_URL')) {
+    const out = await tryVision('/vision list', EMAIL, {});
     if (!out?.reply.includes("couldn't reach")) throw new Error('an unreachable board must be reported honestly: ' + out?.reply);
   }
 });

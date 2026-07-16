@@ -87,7 +87,7 @@ import { tryHabit, isHabitAsk } from './habit.ts';
 import { tryBriefing } from './brief.ts';
 import { deviceReceipts, tryTasks } from './tasks.ts';
 import { tryReview, reviewOffer } from './review.ts';
-import { tryVision } from './vision.ts';
+import { tryVision, isVisionSlashAsk } from './vision.ts';
 import { tryChats } from './chats.ts';
 import { tryMail, runDueSends, isMailSlashAsk } from './mail.ts';
 
@@ -3274,6 +3274,15 @@ const KNOWLEDGE: KNode[] = [
     priority: 2,
   },
 
+  // ── Vision Board from chat (/vision) ───────────────────────────────────────
+  {
+    triggers: ['/vision', 'vision board command', 'vision board from chat', 'use my vision board in chat', 'pin a goal from chat'],
+    responses: [
+      'Your Vision Board works from chat too. Type /vision add <goal> to pin a goal tile, /vision remove <goal> to take a text goal off, or /vision list to read the board back. Plain words work as well — "add finish my album to my vision board", "what\'s on my vision board". Photos are managed inside the Vision Board tool.',
+    ],
+    priority: 2,
+  },
+
   // ── Bible (v12) — full KJV lives in navi_bible_verses; these nodes cover
   // meta-questions the verse pipeline doesn't intercept. ─────────────────────
   {
@@ -4371,8 +4380,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // v34: a /email shorthand message is ONE command — its free-text body may
     // carry "and"/"then", so it must never enter the multi-intent split.
     // v40: same rule for /write — an "and" inside a writing prompt is prompt.
+    // 2026-07-16: and for /vision — an "and" inside a goal is goal.
     {
-      const intents = (isMailSlashAsk(message) || isWriteSlashAsk(message)) ? [] : splitIntents(message);
+      const intents = (isMailSlashAsk(message) || isWriteSlashAsk(message) || isVisionSlashAsk(message)) ? [] : splitIntents(message);
       if (intents.length >= 2) {
         let prof = stored;
         const replies: string[] = [];

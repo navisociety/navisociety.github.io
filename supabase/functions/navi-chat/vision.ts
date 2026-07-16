@@ -65,6 +65,80 @@ const LIST_RX =
 const REMOVE_RX =
   /^(?:please )?(?:remove|delete|take) (?:["'“]?(.{2,120}?)["'”]?) (?:from|off)(?: of)? my vision board$/;
 
+// ── The /vision slash command (2026-07-16, Dian-directed) ───────────────────
+// "/vision add <goal>", "/vision remove <goal>", "/vision list" — the Vision
+// Board tool from chat as a slash command, the v34 /email / v40 /write
+// pattern. "/vision board …" and "/visionboard …" work too. The subcommand is
+// rewritten into the canonical phrase forms above, so every existing guard
+// (crisis, caps, duplicates, photo protection) applies unchanged.
+
+const VISION_SLASH_RX = /^\/\s*vision(?:[\s-]*board)?\b/i;
+
+/**
+ * True when the message opens with the /vision command. index.ts uses this to
+ * keep it out of the multi-intent split (an "and" inside a goal is goal).
+ */
+export function isVisionSlashAsk(message: string): boolean {
+  return VISION_SLASH_RX.test(message.trim());
+}
+
+export const VISION_USAGE =
+  `To use /vision, give me a command after it — like:\n` +
+  `• /vision add finish my album\n` +
+  `• /vision remove finish my album\n` +
+  `• /vision list\n` +
+  `That's your Vision Board from chat: add pins a goal tile, remove takes a text goal off, list reads the board back. Plain words work too — "add … to my vision board", "what's on my vision board". Photos are managed inside the Vision Board tool.`;
+
+// Asking ABOUT the command must teach it, deterministically (the /write law).
+const VISION_HELP_RX =
+  /^(?:what(?:'s| is) (?:the )?\/vision(?: command)?|how (?:do i|to) use \/vision|\/vision help|help (?:me )?with \/vision)$/;
+
+function isVisionHelpAsk(message: string): boolean {
+  const t = message.toLowerCase().replace(/[.!?]+\s*$/, '').replace(/\s+/g, ' ').trim();
+  return VISION_HELP_RX.test(t);
+}
+
+const MAX_GOAL = 120; // ADD_RX / REMOVE_RX's own slot limit
+
+/**
+ * Parse a /vision ask into the canonical phrase the parsers above understand.
+ * 'malformed' means the command was used without a usable subcommand (taught,
+ * never dropped); 'crisis' means the goal carries crisis language (the caller
+ * steps aside so the crisis nodes answer); null means not a /vision ask.
+ */
+export function parseVisionSlash(message: string): string | 'malformed' | 'crisis' | null {
+  const raw = message.trim();
+  if (!VISION_SLASH_RX.test(raw)) return null;
+  const rest = raw
+    .replace(VISION_SLASH_RX, '')
+    .replace(/^[\/:,\s]+/, '')
+    .replace(/[.!?\s]+$/, '')
+    // "/vision add/finish my album" — a slash after the verb is a separator.
+    .replace(/^(add|pin|put|remove|delete)\s*\/\s*/i, '$1 ')
+    .trim();
+  if (!rest || /^help$/i.test(rest)) return 'malformed';
+
+  const t = rest.toLowerCase().replace(/\s+/g, ' ');
+  if (/^(?:list|show|read|check|what'?s on(?: it)?)$/.test(t)) return 'show my vision board';
+
+  let m = rest.match(/^(?:add|pin|put)\s+(.+)$/i);
+  if (m) {
+    const goal = m[1].replace(/\s+(?:to|on|onto) my vision board$/i, '').trim();
+    if (CRISIS_RX.test(goal)) return 'crisis';
+    if (!goal || goal.length > MAX_GOAL) return 'malformed';
+    return `add ${goal} to my vision board`;
+  }
+
+  m = rest.match(/^(?:remove|delete|take)\s+(.+)$/i);
+  if (m) {
+    const goal = m[1].replace(/\s+(?:from|off)(?: of)? my vision board$/i, '').trim();
+    if (!goal || goal.length > MAX_GOAL) return 'malformed';
+    return `remove ${goal} from my vision board`;
+  }
+
+  return 'malformed';
+}
+
 /** The goal text from an "add X to my vision board" ask, or null. Crisis-guarded. */
 export function parseVisionAdd(message: string): string | null {
   const t = tidy(message);
@@ -186,6 +260,15 @@ export async function tryVision(
   email: string,
   profile: Profile,
 ): Promise<{ reply: string } | null> {
+  // The /vision slash command: teach on a bare/malformed use, step aside on
+  // crisis (the pipeline's crisis nodes own that), otherwise rewrite into the
+  // canonical phrase and run it through every guard below unchanged.
+  if (isVisionHelpAsk(message)) return { reply: VISION_USAGE };
+  const slash = parseVisionSlash(message);
+  if (slash === 'malformed') return { reply: VISION_USAGE };
+  if (slash === 'crisis') return null;
+  if (slash) message = slash;
+
   const listAsk = isVisionListAsk(message);
   let toAdd = parseVisionAdd(message);
   const toRemove = listAsk ? null : parseVisionRemove(message);

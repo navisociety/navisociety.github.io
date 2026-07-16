@@ -52,6 +52,54 @@ function emailToFolder(email: string): string {
   return email.toLowerCase().replace(/[^a-z0-9]/g, '_');
 }
 
+// Resolve the image carried by a request body (uploaded bytes or a pasted
+// URL) to its final content URL. Shared by add-image and set-image.
+async function resolveImageUrl(
+  body: Record<string, unknown>, email: string,
+): Promise<{ url: string } | { err: string }> {
+  const dataBase64 = body.dataBase64 as string | undefined;
+  const contentType = body.contentType as string | undefined;
+  const imageUrl = String(body.imageUrl ?? '').trim();
+
+  if (dataBase64 && contentType) {
+    const ext = ALLOWED_IMAGE_TYPES[contentType];
+    if (!ext) return { err: 'Unsupported image type. Use PNG, JPEG, WEBP, or GIF.' };
+
+    const bytes = base64ToBytes(dataBase64);
+    if (bytes.byteLength > MAX_IMAGE_BYTES) return { err: 'Image too large (max 8MB).' };
+
+    const path = `${emailToFolder(email)}/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await sb.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: false });
+    if (upErr) throw new Error(upErr.message);
+
+    const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+    return { url: pub.publicUrl };
+  }
+
+  if (imageUrl) {
+    try {
+      const u = new URL(imageUrl);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('bad protocol');
+    } catch {
+      return { err: 'Invalid image URL.' };
+    }
+    return { url: imageUrl };
+  }
+
+  return { err: 'Provide an image file or an image URL.' };
+}
+
+// Best-effort cleanup of a stored file when its item stops pointing at it.
+async function removeStoredFile(contentUrl: string | null | undefined) {
+  if (!contentUrl?.includes(`/${BUCKET}/`)) return;
+  const marker = `/object/public/${BUCKET}/`;
+  const idx = contentUrl.indexOf(marker);
+  if (idx >= 0) {
+    const path = contentUrl.slice(idx + marker.length);
+    await sb.storage.from(BUCKET).remove([path]).catch(() => {});
+  }
+}
+
 serve(async (req) => {
   const origin = req.headers.get('Origin');
   const c = cors(origin);
@@ -105,9 +153,6 @@ serve(async (req) => {
     }
 
     if (action === 'add-image') {
-      const dataBase64 = body.dataBase64 as string | undefined;
-      const contentType = body.contentType as string | undefined;
-      const imageUrl = (body.imageUrl ?? '').trim();
       const name = String(body.name ?? '').trim().slice(0, 60);
       const notes = String(body.notes ?? '').trim().slice(0, 280);
       const shape = cleanShape(body.shape);
@@ -118,35 +163,31 @@ serve(async (req) => {
       const { data: maxRow } = await sb.from('navi_vision_items').select('position').eq('user_email', email).order('position', { ascending: false }).limit(1).single();
       const nextPos = (maxRow?.position ?? -1) + 1;
 
-      let finalUrl: string;
+      const resolved = await resolveImageUrl(body, email);
+      if ('err' in resolved) return Response.json({ error: resolved.err }, { status: 400, headers: c });
 
-      if (dataBase64 && contentType) {
-        const ext = ALLOWED_IMAGE_TYPES[contentType];
-        if (!ext) return Response.json({ error: 'Unsupported image type. Use PNG, JPEG, WEBP, or GIF.' }, { status: 400, headers: c });
-
-        const bytes = base64ToBytes(dataBase64);
-        if (bytes.byteLength > MAX_IMAGE_BYTES) return Response.json({ error: 'Image too large (max 8MB).' }, { status: 400, headers: c });
-
-        const path = `${emailToFolder(email)}/${crypto.randomUUID()}.${ext}`;
-        const { error: upErr } = await sb.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: false });
-        if (upErr) throw new Error(upErr.message);
-
-        const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
-        finalUrl = pub.publicUrl;
-      } else if (imageUrl) {
-        try {
-          const u = new URL(imageUrl);
-          if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('bad protocol');
-        } catch {
-          return Response.json({ error: 'Invalid image URL.' }, { status: 400, headers: c });
-        }
-        finalUrl = imageUrl;
-      } else {
-        return Response.json({ error: 'Provide an image file or an image URL.' }, { status: 400, headers: c });
-      }
-
-      const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'image', content: finalUrl, name, notes, shape, position: nextPos }).select(COLS).single();
+      const { data, error } = await sb.from('navi_vision_items').insert({ user_email: email, kind: 'image', content: resolved.url, name, notes, shape, position: nextPos }).select(COLS).single();
       if (error) throw new Error(error.message);
+      return Response.json({ item: data }, { headers: c });
+    }
+
+    // Set or replace an item's photo. A text project becomes an image tile
+    // (its name stays as the label); an image project's old stored file is
+    // cleaned up after the swap.
+    if (action === 'set-image') {
+      if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: c });
+
+      const { data: row } = await sb.from('navi_vision_items').select(COLS).eq('id', id).eq('user_email', email).single();
+      if (!row) return Response.json({ error: 'item not found' }, { status: 404, headers: c });
+
+      const resolved = await resolveImageUrl(body, email);
+      if ('err' in resolved) return Response.json({ error: resolved.err }, { status: 400, headers: c });
+
+      const { data, error } = await sb.from('navi_vision_items').update({ kind: 'image', content: resolved.url }).eq('id', id).eq('user_email', email).select(COLS).single();
+      if (error) throw new Error(error.message);
+
+      if (row.kind === 'image' && row.content !== resolved.url) await removeStoredFile(row.content);
+
       return Response.json({ item: data }, { headers: c });
     }
 
@@ -198,15 +239,7 @@ serve(async (req) => {
       const { error } = await sb.from('navi_vision_items').delete().eq('id', id).eq('user_email', email);
       if (error) throw new Error(error.message);
 
-      // Best-effort cleanup of the stored file if it lives in our bucket.
-      if (row?.kind === 'image' && row.content?.includes(`/${BUCKET}/`)) {
-        const marker = `/object/public/${BUCKET}/`;
-        const idx = row.content.indexOf(marker);
-        if (idx >= 0) {
-          const path = row.content.slice(idx + marker.length);
-          await sb.storage.from(BUCKET).remove([path]).catch(() => {});
-        }
-      }
+      if (row?.kind === 'image') await removeStoredFile(row.content);
 
       return Response.json({ ok: true }, { headers: c });
     }

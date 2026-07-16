@@ -184,7 +184,10 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
   const [editName, setEditName] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editShape, setEditShape] = useState<'circle' | 'square'>('square');
+  const [editImageUrl, setEditImageUrl] = useState('');
+  const [editPendingImage, setEditPendingImage] = useState<{ dataBase64: string; contentType: string; previewUrl: string } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<VisionProfile | null>(null);
   const [showHome, setShowHome] = useState(false);
   const [homeName, setHomeName] = useState('');
@@ -385,7 +388,21 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
     setEditName(item.name || (item.kind === 'text' ? item.content : ''));
     setEditNotes(item.notes ?? '');
     setEditShape(item.shape === 'circle' ? 'circle' : 'square');
+    setEditImageUrl('');
+    setEditPendingImage(null);
     setError('');
+  };
+
+  const onEditFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError('');
+    try {
+      const dataBase64 = await fileToBase64(file);
+      setEditImageUrl('');
+      setEditPendingImage({ dataBase64, contentType: file.type, previewUrl: URL.createObjectURL(file) });
+    } catch (err) { setError(String(err)); }
   };
 
   const saveEdit = async () => {
@@ -398,7 +415,18 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
         action: 'update-item', email, id: editItem.id,
         name, notes: editNotes.trim(), shape: editShape,
       });
-      const updated = d.item ?? { name, notes: editNotes.trim(), shape: editShape };
+      let updated = d.item ?? { name, notes: editNotes.trim(), shape: editShape };
+      // A staged photo (new upload or pasted URL) lands after the fields save:
+      // the project keeps its name and becomes / stays an image tile.
+      if (editPendingImage || editImageUrl.trim()) {
+        const img = await callApi(VISION_API, {
+          action: 'set-image', email, id: editItem.id,
+          ...(editPendingImage
+            ? { dataBase64: editPendingImage.dataBase64, contentType: editPendingImage.contentType }
+            : { imageUrl: editImageUrl.trim() }),
+        });
+        updated = img.item ?? updated;
+      }
       setItems(prev => prev.map(i => i.id === editItem.id ? { ...i, ...updated } : i));
       setEditItem(null);
     } catch (e) { setError(String(e)); } finally { setSavingEdit(false); }
@@ -758,9 +786,9 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
           </div>
           <div style={{ flex: 1, overflowY: 'auto', maxWidth: 480, margin: '0 auto', width: '100%', padding: '1rem 1.25rem 2rem', boxSizing: 'border-box' }}>
             <AddGoalPanel>
-              {editItem.kind === 'image' && (
+              {(editPendingImage || editItem.kind === 'image') && (
                 <img
-                  src={editItem.content}
+                  src={editPendingImage?.previewUrl ?? editItem.content}
                   alt=""
                   style={{
                     width: 96, height: 96, objectFit: 'cover', display: 'block',
@@ -784,6 +812,27 @@ const VisionBoardScreen: FC<VisionBoardScreenProps> = ({ onClose, session }) => 
                 placeholder="Any notes for this project..."
                 style={{ ...inputStyle, marginBottom: '1.1rem' }}
               />
+
+              <div style={fieldLabel}>{editItem.kind === 'image' ? 'Change the photo (optional)' : 'Add a photo (optional)'}</div>
+              <input
+                value={editImageUrl}
+                onChange={e => { setEditImageUrl(e.target.value); setEditPendingImage(null); }}
+                placeholder="Paste an image URL..."
+                style={{ ...inputStyle, marginBottom: '0.75rem' }}
+                disabled={!!editPendingImage}
+              />
+              {editPendingImage ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.1rem' }}>
+                  <img src={editPendingImage.previewUrl} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 10 }} />
+                  <span style={{ color: '#8892A6', fontSize: '0.85rem', flex: 1 }}>New photo ready — hit Save</span>
+                  <button style={btnGhost} onClick={() => setEditPendingImage(null)}>Remove</button>
+                </div>
+              ) : (
+                <button style={{ ...btnGhost, width: '100%', marginBottom: '1.1rem' }} onClick={() => editFileInputRef.current?.click()} disabled={savingEdit || !!editImageUrl.trim()}>
+                  {editItem.kind === 'image' ? 'Upload New Photo' : 'Upload Photo'}
+                </button>
+              )}
+              <input ref={editFileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onEditFilePicked} style={{ display: 'none' }} />
 
               <div style={fieldLabel}>Shape on the vision board</div>
               <ShapeToggle value={editShape} onChange={setEditShape} />

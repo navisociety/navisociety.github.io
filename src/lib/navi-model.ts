@@ -3231,6 +3231,15 @@ const KNOWLEDGE: KNode[] = [
     priority: 2,
   },
 
+  // ── Vision Board from chat (/vision) ───────────────────────────────────────
+  {
+    triggers: ['/vision', 'vision board command', 'vision board from chat', 'use my vision board in chat', 'pin a goal from chat'],
+    responses: [
+      'Your Vision Board works from chat too. Type /vision add <goal> to pin a goal tile, /vision remove <goal> to take a text goal off, or /vision list to read the board back. Plain words work as well — "add finish my album to my vision board", "what\'s on my vision board". Photos are managed inside the Vision Board tool.',
+    ],
+    priority: 2,
+  },
+
   // ── Bible (v12) — full KJV lives in navi_bible_verses (server-side, via the
   // navi-chat edge function); these nodes cover meta-questions. ──────────────
   {
