@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-17, at **v54** (the conductor round).
+Last updated: 2026-07-17, at **v55** (the timekeeper round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -351,6 +351,26 @@ the skip is the modifier — opposite default from conditions, on purpose).
 cadenceOf is the one voice for every schedule read-back; CHECK_SCHEDULES is
 a sync promises-read (never a live world check — that's "check my watches").
 
+v55 additions: NO new wiring — agent.ts + remind.ts + brief.ts + three
+memory.ts type touches (Workflow += runOn, WorkflowRun.via += 'booked',
+Reminder += window). THE WINDOW GATE MOVED: v54's clock window guarded only
+the daily branch; it now guards the WHOLE calendar filter in
+runDailyWorkflows (daily/weekly/monthly — booked runs are date-only on
+purpose, they fire whatever the hour). THE BOOKING LAWS: parseRunBooking's
+run-verb forms accept ONLY shapes that can never be topics (tomorrow /
+next <weekday> / in N days) — "run my X workflow on friday" stays a TOPIC
+run (the v38 law); dates take the "book … for" verb (parseWhen). A booking
+outranks a false watch and the holiday flag for its one run, then clears
+itself inside the lastRun stamp map (array replacement, so the delete
+survives Object.assign). THE REMINDER WINDOW LAWS: surface during OR AFTER
+the window (a missed morning speaks in the afternoon — silence breaks the
+promise), overdue always speaks, a HELD reminder never rolls, and
+parseEvery hands back the ORIGINAL text when no cadence matches (a one-off
+must keep "in the morning" as words). addDueReminders gained a trailing
+hourNow param (tests pin it); night wraps (≥22 or <5). DAY_NAMES was
+hoisted above the booking regexes (TDZ). The briefing schedules line is a
+sync count over profile.workflows — never a live check.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -361,7 +381,31 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v54) · world.ts (v51→v53) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v54)
+### agent.ts — workflows & missions (v25→v55) · world.ts (v51→v53) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v55) · dates.ts (v45, NEW) · brief.ts (v27→v55)
+
+**v55 — the timekeeper round** (agent.ts + remind.ts + brief.ts + three
+memory.ts type touches — built under Dian's third "execution upgrades"
+direction, 2026-07-17; the v54 finesse spreads to every promise):
+- **Weekly + monthly windows**: "run my sabbath workflow every sunday
+  morning" / "every month on the 1st in the evening" — the clock-window
+  gate now guards the whole calendar filter, not just the daily branch.
+- **One-off booked runs**: "run my desk workflow tomorrow" / "next
+  friday" / "in 3 days" / "book my desk workflow for 25 december"
+  (Workflow.runOn, via 'booked') — fires on the first chat of its day
+  whatever the hour, clears itself, outranks a false watch and the
+  holiday flag for its one run. THE TOPIC LAW HOLDS: "on friday" stays
+  a topic run; dates take the book verb. Cancel form, slot refusal,
+  unknown-phrasing teach, replace-note when rebooking, pause warning.
+- **Reminder clock windows**: "remind me every morning to pray" /
+  "every monday evening" / "every day in the morning" (Reminder.window)
+  — held until your first chat in (or after) the window; a missed
+  morning speaks in the afternoon, overdue always speaks, a held
+  reminder never rolls. One-off texts keep their words.
+- **The week receipts**: "which workflows ran this week" — the 7-day
+  slice of the run log, grouped by day, honest about the 10-receipt cap.
+- **The briefing schedules line**: "SCHEDULES: N on the calendar · N
+  watching the world · N booked one-off" — sync count, points at
+  "check my schedules".
 
 **v54 — the conductor round** (agent.ts + one memory.ts type touch + the
 answerIntent tryBriefing wiring — built under Dian's "add 5 new keyless
@@ -1548,6 +1592,22 @@ reply threading + navi_choices drop (management token), direct Share
 posting (OAuth apps), share bridge ungated/unbuilt. Otherwise: ask Dian
 before inventing.
 
+Post-v55 status: three "execution upgrades" rounds in one day (v53 reflex,
+v54 conductor, v55 timekeeper) — the promise machinery now covers WHAT
+(steps/conditions), WHEN (calendar/clock/windows/bookings), and WHETHER
+(watches/holidays/pauses), with receipts (today/week/last-run), one
+read-back voice, and the briefing counting it all. The scheduler seam is
+close to complete — the v54-named rungs are all consumed. Genuinely
+ungated candidates left: TheMealDB recipes (the v52 verified sense),
+booked runs WITH topics ("run my study workflow on grace tomorrow" — the
+booking would need a stored topic, a small Workflow field), a "skip
+tomorrow" one-shot (pause-until covers most of it — weigh before
+building), watch windows ("whenever X, mornings only"). The condition
+seam stays heavy at six sources — be sparing. Still gated: #19 reply
+threading + navi_choices drop (management token), direct Share posting
+(OAuth apps), share bridge ungated/unbuilt. Otherwise: ask Dian before
+inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1587,7 +1647,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v52 | `916b921` | observatory round: five more keyless world engines behind the same seam (Open-Meteo sun + air quality with closed AQI/UV band maps, Yahoo-chart markets with the closed ticker list and the fruit law, Nager.Date holidays through the shared atlas, Wikipedia on-this-day) — no new wiring, HELP_TEXT world line refreshed |
 | v53 | `a1b730f` | reflex round: the senses drive execution — weather/price/holiday conditions (ConditionSources #4-#6 via world.ts skyFor/priceOf/holidayOn), watches inherit free, bare weather/sun/air asks read Profile.place (tryWorld homeCity param), briefing sky line (BriefSources.sky, place-gated) |
 | v54 | `7936bb6` | conductor round: scheduler finesse — day gates (every weekday/weekend) + clock windows (every morning, fires inside the window) + holiday-aware schedules (skipHolidays, one lazy check, silent calendar runs) + "check my schedules" (the sync promises-read) + tryBriefing in answerIntent ("brief me" as a workflow step) |
+| v55 | `8feaef0` | timekeeper round: weekly/monthly clock windows (the gate guards the whole calendar filter) + one-off booked runs (Workflow.runOn, via 'booked', topic-law-safe, self-clearing, outranks watch/holiday for its run) + reminder clock windows (held till the window, missed windows speak late, held never rolls) + week receipts read + briefing schedules count |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → 304 (v53) → **310** (v54). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → 304 (v53) → 310 (v54) → **316** (v55). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
