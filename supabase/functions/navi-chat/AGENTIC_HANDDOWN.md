@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-17, at **v52** (the observatory round).
+Last updated: 2026-07-17, at **v53** (the reflex round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -316,6 +316,23 @@ Africa. One test gotcha: the this-day cache has ONE key per calendar day,
 so its can't-reach test must run BEFORE the good ask (honest replies are
 never cached; answers are).
 
+v53 additions: NO new pipeline position — the reflex round is three seams
+growing together. ConditionSources (agent.ts) grew THREE sources — sky /
+price / holiday, all world.ts exports (skyFor, priceOf, holidayOn), so the
+seam now has SIX; any test stubbing ConditionSources must carry all six
+(stubSources gained a fourth `over` param for overriding the reflex trio).
+BriefSources (brief.ts) grew sky, fetched ONLY when Profile.place is set.
+tryWorld gained a trailing `homeCity` param (both index.ts call sites pass
+the stored place — `profile.place` in answerIntent, `stored.place` on the
+main path) so bare weather/sun/air asks read the user's own sky. THE ORDER
+LAW INSIDE evalCondition: the price-threshold regex is generic ("<name> is
+above <n>") and sits LAST, so every specific condition matches first; the
+weather conditions map unknown places to 'unreachable' (a typo'd city can't
+be checked — never a guess); bare weather forms with no stored place return
+null (the teach names the "i live in <city>" fix). Because v50 watches
+validate against evalCondition, the whole trigger family inherited the
+reflexes with zero new code.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -326,7 +343,40 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v50) · world.ts (v51→v52) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+### agent.ts — workflows & missions (v25→v53) · world.ts (v51→v53) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v53)
+
+**v53 — the reflex round** (world.ts helpers + agent.ts conditions +
+brief.ts sky line + the two index.ts pass-throughs — built under Dian's
+"next 5 keyless execution upgrades" direction, 2026-07-17; the v51/v52
+senses stop being answers and start DRIVING the execution layer):
+- **Home place**: bare "what's the weather" / "what time is sunset" /
+  "air quality" asks read Profile.place — the EXISTING "i live in
+  johannesburg" memory field, no new commands. tryWorld's trailing
+  homeCity param; the no-place teach names the fix.
+- **Weather conditions** (the v35 seam, sources #4): "when it's raining
+  in johannesburg:" / "when it isn't raining:" / "when it's cold:"
+  (≤10°C) / "when it's hot:" (≥28°C) — closed word lists
+  (rainy/wet/chilly/freezing/warm aliases), bare forms read the stored
+  place, no place teaches, unknown places are 'unreachable'. Rain is the
+  closed WMO precipitation set (snow and fog are honestly not rain).
+- **Public-holiday conditions** (source #5): "when it's a public
+  holiday:" / "when tomorrow is a public holiday:" (+ negations) — the
+  SA calendar (Nager.Date whole-year list, cached 24 h in world.ts's
+  text cache). Distinct from v45's personal "special day" on purpose.
+- **Price thresholds** (source #6): "when bitcoin is above 50000:" /
+  "when gold is below 2000:" — the closed COINS/TICKERS lists via
+  priceOf (coins in USD, tickers in their own currency); unknown names
+  teach, down feeds skip honestly. The regex is generic, so it sits
+  LAST in evalCondition.
+- **Briefing sky line**: the v39 world line ends with the home sky
+  ("johannesburg: 17°C, partly cloudy — take an umbrella" when raining)
+  — BriefSources grew sky, fetched only when a place is stored; a silent
+  sky is named, an unknown place stays quiet (free-text field, the
+  briefing is no place to nag about spelling).
+- **The inheritance dividend**: v50 watches validate against
+  evalCondition, so "run my umbrella workflow whenever it's raining"
+  worked the moment the condition existed — zero new wiring; dry-run
+  previews and "otherwise:" branches light up too.
 
 **v52 — the observatory round** (all world.ts + one HELP_TEXT line in
 agent.ts — built under Dian's "finish the next 5 keyless upgrades"
@@ -1408,6 +1458,20 @@ more tickers/coins only if Dian asks. Still gated: #19 reply threading +
 navi_choices drop (management token), direct Share posting (OAuth apps),
 share bridge ungated/unbuilt. Otherwise: ask Dian before inventing.
 
+Post-v53 status: Dian's "next 5 keyless execution upgrades" (2026-07-17)
+turned the world layer into a REFLEX layer — the senses now drive
+conditions (sky/price/holiday, sources #4-#6 on the v35 seam), watches
+(inherited free through v50's validation), the briefing (the sky line),
+and defaults (Profile.place behind bare asks). The condition seam now has
+six sources — it is getting heavy; be sparing, every source is a live
+call inside a run. Named candidates if the direction returns: TheMealDB
+recipes (v52's verified candidate, a sense not a reflex), a news topic
+watch (hard to make honest — news is never "false"), sun-relative clock
+conditions ("before sunset" — needs a city AND a live read where the v38
+clock is free; weigh it). Still gated: #19 reply threading + navi_choices
+drop (management token), direct Share posting (OAuth apps), share bridge
+ungated/unbuilt. Otherwise: ask Dian before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1445,7 +1509,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v50 | (see git) | sentinel round: watched workflows ("run my X workflow whenever <condition>" — the closed evalCondition vocabulary as a schedule, validated at set time, session-start fires on clean true only, once a day, exclusive with calendar schedules, sends held, via 'watch') + "check my watches" (the active check-and-fire) |
 | v51 | (see git) | senses round: world.ts NEW — five keyless world engines (Open-Meteo weather, Frankfurter ECB currency with the units-law step-aside, CoinGecko crypto, mledoze+World-Bank atlas, Google News RSS headlines), injected-source tested, TTL-cached, honest can't-reach replies, wired into answerIntent (workflow steps) + the main engine block |
 | v52 | `916b921` | observatory round: five more keyless world engines behind the same seam (Open-Meteo sun + air quality with closed AQI/UV band maps, Yahoo-chart markets with the closed ticker list and the fruit law, Nager.Date holidays through the shared atlas, Wikipedia on-this-day) — no new wiring, HELP_TEXT world line refreshed |
+| v53 | `a1b730f` | reflex round: the senses drive execution — weather/price/holiday conditions (ConditionSources #4-#6 via world.ts skyFor/priceOf/holidayOn), watches inherit free, bare weather/sun/air asks read Profile.place (tryWorld homeCity param), briefing sky line (BriefSources.sky, place-gated) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → **299** (v52). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → **304** (v53). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
