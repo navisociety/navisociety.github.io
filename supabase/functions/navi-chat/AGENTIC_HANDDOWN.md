@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-16, at **v51** (the senses round).
+Last updated: 2026-07-17, at **v52** (the observatory round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -301,6 +301,21 @@ API TRAP: restcountries.com v3.1 is DEAD (301 → a deprecation JSON that is
 still HTTP 200 — the failure mode is quiet); the atlas now reads
 mledoze/countries via jsDelivr + the World Bank population indicator.
 
+v52 additions: NO new wiring at all — the five observatory engines are
+parsers + branches inside world.ts behind the SAME tryWorld seam v51 cut
+(both call sites untouched), so every one works as a workflow step for
+free. The parsing laws that mattered: market STOCKS demand the word
+"stock"/"share(s)" ("price of apple" stays fruit — only indexes and
+commodities answer on a bare price word, and the "where's the …" idiom is
+indexes only); "what happened today" is somebody's day, never a history
+ask (the this-day forms demand "on this day" or "in history"); the sun and
+air engines reuse the weather GEOCODER (same city rules, same multi-part
+tail rejection); the holiday country resolves through the SAME mledoze
+atlas (findCountry was extracted for both), home defaulting to South
+Africa. One test gotcha: the this-day cache has ONE key per calendar day,
+so its can't-reach test must run BEFORE the good ask (honest replies are
+never cached; answers are).
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -311,9 +326,40 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v50) · world.ts (v51, NEW) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
+### agent.ts — workflows & missions (v25→v50) · world.ts (v51→v52) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v49)
 
-**v51 — the senses round** (world.ts NEW + two index.ts call sites + one
+**v52 — the observatory round** (all world.ts + one HELP_TEXT line in
+agent.ts — built under Dian's "finish the next 5 keyless upgrades"
+direction, 2026-07-17, continuing v51's senses line). Five MORE keyless
+world engines behind the same tryWorld seam — silent live reads, TTL
+caches, honest can't-reach replies, all workflow-step-ready for free:
+- **Sun** (Open-Meteo daily, same geocoder as weather): "sunrise in
+  johannesburg" / "when does the sun set in cape town" → the asked end of
+  the day first, the other in brackets, plus daylight length. Bare ask
+  teaches; unknown place honest; TTL 6 h per city+end.
+- **Air** (Open-Meteo air quality): "air quality in johannesburg" /
+  "uv index in durban" → US AQI with the closed EPA band map, PM2.5/PM10,
+  UV with the closed WHO band map (UV shown to one decimal, banded on the
+  raw value). A feed with no reading answers honestly; TTL 30 min.
+- **Markets** (Yahoo v8 chart — keyless but wants a browser UA): "price of
+  apple stock" / "gold price" / "where's the s&p 500". CLOSED ticker list
+  (11 stocks incl. Naspers, 3 indexes, 4 commodities). THE FRUIT LAW:
+  stocks demand "stock"/"share(s)" in the ask — "price of apple" stays
+  fruit; indexes/commodities answer on a bare price word; the "where's
+  the …" idiom quotes INDEXES only. Commodities carry their unit (per
+  ounce / per barrel); JSE quotes arriving in ZAc are spoken as ZAR.
+  TTL 10 min, snapshot honesty in the reply.
+- **Holidays** (Nager.Date NextPublicHolidays): "public holidays in south
+  africa" (5 upcoming, dated + numbered) / "when is the next public
+  holiday [in france]" (a countdown — today/tomorrow spoken). The country
+  resolves through the SAME mledoze atlas (findCountry extracted for
+  both); no country means South Africa. Unknown calendars and empty
+  stretches answer honestly. Cache key carries the SA date, TTL 24 h.
+- **This day** (Wikipedia on-this-day, selected feed): "today in history" /
+  "what happened on this day" → the feed's top five, read oldest-first.
+  "what happened today" is somebody's day — it stays conversation (the
+  forms demand "on this day"/"in history"). One cache key per SA calendar
+  day, TTL 6 h. (world.ts NEW + two index.ts call sites + one
 HELP_TEXT line — built under Dian's explicit "give NAVI 5 more upgrades like
 wikipedia and duck duck go … enhance the LLM execution capabilities"
 direction, 2026-07-16). Five keyless world engines in the DDG/Wikipedia
@@ -1349,6 +1395,19 @@ asks. Still gated: #19 reply threading + navi_choices drop (management
 token), direct Share posting (OAuth apps), share bridge ungated/unbuilt.
 Otherwise: ask Dian before inventing.
 
+Post-v52 status: Dian's "finish the next 5 keyless upgrades" (2026-07-17)
+consumed the observatory round a prior session had staged in world.ts —
+sun, air, markets, holidays, this-day — completing a TEN-engine world
+layer behind the one tryWorld seam, no new wiring. The header comment
+names a verified candidate for a future round: TheMealDB recipes (keyless
+via the public test key). Other natural continuations if the direction
+returns: world-sense CONDITIONS on the v35 seam ("when it's raining in
+johannesburg:" — weigh it, every source is a live call inside a run), a
+weather/news line in the daily briefing (brief.ts BriefSources pattern),
+more tickers/coins only if Dian asks. Still gated: #19 reply threading +
+navi_choices drop (management token), direct Share posting (OAuth apps),
+share bridge ungated/unbuilt. Otherwise: ask Dian before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1385,7 +1444,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v49 | (see git) | elevation round: assembled poems (opening/heart/closing stanza banks, 64 poems, stanzas rhyme as wholes), funny/formal tones on the short kinds (toned banks + honest note elsewhere), deadline-aware briefing (deadlineCountdown shared with brief.ts), counted summaries ("summarize in N sentences", two–five) |
 | v50 | (see git) | sentinel round: watched workflows ("run my X workflow whenever <condition>" — the closed evalCondition vocabulary as a schedule, validated at set time, session-start fires on clean true only, once a day, exclusive with calendar schedules, sends held, via 'watch') + "check my watches" (the active check-and-fire) |
 | v51 | (see git) | senses round: world.ts NEW — five keyless world engines (Open-Meteo weather, Frankfurter ECB currency with the units-law step-aside, CoinGecko crypto, mledoze+World-Bank atlas, Google News RSS headlines), injected-source tested, TTL-cached, honest can't-reach replies, wired into answerIntent (workflow steps) + the main engine block |
+| v52 | `916b921` | observatory round: five more keyless world engines behind the same seam (Open-Meteo sun + air quality with closed AQI/UV band maps, Yahoo-chart markets with the closed ticker list and the fruit law, Nager.Date holidays through the shared atlas, Wikipedia on-this-day) — no new wiring, HELP_TEXT world line refreshed |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → **293** (v51). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → **299** (v52). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
