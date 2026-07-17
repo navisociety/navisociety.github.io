@@ -137,9 +137,8 @@ async function rssItemTitles(url: string): Promise<string[] | null> {
     let m: RegExpExecArray | null;
     while ((m = re.exec(xml)) !== null && titles.length < 5) {
       const t = m[1]
-        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'").replace(/&#8217;/g, "'").replace(/&#8216;/g, "'")
-        .replace(/&#8220;/g, '"').replace(/&#8221;/g, '"').replace(/&#8211;/g, '–')
+        .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
         .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
         .replace(/\s+/g, ' ').trim();
       if (t && !titles.includes(t)) titles.push(t);
