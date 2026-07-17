@@ -392,12 +392,18 @@ finesse, the heavy condition seam gains nothing):
   then today's headlines" is now the personal dashboard on one phrase.
 - Read-backs everywhere share cadenceOf ("every weekday morning"), and
   list/show/rename/confirm all name the gates and the holiday flag.
-- ONE live fix while verifying: the v51 news engine had gone quiet on the
-  edge (Google, like Yahoo, rejects UA-less datacenter fetches — fine
-  from curl, "couldn't reach" from the isolate). The news fetch now
-  carries the same Mozilla/5.0 header the market quotes always needed.
-  KNOW THE PATTERN: any new keyless source that works locally but fails
-  live probably wants a browser UA before you suspect anything deeper.
+- ONE live fix while verifying (two commits): the v51 news engine had
+  gone quiet on the edge. A browser UA (the Yahoo pattern, `1401f31`)
+  was NOT enough — Google News blocks the isolate's datacenter IPs
+  outright. The news source is now a FEED CHAIN (`7633d8d`): Google
+  first, SABC News second (plain WordPress RSS + ?s= search feed); the
+  first feed with items wins, an empty answer only stands when every
+  feed agreed (a consent page parses as empty — it must never mask the
+  fallback), and the reply footer names whoever actually answered
+  (WorldSources.news now returns { titles, source }). KNOW THE PATTERN:
+  a keyless source that works locally but fails live wants a browser UA
+  first — and if that's not it, the IP range is blocked and the fix is
+  a fallback feed, not a retry.
 
 **v53 — the reflex round** (world.ts helpers + agent.ts conditions +
 brief.ts sky line + the two index.ts pass-throughs — built under Dian's
