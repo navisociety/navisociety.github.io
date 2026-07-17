@@ -329,11 +329,23 @@ export function parseWorkflowRunAgain(message: string): { name?: string } | null
 }
 
 // v26: "run my morning workflow every day" / "make my morning workflow daily"
+// v54: "every morning" moved OUT of the plain-daily list — it now means what
+// it says (a daily schedule gated to the morning window, DAILY_MOD_ON_RX).
 const DAILY_ON_RX = new RegExp(
-  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? (?:every ?day|daily|every morning|each day)$`,
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? (?:every ?day|daily|each day)$`,
 );
 const DAILY_OFF_RX = new RegExp(
-  `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:every ?day|daily|every morning|each day)$`,
+  `^(?:please )?(?:stop|don'?t) (?:running|run)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (?:every ?day|daily|each day|(?:every|each) (?:week ?days?|weekends?)(?: (?:mornings?|afternoons?|evenings?|nights?))?|(?:every|each) (?:mornings?|afternoons?|evenings?|nights?))$`,
+);
+
+// v54: the conductor forms — a daily schedule with finesse. "every weekday"
+// and "every weekend" gate the days; "every morning/afternoon/evening/night"
+// gates the clock (the v38 segments — the run waits for your first chat
+// INSIDE the window, and if the window slips by unchatted it waits for the
+// next day); "every weekday morning" combines both. At least one modifier
+// must be present (a bare "every" is nothing).
+const DAILY_MOD_ON_RX = new RegExp(
+  `^(?:please )?(?:run|make|set)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: run)? (?:every|each) (?:(week ?days?|weekends?) ?)?(mornings?|afternoons?|evenings?|nights?)?$`,
 );
 
 // v38: "run my sabbath workflow every sunday" — the weekly cousin of daily.
@@ -1046,6 +1058,18 @@ function stepLines(wf: Workflow): string {
   return wf.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
 }
 
+// v54: one voice for every schedule read-back — "every weekday morning",
+// "every weekend", "every sunday", "monthly on the 15th", "daily".
+function cadenceOf(w: Workflow): string {
+  if (w.day) return `every ${w.day}`;
+  if (w.monthDay) return `monthly on the ${ordinal(w.monthDay)}`;
+  if (!w.daily) return '';
+  if (w.days && w.window) return `every ${w.days === 'weekdays' ? 'weekday' : 'weekend'} ${w.window}`;
+  if (w.days) return `every ${w.days === 'weekdays' ? 'weekday' : 'weekend'}`;
+  if (w.window) return `every ${w.window}`;
+  return 'daily';
+}
+
 /** The workflow name from a delete ask, or null. */
 export function parseWorkflowDelete(message: string): string | null {
   const t = tidy(message);
@@ -1063,18 +1087,63 @@ export function parseWorkflowDelete(message: string): string | null {
  * checked here — tryAgent refuses 29-31 honestly (not every month has them).
  * `daily: false` is any off ask; off clears whichever schedule is set.
  */
-export function parseDailySet(message: string): { name: string; daily: boolean; day?: string; monthDay?: number } | null {
+export function parseDailySet(message: string): {
+  name: string; daily: boolean; day?: string; monthDay?: number;
+  days?: 'weekdays' | 'weekends'; window?: 'morning' | 'afternoon' | 'evening' | 'night';
+} | null {
   const t = tidy(message);
   if (!t || t.length > 100) return null;
   const monthly = t.match(MONTHLY_ON_RX) ?? t.match(MONTHLY_ON_DAY_FIRST_RX);
   if (monthly) return { name: monthly[1].trim(), daily: true, monthDay: monthly[2] ? parseInt(monthly[2], 10) : 1 };
   const weekly = t.match(WEEKLY_ON_RX);
   if (weekly) return { name: weekly[1].trim(), daily: true, day: weekly[2] };
+  // v54: the conductor forms — day gates and clock windows on a daily run.
+  const mod = t.match(DAILY_MOD_ON_RX);
+  if (mod && (mod[2] || mod[3])) {
+    const days = mod[2] ? (mod[2].startsWith('weekend') ? 'weekends' as const : 'weekdays' as const) : undefined;
+    const window = mod[3] ? mod[3].replace(/s$/, '') as 'morning' | 'afternoon' | 'evening' | 'night' : undefined;
+    return { name: mod[1].trim(), daily: true, ...(days ? { days } : {}), ...(window ? { window } : {}) };
+  }
   const on = t.match(DAILY_ON_RX);
   if (on) return { name: on[1].trim(), daily: true };
   const off = t.match(DAILY_OFF_RX) ?? t.match(WEEKLY_OFF_RX) ?? t.match(MONTHLY_OFF_RX);
   if (off) return { name: off[1].trim(), daily: false };
   return null;
+}
+
+// ── v54: holiday-aware schedules + the schedules read ────────────────────────
+// "skip public holidays for my budget workflow" makes a CALENDAR-scheduled
+// workflow sit out South African public holidays (the v53 keyless calendar,
+// checked lazily at session start — one check covers every flagged workflow).
+// The flag is a modifier: it survives schedule swaps, and clears with the
+// schedule's off form.
+
+const HOL_SKIP_ON_RX = new RegExp(
+  `^(?:please )?skip public holidays (?:for|on|in)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$|^(?:please )?(?:make|have|let)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) skip public holidays$`,
+);
+const HOL_SKIP_OFF_RX = new RegExp(
+  `^(?:please )?(?:stop skipping|don'?t skip) public holidays (?:for|on|in)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$|^(?:please )?run(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) on public holidays(?: (?:again|too))?$`,
+);
+
+/** { name, skip } from a holiday-skip ask, or null. */
+export function parseHolidaySkip(message: string): { name: string; skip: boolean } | null {
+  const t = tidy(message);
+  if (!t || t.length > 90) return null;
+  const on = t.match(HOL_SKIP_ON_RX);
+  if (on) return { name: (on[1] ?? on[2]).trim(), skip: true };
+  const off = t.match(HOL_SKIP_OFF_RX);
+  if (off) return { name: (off[1] ?? off[2]).trim(), skip: false };
+  return null;
+}
+
+// "check my schedules" / "what's on my schedule today" — the read-only
+// sibling of "check my watches": every schedule, trigger, and watch in one
+// honest report, sync and free (it reads promises, not the live world).
+const CHECK_SCHEDULES_RX =
+  /^(?:check|show|list)(?: me)?(?: all)?(?: of)? my schedules?$|^what(?:'s| is) on (?:my|the) schedule(?: (?:for )?today)?$|^which workflows are scheduled$|^(?:check|show|list)(?: me)? my scheduled workflows$/;
+
+export function isSchedulesCheck(message: string): boolean {
+  return CHECK_SCHEDULES_RX.test(tidy(message));
 }
 
 /**
@@ -1263,6 +1332,9 @@ WORKFLOWS — saved routines I run on command:
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
 - conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting / when my mission is due soon / when my mission is overdue / when it's raining in johannesburg (tell me "i live in johannesburg" once and bare "when it's raining" works) / when it's cold (10°C or under) or hot (28°C or up) / when it's a public holiday (or tomorrow is) / when bitcoin is above 50000 / when gold is below 2000 — and watches take all of these too: "run my umbrella workflow whenever it's raining"
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
+- schedules with finesse: run my desk workflow every weekday / every weekend / every morning (fires on your first chat inside that window) / every weekday morning — and "skip public holidays for my desk workflow" makes a scheduled routine sit out SA public holidays
+- check my schedules (or "what's on my schedule today") — every schedule, phrase, and watch in one honest report: what ran, what's due, what's waiting for its window
+- "brief me" works as a workflow step now, so a morning routine can open with the full picture and follow with the sky and the headlines
 - run my triage workflow whenever i have new email (a WATCHED workflow — the schedule is a condition, any from the list above: I check it when you start a chat and fire the workflow at most once a day, only on a clean true) / stop watching my triage workflow / check my watches (checks every watch right now and fires the true ones)
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
 - list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
@@ -1312,6 +1384,7 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowRename(message) !== null ||
     parseTriggerSet(message) !== null ||
     parseDailySet(message) !== null ||
+    parseHolidaySkip(message) !== null ||
     parseWatchSet(message) !== null ||
     parseWorkflowPause(message) !== null ||
     parseWorkflowResume(message) !== null ||
@@ -1322,6 +1395,7 @@ export function isAgentAsk(message: string): boolean {
     parseWorkflowRunAgain(message) !== null ||
     LIST_RX.test(t) ||
     CHECK_WATCHES_RX.test(t) ||
+    CHECK_SCHEDULES_RX.test(t) ||
     RAN_TODAY_RX.test(t) ||
     MISSION_DEADLINE_CLEAR_RX.test(t) ||
     MISSION_DEADLINE_SHOW_RX.test(t) ||
@@ -1345,7 +1419,9 @@ function nameList(workflows: Workflow[]): string {
   return workflows
     .map((w) => {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
-      const daily = w.daily ? ' — runs daily' : w.day ? ` — runs every ${w.day}` : w.monthDay ? ` — runs monthly on the ${ordinal(w.monthDay)}` : w.watch ? ` — watching: whenever ${w.watch}` : '';
+      const daily = w.daily || w.day || w.monthDay
+        ? ` — runs ${cadenceOf(w)}${w.skipHolidays ? ', skips public holidays' : ''}`
+        : w.watch ? ` — watching: whenever ${w.watch}` : '';
       // v46: a sleeping workflow says so wherever it's listed.
       const nap = isPaused(w, todayISO) ? ` — ${pauseLabel(w)}` : '';
       return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}${nap}`;
@@ -2155,11 +2231,14 @@ export async function tryAgent(
         : { reply: `No workflows saved yet, so there's nothing called "${shown}" to show. Create one:\ncreate a workflow called ${shown}: a verse about strength, then list my reminders` };
     }
     const trig = wf.trigger ? `\nTrigger: "${wf.trigger}"` : '';
+    const holNote = wf.skipHolidays ? ' Sits out public holidays.' : '';
     const daily = wf.daily
-      ? '\nRuns daily on your first chat of the day.'
+      ? wf.days || wf.window
+        ? `\nRuns ${cadenceOf(wf)}${wf.window ? ` — on your first chat in the ${wf.window}` : ', on your first chat that day'}.${holNote}`
+        : `\nRuns daily on your first chat of the day.${holNote}`
       : wf.day
-      ? `\nRuns every ${wf.day}, on your first chat that day.`
-      : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.`
+      ? `\nRuns every ${wf.day}, on your first chat that day.${holNote}`
+      : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.${holNote}`
       : wf.watch ? `\nWatching: runs itself whenever ${wf.watch} — checked when you start a chat, fired at most once a day.` : '';
     // v46: a sleeping workflow says so when shown.
     const td = todayInTZ('Africa/Johannesburg');
@@ -2473,24 +2552,113 @@ export async function tryAgent(
     // v38: one schedule per workflow — weekly replaces daily and vice versa
     // (v41: monthly joins the swap; v50: a watch swaps out the same way);
     // off clears whichever is set (and the lastRun stamp with it).
+    // v54: day gates (weekdays/weekends) and clock windows ride the daily
+    // branch; every other branch clears them, and off clears the holiday
+    // flag too — a schedule that's gone takes its modifiers with it.
     const nextList = workflows.map((w, i) => {
       if (i !== idx) return w;
       const next = { ...w };
-      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.monthDay; delete next.watch; delete next.lastRun; }
+      delete next.days;
+      delete next.window;
+      if (!dailySet.daily) { delete next.daily; delete next.day; delete next.monthDay; delete next.watch; delete next.lastRun; delete next.skipHolidays; }
       else if (dailySet.monthDay) { next.monthDay = dailySet.monthDay; delete next.daily; delete next.day; delete next.watch; }
       else if (dailySet.day) { next.day = dailySet.day; delete next.daily; delete next.monthDay; delete next.watch; }
-      else { next.daily = true; delete next.day; delete next.monthDay; delete next.watch; }
+      else {
+        next.daily = true;
+        delete next.day; delete next.monthDay; delete next.watch;
+        if (dailySet.days) next.days = dailySet.days;
+        if (dailySet.window) next.window = dailySet.window;
+      }
       return next;
     });
+    const windowNote = dailySet.window
+      ? ` — on your first chat in the ${dailySet.window} (if the ${dailySet.window} slips by without a chat, it waits for the next one)`
+      : ', on your first chat that day';
     return {
       reply: dailySet.daily
         ? dailySet.monthDay
           ? `Done — "${dailySet.name}" now runs itself on the ${ordinal(dailySet.monthDay)} of every month, on your first chat that day. You show up, I handle the routine.`
           : dailySet.day
           ? `Done — "${dailySet.name}" now runs itself every ${dailySet.day}, on your first chat that day. You show up, I handle the routine.`
+          : dailySet.days || dailySet.window
+          ? `Done — "${dailySet.name}" now runs itself ${cadenceOf(nextList[idx])}${windowNote}. You show up, I handle the routine.`
           : `Done — "${dailySet.name}" now runs itself every day, on your first chat of the day. You show up, I handle the routine.`
         : `Okay — "${dailySet.name}" is off the schedule. It's still saved; run it anytime with "run my ${dailySet.name} workflow".`,
       profile: { ...profile, workflows: nextList },
+    };
+  }
+
+  // ── v54: holiday-aware schedules — "skip public holidays for my X workflow" ─
+  const holSkip = parseHolidaySkip(message);
+  if (holSkip) {
+    const idx = workflows.findIndex((w) => w.name === holSkip.name);
+    if (idx < 0) {
+      return {
+        reply: `I don't have a workflow called "${holSkip.name}". ${workflows.length ? `You have: ${workflows.map((w) => w.name).join(', ')}.` : ''}`,
+      };
+    }
+    const wf = workflows[idx];
+    if (holSkip.skip && !wf.daily && !wf.day && !wf.monthDay) {
+      return {
+        reply: `"${holSkip.name}" isn't on a calendar schedule, so it never meets a public holiday. Schedule it first ("run my ${holSkip.name} workflow every weekday") and then I can skip the holidays for you.`,
+      };
+    }
+    if (!holSkip.skip && !wf.skipHolidays) {
+      return { reply: `"${holSkip.name}" wasn't skipping public holidays — nothing to change.` };
+    }
+    const next = { ...wf };
+    if (holSkip.skip) next.skipHolidays = true;
+    else delete next.skipHolidays;
+    return {
+      reply: holSkip.skip
+        ? `Done — "${holSkip.name}" (${cadenceOf(wf)}) now sits out South African public holidays. I check the calendar as the schedule fires; "stop skipping public holidays for my ${holSkip.name} workflow" undoes it.`
+        : `Okay — "${holSkip.name}" runs on public holidays again.`,
+      profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+    };
+  }
+
+  // ── v54: "check my schedules" — every promise NAVI is keeping, in one read ──
+  // Sync and free: this reads the SCHEDULES, not the live world (watches say
+  // how they're checked; "check my watches" is the live half).
+  if (CHECK_SCHEDULES_RX.test(t)) {
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    const dow = weekdayOf(todayISO);
+    const weekend = dow === 'saturday' || dow === 'sunday';
+    const seg = segmentOf(hourInTZ('Africa/Johannesburg'));
+    const scheduled = workflows.filter((w) => w.daily || w.day || w.monthDay || w.watch || w.trigger);
+    if (!scheduled.length) {
+      return {
+        reply: workflows.length
+          ? 'Nothing\'s scheduled — your workflows only run when you ask. Put one on the calendar ("run my <name> workflow every weekday morning"), on a phrase ("when i say good morning, run my <name> workflow"), or on a condition ("run my <name> workflow whenever it\'s raining").'
+          : 'No workflows yet, so nothing\'s scheduled. Create one first: create a workflow called <name>: <step>, then <step>.',
+      };
+    }
+    const lines = scheduled.map((w) => {
+      const bits: string[] = [];
+      if (w.daily || w.day || w.monthDay) {
+        bits.push(`runs ${cadenceOf(w)}`);
+        if (isPaused(w, todayISO)) bits.push(pauseLabel(w));
+        else if (w.lastRun === todayISO) bits.push('already ran today');
+        else if (w.day && w.day !== dow) bits.push(`next on ${w.day}`);
+        else if (w.monthDay && w.monthDay !== td.d) bits.push(`next on the ${ordinal(w.monthDay)}`);
+        else if (w.days === 'weekdays' && weekend) bits.push('weekends off — next on monday');
+        else if (w.days === 'weekends' && !weekend) bits.push('waits for the weekend');
+        else if (w.window && w.window !== seg) bits.push(`waits for the ${w.window} (it's ${seg} now)`);
+        else bits.push('due today — fires on your next first-chat');
+        if (w.skipHolidays) bits.push('sits out public holidays');
+      }
+      if (w.watch) {
+        bits.push(`watching: whenever ${w.watch}`);
+        if (isPaused(w, todayISO)) bits.push(pauseLabel(w));
+        else if (w.lastRun === todayISO) bits.push('fired today');
+        else bits.push('checked when you start a chat');
+      }
+      if (w.trigger) bits.push(`on the phrase "${w.trigger}"`);
+      return `- ${w.name} — ${bits.join(' · ')}`;
+    });
+    return {
+      reply: `Your schedules (${scheduled.length} of ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}):\n${lines.join('\n')}\n\n"check my watches" checks the watched ones against the live world right now.`,
     };
   }
 
@@ -2810,18 +2978,37 @@ export async function runDailyWorkflows(
   todayISO: string,
   email = '', // v35: world conditions inside daily workflows need the account
   sources?: ConditionSources,
+  hourNow?: number, // v54: tests pin the clock; production reads SA time
 ): Promise<{ report: string; profile: Profile } | null> {
   // v27: slotted workflows never auto-run — there's no topic to fill the * with.
   const dow = weekdayOf(todayISO);
   const dom = parseInt(todayISO.slice(8, 10), 10);
+  // v54: day gates and clock windows on the daily branch — a gated day is
+  // simply not due; a window outside its segment is not due YET (lastRun
+  // stays unstamped, so a later session inside the window still fires it —
+  // the v50 watch idea applied to the clock).
+  const weekend = dow === 'saturday' || dow === 'sunday';
+  const seg = segmentOf(hourNow ?? hourInTZ('Africa/Johannesburg'));
+  const dailyDue = (w: Workflow) =>
+    !!w.daily &&
+    (!w.days || (w.days === 'weekdays' ? !weekend : weekend)) &&
+    (!w.window || w.window === seg);
   // v46: a paused workflow sleeps through its schedule — silently, that's the
   // point of a pause; a dated pause simply stops holding on its wake day.
   // v50: watched workflows join the channel — due only while their condition
   // holds, checked lazily below so calendar schedules stay free. A watch that
   // hasn't fired yet keeps checking on every session start of the day.
-  const due = (profile.workflows ?? []).filter((w) =>
-    (w.daily || (w.day && w.day === dow) || (w.monthDay && w.monthDay === dom) || w.watch) &&
+  let due = (profile.workflows ?? []).filter((w) =>
+    (dailyDue(w) || (w.day && w.day === dow) || (w.monthDay && w.monthDay === dom) || w.watch) &&
     w.lastRun !== todayISO && !hasSlot(w) && !isPaused(w, todayISO));
+  // v54: holiday-aware schedules — ONE lazy calendar check covers every
+  // flagged workflow that's due. A calendar that doesn't answer can't hold
+  // the schedule hostage: the run is the promise, the skip is the modifier,
+  // so an unknown day runs normally.
+  if (due.some((w) => w.skipHolidays && !w.watch)) {
+    const hol = await (sources ?? REAL_SOURCES).holiday(todayISO);
+    if (hol === true) due = due.filter((w) => !w.skipHolidays || w.watch);
+  }
   if (!due.length) return null;
 
   let prof = profile;

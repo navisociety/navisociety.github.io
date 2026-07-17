@@ -4224,6 +4224,11 @@ async function answerIntent(
   const tasks = tryTasks(part, email, profile);
   if (tasks) return { reply: tasks.reply, profile: tasks.profile };
 
+  // v54: the briefing as a workflow step — "brief me" inside a routine reads
+  // the full picture (its board/inbox/sky reads only fire on a real ask).
+  const briefStep = await tryBriefing(part, email, profile);
+  if (briefStep) return { reply: briefStep.reply };
+
   // v51: the world senses — weather, currency, crypto, country facts, news.
   // Reply-only and read-only, so a workflow step like "weather in
   // johannesburg" or "news about *" turns a routine into a live report.

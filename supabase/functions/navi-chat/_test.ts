@@ -57,6 +57,7 @@ import {
   parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
   parseLastRun, parseWorkflowRunAgain, parseMissionDeadline, isAgentAsk,
   parseWatchSet, type ConditionSources,
+  parseHolidaySkip, isSchedulesCheck,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -4790,4 +4791,136 @@ Deno.test('v53: bare world asks read the stored place; the briefing carries the 
   if (!quiet.includes("the sky over johannesburg didn't answer")) throw new Error('a silent sky is honest: ' + quiet);
   const homeless = await worldLine(EMAIL, src(null));
   eq(homeless.includes('sky'), false, 'no stored place, no sky line');
+});
+
+// ── v54: the conductor round — day gates, clock windows, holiday-aware
+//        schedules, the schedules read, and the briefing as a step ───────────
+
+Deno.test('v54: parseDailySet learns weekday/weekend gates and clock windows', () => {
+  eq(parseDailySet('run my desk workflow every weekday'), { name: 'desk', daily: true, days: 'weekdays' }, 'weekday gate');
+  eq(parseDailySet('run my rest workflow every weekend'), { name: 'rest', daily: true, days: 'weekends' }, 'weekend gate');
+  eq(parseDailySet('run my calm workflow every morning'), { name: 'calm', daily: true, window: 'morning' }, 'every morning finally means the morning');
+  eq(parseDailySet('run my desk workflow every weekday morning'), { name: 'desk', daily: true, days: 'weekdays', window: 'morning' }, 'the combined form');
+  eq(parseDailySet('run my wind-down workflow every evening'), { name: 'wind-down', daily: true, window: 'evening' }, 'evening window');
+  eq(parseDailySet('run my desk workflow every day'), { name: 'desk', daily: true }, 'plain daily unchanged');
+  eq(parseDailySet('run my sabbath workflow every sunday'), { name: 'sabbath', daily: true, day: 'sunday' }, 'weekly unchanged');
+  eq(parseDailySet('stop running my desk workflow every weekday morning'), { name: 'desk', daily: false }, 'the off form knows the new words');
+  eq(parseDailySet('run my errands every saturday'), null, 'no workflow word, no parse');
+  eq(parseHolidaySkip('skip public holidays for my budget workflow'), { name: 'budget', skip: true }, 'holiday skip on');
+  eq(parseHolidaySkip('make my budget workflow skip public holidays'), { name: 'budget', skip: true }, 'the make form');
+  eq(parseHolidaySkip('stop skipping public holidays for my budget workflow'), { name: 'budget', skip: false }, 'holiday skip off');
+  eq(parseHolidaySkip('i skip public holidays because i work retail'), null, 'holiday talk stays talk');
+  eq(isSchedulesCheck('check my schedules'), true, 'the schedules read');
+  eq(isSchedulesCheck("what's on my schedule today?"), true, 'the spoken form');
+  eq(isSchedulesCheck('my schedule is packed'), false, 'schedule talk stays talk');
+});
+
+Deno.test('v54: setting a gated schedule reads back honestly and clears clean', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now' }] };
+  const set = await tryAgent('run my desk workflow every weekday morning', EMAIL, profile, run);
+  if (!set?.reply.includes('every weekday morning') || !set.reply.includes('first chat in the morning')) {
+    throw new Error('the confirm names the gate and the window: ' + set?.reply);
+  }
+  const wf = set!.profile!.workflows![0];
+  eq({ daily: wf.daily, days: wf.days, window: wf.window }, { daily: true, days: 'weekdays', window: 'morning' }, 'the modifiers stored');
+
+  const listed = await tryAgent('list my workflows', EMAIL, set!.profile!, run);
+  if (!listed?.reply.includes('runs every weekday morning')) throw new Error('the list names the cadence: ' + listed?.reply);
+
+  const off = await tryAgent('stop running my desk workflow every weekday morning', EMAIL, set!.profile!, run);
+  const cleared = off!.profile!.workflows![0];
+  eq({ daily: cleared.daily, days: cleared.days, window: cleared.window }, { daily: undefined, days: undefined, window: undefined }, 'off clears the whole schedule');
+
+  const swap = await tryAgent('run my desk workflow every sunday', EMAIL, set!.profile!, run);
+  const swapped = swap!.profile!.workflows![0];
+  eq({ day: swapped.day, days: swapped.days, window: swapped.window }, { day: 'sunday', days: undefined, window: undefined }, 'a weekly swap drops the modifiers');
+});
+
+Deno.test('v54: runDailyWorkflows honours day gates and clock windows', async () => {
+  const friday = '2026-07-17';
+  const saturday = '2026-07-18';
+  const { run } = stubRunner();
+  const weekdayWf: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true, days: 'weekdays' }] };
+  const onFri = await runDailyWorkflows(weekdayWf, run, friday, EMAIL, undefined, 8);
+  if (!onFri?.report.includes('"desk"')) throw new Error('a weekday workflow runs on friday: ' + onFri?.report);
+  eq(await runDailyWorkflows(weekdayWf, run, saturday, EMAIL, undefined, 8), null, 'and sits out saturday');
+
+  const morningWf: Profile = { workflows: [{ name: 'calm', steps: ['encourage me'], created: 'now', daily: true, window: 'morning' }] };
+  const at8 = await runDailyWorkflows(morningWf, run, friday, EMAIL, undefined, 8);
+  if (!at8?.report.includes('"calm"')) throw new Error('a morning window fires at 8am: ' + at8?.report);
+  eq(await runDailyWorkflows(morningWf, run, friday, EMAIL, undefined, 20), null, 'and waits at 8pm — unfired, so a later morning still gets it');
+
+  const combo: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true, days: 'weekdays', window: 'evening' }] };
+  eq(await runDailyWorkflows(combo, run, saturday, EMAIL, undefined, 19), null, 'combined gates: right hour, wrong day');
+  const comboHit = await runDailyWorkflows(combo, run, friday, EMAIL, undefined, 19);
+  if (!comboHit?.report.includes('"desk"')) throw new Error('combined gates open together: ' + comboHit?.report);
+});
+
+Deno.test('v54: holiday-aware schedules skip on holidays and run when the calendar is silent', async () => {
+  const t = '2026-07-17';
+  const { run } = stubRunner();
+  const flagged: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true, skipHolidays: true }] };
+
+  const holCalls: string[] = [];
+  const holiday = stubSources(0, 0, 0, { holiday: (d) => { holCalls.push(`holiday:${d}`); return Promise.resolve(true); } });
+  eq(await runDailyWorkflows(flagged, run, t, EMAIL, holiday.sources, 8), null, 'a public holiday sits the flagged run out');
+  eq(holCalls, [`holiday:${t}`], 'one lazy calendar check');
+
+  const ordinary = stubSources(0, 0); // stub default: never a holiday
+  const ran = await runDailyWorkflows(flagged, run, t, EMAIL, ordinary.sources, 8);
+  if (!ran?.report.includes('"desk"')) throw new Error('an ordinary day runs normally: ' + ran?.report);
+
+  const silent = stubSources(0, 0, 0, { holiday: () => Promise.resolve(null) });
+  const anyway = await runDailyWorkflows(flagged, run, t, EMAIL, silent.sources, 8);
+  if (!anyway?.report.includes('"desk"')) throw new Error('a silent calendar never holds the run hostage: ' + anyway?.report);
+
+  const unflagged: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true }] };
+  const lazy = stubSources(0, 0);
+  await runDailyWorkflows(unflagged, run, t, EMAIL, lazy.sources, 8);
+  eq(lazy.calls, [], 'no flag, no calendar call');
+});
+
+Deno.test('v54: the holiday-skip commands refuse the unscheduled and read back everywhere', async () => {
+  const { run } = stubRunner();
+  const unscheduled: Profile = { workflows: [{ name: 'budget', steps: ['encourage me'], created: 'now' }] };
+  const refused = await tryAgent('skip public holidays for my budget workflow', EMAIL, unscheduled, run);
+  if (!refused?.reply.includes("isn't on a calendar schedule")) throw new Error('unscheduled refuses honestly: ' + refused?.reply);
+
+  const scheduled: Profile = { workflows: [{ name: 'budget', steps: ['encourage me'], created: 'now', daily: true, days: 'weekdays' }] };
+  const set = await tryAgent('skip public holidays for my budget workflow', EMAIL, scheduled, run);
+  eq(set?.profile?.workflows?.[0].skipHolidays, true, 'the flag stored');
+  if (!set?.reply.includes('sits out South African public holidays')) throw new Error('the confirm: ' + set?.reply);
+
+  const listed = await tryAgent('list my workflows', EMAIL, set!.profile!, run);
+  if (!listed?.reply.includes('skips public holidays')) throw new Error('the list names the flag: ' + listed?.reply);
+
+  const off = await tryAgent('stop skipping public holidays for my budget workflow', EMAIL, set!.profile!, run);
+  eq(off?.profile?.workflows?.[0].skipHolidays, undefined, 'the flag cleared');
+  const redundant = await tryAgent('stop skipping public holidays for my budget workflow', EMAIL, scheduled, run);
+  if (!redundant?.reply.includes("wasn't skipping")) throw new Error('a redundant off is honest: ' + redundant?.reply);
+});
+
+Deno.test('v54: check my schedules reads every promise in one report', async () => {
+  const { run } = stubRunner();
+  const none: Profile = { workflows: [{ name: 'adhoc', steps: ['encourage me'], created: 'now' }] };
+  const nothing = await tryAgent('check my schedules', EMAIL, none, run);
+  if (!nothing?.reply.includes("Nothing's scheduled")) throw new Error('unscheduled workflows answer honestly: ' + nothing?.reply);
+
+  const full: Profile = {
+    workflows: [
+      { name: 'desk', steps: ['encourage me'], created: 'now', daily: true, days: 'weekdays', window: 'morning', skipHolidays: true },
+      { name: 'triage', steps: ['encourage me'], created: 'now', watch: 'i have new email' },
+      { name: 'study', steps: ['encourage me'], created: 'now', trigger: 'study time' },
+      { name: 'adhoc', steps: ['encourage me'], created: 'now' },
+    ],
+  };
+  const report = await tryAgent("what's on my schedule today", EMAIL, full, run);
+  const r = report?.reply ?? '';
+  if (!r.includes('Your schedules (3 of 4 workflows)')) throw new Error('the header counts: ' + r);
+  if (!r.includes('runs every weekday morning')) throw new Error('the cadence line: ' + r);
+  if (!r.includes('sits out public holidays')) throw new Error('the holiday note: ' + r);
+  if (!r.includes('watching: whenever i have new email')) throw new Error('the watch line: ' + r);
+  if (!r.includes('on the phrase "study time"')) throw new Error('the trigger line: ' + r);
+  if (r.includes('adhoc')) throw new Error('unscheduled workflows stay out of the report: ' + r);
 });

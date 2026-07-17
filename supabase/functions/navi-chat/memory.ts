@@ -156,7 +156,7 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // evalCondition vocabulary, checked at session-start (and by "check my
 // watches"), fired at most once a day on a CLEAN true, sharing `lastRun`.
 // Exclusive with daily/day/monthDay — setting one clears the others.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string };
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string; days?: 'weekdays' | 'weekends'; window?: 'morning' | 'afternoon' | 'evening' | 'night'; skipHolidays?: boolean };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.
