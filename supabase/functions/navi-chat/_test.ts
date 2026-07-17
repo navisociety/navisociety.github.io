@@ -57,7 +57,7 @@ import {
   parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
   parseLastRun, parseWorkflowRunAgain, parseMissionDeadline, isAgentAsk,
   parseWatchSet, type ConditionSources,
-  parseHolidaySkip, isSchedulesCheck,
+  parseHolidaySkip, isSchedulesCheck, parseRunBooking,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -4923,4 +4923,134 @@ Deno.test('v54: check my schedules reads every promise in one report', async () 
   if (!r.includes('watching: whenever i have new email')) throw new Error('the watch line: ' + r);
   if (!r.includes('on the phrase "study time"')) throw new Error('the trigger line: ' + r);
   if (r.includes('adhoc')) throw new Error('unscheduled workflows stay out of the report: ' + r);
+});
+
+// ── v55: the timekeeper round — weekly/monthly windows, one-off booked runs,
+//        reminder clock windows, the week receipts, the briefing count ───────
+
+Deno.test('v55: the timekeeper parsers — windows everywhere, bookings, the topic law', () => {
+  eq(parseDailySet('run my sabbath workflow every sunday morning'), { name: 'sabbath', daily: true, day: 'sunday', window: 'morning' }, 'weekly window');
+  eq(parseDailySet('run my budget workflow every month on the 1st in the evening'), { name: 'budget', daily: true, monthDay: 1, window: 'evening' }, 'monthly window');
+  eq(parseDailySet('run my sabbath workflow every sunday'), { name: 'sabbath', daily: true, day: 'sunday' }, 'windowless weekly unchanged');
+  eq(parseRunBooking('run my desk workflow tomorrow'), { name: 'desk', when: 'tomorrow' }, 'tomorrow booking');
+  eq(parseRunBooking('run my desk workflow next friday'), { name: 'desk', when: 'next friday' }, 'next-weekday booking');
+  eq(parseRunBooking('run my desk workflow in 3 days'), { name: 'desk', when: 'in 3 days' }, 'in-N-days booking');
+  eq(parseRunBooking('book my desk workflow for 25 december'), { name: 'desk', when: '25 december' }, 'the book verb takes dates');
+  eq(parseRunBooking('cancel the booked run of my desk workflow'), { name: 'desk', cancel: true }, 'the cancel');
+  eq(parseRunBooking('run my desk workflow on friday'), null, 'THE TOPIC LAW: on friday stays a topic run');
+  eq(parseRunBooking('run my desk workflow'), null, 'a plain run is not a booking');
+  eq(parseEvery('pray every morning'), { text: 'pray', every: 'day', window: 'morning' }, 'every morning is a windowed daily');
+  eq(parseEvery('call mom every monday evening'), { text: 'call mom', every: 'monday', window: 'evening' }, 'weekday + window');
+  eq(parseEvery('take meds every day in the morning'), { text: 'take meds', every: 'day', window: 'morning' }, 'the in-the form');
+  eq(parseEvery('pack my bag in the morning'), { text: 'pack my bag in the morning' }, 'no cadence — the one-off keeps its words');
+});
+
+Deno.test('v55: weekly and monthly schedules honour their windows', async () => {
+  const sunday = '2026-07-19';
+  const friday = '2026-07-17';
+  const { run } = stubRunner();
+  const weekly: Profile = { workflows: [{ name: 'sabbath', steps: ['encourage me'], created: 'now', day: 'sunday', window: 'morning' }] };
+  const hit = await runDailyWorkflows(weekly, run, sunday, EMAIL, undefined, 8);
+  if (!hit?.report.includes('"sabbath"')) throw new Error('sunday morning fires: ' + hit?.report);
+  eq(await runDailyWorkflows(weekly, run, sunday, EMAIL, undefined, 20), null, 'sunday evening waits — the morning is gone, tomorrow is not sunday');
+  eq(await runDailyWorkflows(weekly, run, friday, EMAIL, undefined, 8), null, 'friday is not sunday');
+
+  const monthly: Profile = { workflows: [{ name: 'books', steps: ['encourage me'], created: 'now', monthDay: 17, window: 'evening' }] };
+  eq(await runDailyWorkflows(monthly, run, friday, EMAIL, undefined, 8), null, 'the 17th at 8am waits for the evening');
+  const evening = await runDailyWorkflows(monthly, run, friday, EMAIL, undefined, 19);
+  if (!evening?.report.includes('"books"')) throw new Error('the 17th in the evening fires: ' + evening?.report);
+});
+
+Deno.test('v55: booked runs — book, refuse, fire once via the channel, clear', async () => {
+  const t = '2026-07-17';
+  const { run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now' }] };
+  const set = await tryAgent('run my desk workflow tomorrow', EMAIL, profile, run);
+  if (!set?.reply.startsWith('Booked')) throw new Error('the booking confirm: ' + set?.reply);
+  const runOn = set!.profile!.workflows![0].runOn!;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(runOn)) throw new Error('a real date stored: ' + runOn);
+
+  const bad = await tryAgent('book my desk workflow for someday nice', EMAIL, profile, run);
+  if (!bad?.reply.includes("that phrasing I don't know yet")) throw new Error('unknown phrasing teaches: ' + bad?.reply);
+  const slotted: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+  const slotNo = await tryAgent('run my study workflow tomorrow', EMAIL, slotted, run);
+  if (!slotNo?.reply.includes('* slot')) throw new Error('slotted workflows refuse bookings: ' + slotNo?.reply);
+
+  const dueToday: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', runOn: t }] };
+  const fired = await runDailyWorkflows(dueToday, run, t, EMAIL, undefined, 8);
+  if (!fired?.report.includes('Your booked "desk" workflow')) throw new Error('the booked label: ' + fired?.report);
+  const after = fired!.profile.workflows![0];
+  eq({ runOn: after.runOn, lastRun: after.lastRun }, { runOn: undefined, lastRun: t }, 'one date, one run — the booking cleared itself');
+  eq(await runDailyWorkflows({ workflows: [{ name: 'desk', steps: ['x'], created: 'now', runOn: '2026-07-20' }] }, run, t, EMAIL, undefined, 8), null, 'a future booking waits');
+
+  const cancel = await tryAgent('cancel the booked run of my desk workflow', EMAIL, dueToday, run);
+  eq(cancel?.profile?.workflows?.[0].runOn, undefined, 'the cancel clears the date');
+  const nothing = await tryAgent('unbook my desk workflow', EMAIL, profile, run);
+  if (!nothing?.reply.includes('no booked run')) throw new Error('a bare cancel is honest: ' + nothing?.reply);
+});
+
+Deno.test('v55: a booking outranks the watch and the holiday flag for its one run', async () => {
+  const t = '2026-07-17';
+  const { run } = stubRunner();
+  const watched: Profile = { workflows: [{ name: 'triage', steps: ['encourage me'], created: 'now', watch: 'i have new email', runOn: t }] };
+  const quiet = stubSources(0, 0); // inbox empty — the watch alone would stay silent
+  const fired = await runDailyWorkflows(watched, run, t, EMAIL, quiet.sources, 8);
+  if (!fired?.report.includes('Your booked "triage" workflow')) throw new Error('the booking fires despite a false watch: ' + fired?.report);
+
+  const flagged: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true, skipHolidays: true, runOn: t }] };
+  const holiday = stubSources(0, 0, 0, { holiday: () => Promise.resolve(true) });
+  const anyway = await runDailyWorkflows(flagged, run, t, EMAIL, holiday.sources, 8);
+  if (!anyway?.report.includes('"desk"')) throw new Error('an explicit booking runs on a holiday: ' + anyway?.report);
+});
+
+Deno.test('v55: reminder windows hold, surface late rather than never, and roll only on surfacing', () => {
+  const today = { y: 2026, m: 7, d: 17 };
+  const t = '2026-07-17';
+  const morning: Profile = { reminders: [{ text: 'pray', created: t, due: t, every: 'day', window: 'morning' }] };
+  const early = addDueReminders('Hey.', morning, today, 3);
+  eq(early.response, 'Hey.', 'at 3am the morning reminder holds');
+  eq(early.reminders, undefined, 'a held reminder never rolls');
+  const at8 = addDueReminders('Hey.', morning, today, 8);
+  if (!at8.response.includes('pray')) throw new Error('at 8am it surfaces: ' + at8.response);
+  eq(at8.reminders?.[0].due, '2026-07-18', 'surfacing rolls it to tomorrow');
+  const at14 = addDueReminders('Hey.', morning, today, 14);
+  if (!at14.response.includes('pray')) throw new Error('a missed morning still speaks in the afternoon: ' + at14.response);
+  const overdue: Profile = { reminders: [{ text: 'call sam', created: t, due: '2026-07-16', window: 'evening' }] };
+  if (!addDueReminders('Hey.', overdue, today, 8).response.includes('call sam')) throw new Error('overdue reminders always surface');
+
+  const made = tryReminder('remind me every morning to pray', {}, T0);
+  if (!made?.reply.includes('every day in the morning')) throw new Error('the confirm names the window: ' + made?.reply);
+  eq(made?.profile?.reminders?.[0].window, 'morning', 'the window stored');
+});
+
+Deno.test('v55: the week receipts read and the briefing schedules count', async () => {
+  const { run } = stubRunner();
+  const td = new Date();
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const earlier = new Date(td.getTime() - 2 * 86400000);
+  const logged: Profile = {
+    workflowLog: [
+      { name: 'desk', date: iso(earlier), via: 'daily' },
+      { name: 'dashboard', date: iso(td), via: 'manual' },
+    ],
+  };
+  const week = await tryAgent('which workflows ran this week', EMAIL, logged, run);
+  const r = week?.reply ?? '';
+  if (!r.startsWith("This week's runs (2):") || !r.includes('"desk"') || !r.includes('"dashboard"')) {
+    throw new Error('the week read groups both runs: ' + r);
+  }
+  const none = await tryAgent('what ran this week', EMAIL, {}, run);
+  if (!none?.reply.includes('No workflow runs on the receipts this week')) throw new Error('an empty week is honest: ' + none?.reply);
+
+  const brief = buildBriefing({
+    workflows: [
+      { name: 'desk', steps: ['x'], created: 'now', daily: true },
+      { name: 'triage', steps: ['x'], created: 'now', watch: 'i have new email' },
+      { name: 'oneoff', steps: ['x'], created: 'now', runOn: '2099-01-01' },
+    ],
+  });
+  if (!brief.includes('SCHEDULES: 1 on the calendar · 1 watching the world · 1 booked one-off')) {
+    throw new Error('the briefing counts the promises: ' + brief);
+  }
+  eq(buildBriefing({}).includes('SCHEDULES'), false, 'nothing scheduled, no line');
 });

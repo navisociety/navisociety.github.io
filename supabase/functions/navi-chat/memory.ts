@@ -105,7 +105,7 @@ export type DeviceTask = { device: string; text: string; created: string; auto?:
 // v47: `topic` is what filled the * slots (the re-run form replays it), and
 // `steps` holds per-step outcomes so "what did my last run do" answers with
 // the whole story. Step text is clipped at stamp time to keep the row small.
-export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested' | 'watch'; topic?: string; steps?: StepOutcome[] };
+export type WorkflowRun = { name: string; date: string; via: 'manual' | 'trigger' | 'daily' | 'weekly' | 'monthly' | 'nested' | 'watch' | 'booked'; topic?: string; steps?: StepOutcome[] };
 
 // v47: one step's fate inside a run receipt — `s` is the (clipped) step text,
 // `o` what happened to it, `w` the short honest why when it didn't run.
@@ -156,7 +156,7 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // evalCondition vocabulary, checked at session-start (and by "check my
 // watches"), fired at most once a day on a CLEAN true, sharing `lastRun`.
 // Exclusive with daily/day/monthDay — setting one clears the others.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string; days?: 'weekdays' | 'weekends'; window?: 'morning' | 'afternoon' | 'evening' | 'night'; skipHolidays?: boolean };
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string; days?: 'weekdays' | 'weekends'; window?: 'morning' | 'afternoon' | 'evening' | 'night'; skipHolidays?: boolean; runOn?: string };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.
@@ -203,7 +203,7 @@ export type LifeEvent = { text: string; date: string };
 // surfacing rolls it forward, "done" rolls it too, only delete removes it.
 // v45: a {month, day} object makes it YEARLY ("remind me every year on
 // 3 august to wish mom happy birthday") — same roll-on-surface contract.
-export type Reminder = { text: string; created: string; due?: string; offered?: string; every?: string | number | { month: number; day: number } };
+export type Reminder = { text: string; created: string; due?: string; offered?: string; every?: string | number | { month: number; day: number }; window?: 'morning' | 'afternoon' | 'evening' | 'night' };
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 

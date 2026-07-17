@@ -156,6 +156,22 @@ export function buildBriefing(profile: Profile, today = todayISO(), world?: stri
     );
   }
 
+  // v55: the schedules line — every standing promise counted, sync and free
+  // (brief.ts already holds the workflows; "check my schedules" is the
+  // detail view). Only speaks when something is actually scheduled.
+  const wfs = profile.workflows ?? [];
+  const onCalendar = wfs.filter((w) => w.daily || w.day || w.monthDay).length;
+  const watching = wfs.filter((w) => w.watch).length;
+  const booked = wfs.filter((w) => w.runOn).length;
+  if (onCalendar + watching + booked > 0) {
+    const bits = [
+      onCalendar ? `${onCalendar} on the calendar` : '',
+      watching ? `${watching} watching the world` : '',
+      booked ? `${booked} booked one-off` : '',
+    ].filter(Boolean);
+    lines.push(`SCHEDULES: ${bits.join(' · ')} — say "check my schedules" for the full picture.`);
+  }
+
   // Mood — the honest two-week read, only when there's real data.
   const mood = moodTrend(profile);
   if (mood) lines.push(`MOOD: ${mood}`);

@@ -41,7 +41,7 @@
 // law that keeps monthly reminders at 1-28.
 
 import { type Habit, isCrisisReply, type Profile, type Reminder } from './memory.ts';
-import { todayInTZ } from './skills.ts';
+import { hourInTZ, todayInTZ } from './skills.ts';
 
 // Same guard as agent.ts/habit.ts/memory.ts: crisis language is a human
 // emergency, never a note to hold. Returning null lets the pipeline fall
@@ -134,14 +134,24 @@ const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
  * as `needsDate` — so the caller can refuse or teach honestly.
  * No bare "daily": "the daily standup" is a topic, not a cadence.
  */
-export function parseEvery(text: string): { text: string; every?: Every; badDay?: number; badDate?: { month: number; day: number }; needsDate?: boolean } {
+export function parseEvery(text: string): { text: string; every?: Every; badDay?: number; badDate?: { month: number; day: number }; needsDate?: boolean; window?: 'morning' | 'afternoon' | 'evening' | 'night' } {
   let t = text.trim().replace(/[.!?]+\s*$/, '');
+  const original = t;
   const strip = (rx: RegExp) => {
     const m = t.match(rx);
     if (m) t = t.replace(rx, ' ').replace(/\s+/g, ' ').trim();
     return m;
   };
   let m: RegExpMatchArray | null;
+  // v55: an optional clock window rides any cadence — "remind me every day in
+  // the morning to pray". Stripped up front; if no cadence matches below, the
+  // ORIGINAL text is returned so a one-off keeps its own words.
+  const wm = strip(/\s*\b(?:in|at) the (mornings?|afternoons?|evenings?|nights?)\b/i);
+  const window = wm
+    ? wm[1].toLowerCase().replace(/s$/, '') as 'morning' | 'afternoon' | 'evening' | 'night'
+    : undefined;
+  const withWin = (out: { text: string; every: Every }) =>
+    window ? { ...out, window } : out;
   // v45: yearly — the date phrase and "every year" must BOTH be consumed here,
   // in either order, or parseWhen would eat the date and leave a one-off.
   if ((m = strip(new RegExp(String.raw`\s*\b(?:on )?(?:the )?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of )?(${MONTHS.join('|')})\s+(?:of )?(?:every|each) year\b`, 'i'))) ||
@@ -152,20 +162,32 @@ export function parseEvery(text: string): { text: string; every?: Every; badDay?
     const day = /^\d/.test(a) ? parseInt(a, 10) : parseInt(b, 10);
     const month = MONTHS.indexOf(/^\d/.test(a) ? b : a) + 1;
     if (day < 1 || day > DAYS_IN_MONTH[month - 1]) return { text: t, badDate: { month, day } };
-    return { text: t, every: { month, day } };
+    return withWin({ text: t, every: { month, day } });
   }
   if (strip(/\s*\b(?:every|each) year\b/i)) return { text: t, needsDate: true };
   if ((m = strip(/\s*\bon (?:the )?(\d{1,2})(?:st|nd|rd|th)? of (?:every|each) month\b/i)) ||
       (m = strip(/\s*\b(?:every|each) month(?:\s+on (?:the )?(\d{1,2})(?:st|nd|rd|th)?)?\b/i))) {
     const day = m[1] ? parseInt(m[1], 10) : 1;
     if (day < 1 || day > 28) return { text: t, badDay: day };
-    return { text: t, every: day };
+    return withWin({ text: t, every: day });
   }
-  if (strip(/\s*\b(?:every|each) day\b/i)) return { text: t, every: 'day' };
-  if ((m = strip(new RegExp(String.raw`\s*\b(?:every|each) (${WEEKDAYS.join('|')})s?\b`, 'i')))) {
-    return { text: t, every: m[1].toLowerCase() };
+  if (strip(/\s*\b(?:every|each) day\b/i)) return withWin({ text: t, every: 'day' });
+  // v55: "remind me every morning to pray" — a window IS a daily cadence.
+  if ((m = strip(/\s*\b(?:every|each) (mornings?|afternoons?|evenings?|nights?)\b/i))) {
+    return {
+      text: t,
+      every: 'day',
+      window: m[1].toLowerCase().replace(/s$/, '') as 'morning' | 'afternoon' | 'evening' | 'night',
+    };
   }
-  return { text: t };
+  if ((m = strip(new RegExp(String.raw`\s*\b(?:every|each) (${WEEKDAYS.join('|')})s?( mornings?| afternoons?| evenings?| nights?)?\b`, 'i')))) {
+    const dayWin = m[2]
+      ? m[2].trim().toLowerCase().replace(/s$/, '') as 'morning' | 'afternoon' | 'evening' | 'night'
+      : window;
+    return { text: t, every: m[1].toLowerCase(), ...(dayWin ? { window: dayWin } : {}) };
+  }
+  // No cadence — hand the ORIGINAL text back so a one-off keeps every word.
+  return { text: original };
 }
 
 /**
@@ -204,12 +226,14 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-/** "every day" / "every monday" / "monthly on the 1st" / "every year on 3 august" — how a cadence reads back. */
-export function cadenceLabel(every: Every): string {
-  if (every === 'day') return 'every day';
-  if (typeof every === 'object') return `every year on ${every.day} ${MONTHS[every.month - 1]}`;
-  if (typeof every === 'number') return `monthly on the ${ordinal(every)}`;
-  return `every ${every}`;
+/** "every day" / "every monday" / "monthly on the 1st" / "every year on 3 august" — how a cadence reads back.
+ *  v55: a clock window rides along — "every day in the morning". */
+export function cadenceLabel(every: Every, window?: string): string {
+  const win = window ? ` in the ${window}` : '';
+  if (every === 'day') return `every day${win}`;
+  if (typeof every === 'object') return `every year on ${every.day} ${MONTHS[every.month - 1]}${win}`;
+  if (typeof every === 'number') return `monthly on the ${ordinal(every)}${win}`;
+  return `every ${every}${win}`;
 }
 
 // ── Ask detection ─────────────────────────────────────────────────────────────
@@ -244,8 +268,8 @@ export function isReminderAsk(message: string): boolean {
 
 function describe(r: Reminder, todayISO: string): string {
   // v44: a recurring reminder names its rhythm wherever it renders.
-  const tag = r.every !== undefined ? `${cadenceLabel(r.every)} — ` : '';
-  if (!r.due) return r.every !== undefined ? `${r.text} (${cadenceLabel(r.every)})` : r.text;
+  const tag = r.every !== undefined ? `${cadenceLabel(r.every, r.window)} — ` : '';
+  if (!r.due) return r.every !== undefined ? `${r.text} (${cadenceLabel(r.every, r.window)})` : r.text;
   if (r.due < todayISO) return `${r.text} (${tag}was due ${r.due})`;
   if (r.due === todayISO) return `${r.text} (${tag}today)`;
   return `${r.text} (${tag}${r.every !== undefined ? 'next ' : ''}${r.due})`;
@@ -288,7 +312,7 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
       const base = target.due && target.due > todayISO ? ymdOf(target.due) : today;
       const due = nextOccurrence(target.every, base, true);
       return {
-        reply: `Ticked off for now — "${target.text}" repeats ${cadenceLabel(target.every)}, so it'll be back on ${due}. Say "delete reminder ${idx + 1}" to stop it for good.`,
+        reply: `Ticked off for now — "${target.text}" repeats ${cadenceLabel(target.every, target.window)}, so it'll be back on ${due}. Say "delete reminder ${idx + 1}" to stop it for good.`,
         profile: { ...stored, reminders: list.map((r, i) => (i === idx ? { ...r, due } : r)) },
       };
     }
@@ -296,7 +320,7 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
     const tail = rest.length ? `${rest.length} still on the list.` : 'That was the last one.';
     if (target.every !== undefined) {
       return {
-        reply: `Stopped — no more ${cadenceLabel(target.every)} reminders about "${target.text}". ${tail}`,
+        reply: `Stopped — no more ${cadenceLabel(target.every, target.window)} reminders about "${target.text}". ${tail}`,
         profile: { ...stored, reminders: rest },
       };
     }
@@ -325,7 +349,7 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
       return { reply: "That wouldn't move it anywhere — pick a day after today, like \"snooze reminder 1 until tomorrow\"." };
     }
     const target = list[idx];
-    const rhythm = target.every !== undefined ? ` (its ${cadenceLabel(target.every)} rhythm carries on after that)` : '';
+    const rhythm = target.every !== undefined ? ` (its ${cadenceLabel(target.every, target.window)} rhythm carries on after that)` : '';
     return {
       reply: `Snoozed — "${target.text}" will come back on ${due}${rhythm}.`,
       profile: { ...stored, reminders: list.map((r, i) => (i === idx ? { ...r, due } : r)) },
@@ -365,9 +389,11 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
       }
       const due = nextOccurrence(ev.every, today);
       const first = due === todayISO ? 'today' : due === addDays(today, 1) ? 'tomorrow' : `on ${due}`;
+      // v55: a windowed reminder waits for its part of the day — said out loud.
+      const winNote = ev.window ? ` (I'll hold it for the ${ev.window} — your first chat in that window hears it)` : '';
       return {
-        reply: `Held. I'll remind you to ${text} ${cadenceLabel(ev.every)}, starting ${first} — it repeats until you say "delete reminder ${list.length + 1}".`,
-        profile: { ...stored, reminders: [...list, { text, created: todayISO, due, every: ev.every }] },
+        reply: `Held. I'll remind you to ${text} ${cadenceLabel(ev.every, ev.window)}, starting ${first}${winNote} — it repeats until you say "delete reminder ${list.length + 1}".`,
+        profile: { ...stored, reminders: [...list, { text, created: todayISO, due, every: ev.every, ...(ev.window ? { window: ev.window } : {}) }] },
       };
     }
     const { text, due } = parseWhen(add[1], today);
@@ -397,21 +423,37 @@ export function tryReminder(message: string, stored: Profile, today = todayInTZ(
  * `reminders` for the caller to carry into the save. Never wraps a crisis
  * reply (invariant #1); the untouched list surfaces next session instead.
  */
+// v55: the clock windows — a windowed reminder surfaces during OR AFTER its
+// part of the day (a missed morning still speaks in the afternoon — silence
+// would break the promise), and holds only while the window is still ahead.
+// An overdue reminder (yesterday's date) always surfaces. Night wraps: 22:00
+// onward, plus the small hours before 5.
+const WINDOW_START: Record<string, number> = { morning: 5, afternoon: 12, evening: 17, night: 22 };
+function windowOpen(window: string | undefined, dueISO: string | undefined, todayISO: string, hour: number): boolean {
+  if (!window) return true;
+  if (dueISO !== undefined && dueISO < todayISO) return true;
+  if (window === 'night') return hour >= 22 || hour < 5;
+  return hour >= WINDOW_START[window];
+}
+
 export function addDueReminders(
   response: string,
   stored: Profile,
   today = todayInTZ(NAVI_TZ),
+  hourNow?: number, // v55: tests pin the clock; production reads SA time
 ): { response: string; reminders?: Reminder[] } {
   const list = stored.reminders ?? [];
   if (!list.length || isCrisisReply(response)) return { response };
   const todayISO = isoFromYMD(today.y, today.m, today.d);
-  const due = list.filter(r => !r.due || r.due <= todayISO);
+  const hour = hourNow ?? hourInTZ(NAVI_TZ);
+  const due = list.filter(r => (!r.due || r.due <= todayISO) && windowOpen(r.window, r.due, todayISO, hour));
   if (!due.length) return { response };
   const lines = due.map(r => `• ${describe(r, todayISO)}`).join('\n');
   const lead = due.length === 1 ? 'One thing you asked me to hold:' : `${due.length} things you asked me to hold:`;
   let rolled = false;
   const reminders = list.map(r => {
-    if (r.every === undefined || !r.due || r.due > todayISO) return r;
+    // v55: a held windowed reminder hasn't surfaced — it must not roll.
+    if (r.every === undefined || !r.due || r.due > todayISO || !windowOpen(r.window, r.due, todayISO, hour)) return r;
     rolled = true;
     return { ...r, due: nextOccurrence(r.every, today, true) };
   });
