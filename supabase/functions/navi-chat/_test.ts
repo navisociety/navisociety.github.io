@@ -74,6 +74,7 @@ import {
 import type { Profile, Workflow } from './memory.ts';
 import {
   tryWorld, parseWeatherAsk, parseConvertAsk, parseCryptoAsk, parseCountryAsk,
+  parseSunAsk, parseAirAsk, parseQuoteAsk, parseHolidaysAsk, parseThisDayAsk,
   parseNewsAsk, type WorldSources,
 } from './world.ts';
 
@@ -4433,6 +4434,25 @@ const worldStub = (over: Partial<WorldSources> = {}) => {
     crypto: (id, vs) => { calls.push(`coin:${id}:${vs.join(',')}`); return Promise.resolve({ usd: 43250, zar: 812000 }); },
     country: (n) => { calls.push(`country:${n}`); return Promise.resolve({ name: 'South Africa', capitals: ['Pretoria', 'Cape Town', 'Bloemfontein'], population: 59308690, currencies: ['South African rand (ZAR)'], languages: ['Afrikaans', 'English', 'Zulu'], region: 'Africa' }); },
     news: (t) => { calls.push(`news:${t ?? ''}`); return Promise.resolve(['Rains ease in Gauteng - News24', 'Springboks name squad - SuperSport']); },
+    sun: () => { calls.push('sun'); return Promise.resolve({ sunrise: '2026-07-16T06:55', sunset: '2026-07-16T17:31', daylightSec: 38160 }); },
+    air: () => { calls.push('air'); return Promise.resolve({ aqi: 42, pm25: 9.2, pm10: 18.4, uv: 6.4 }); },
+    quote: (s) => { calls.push(`q:${s}`); return Promise.resolve({ price: 213.55, currency: 'USD' }); },
+    holidays: (c) => {
+      calls.push(`hol:${c}`);
+      const yr = new Date().getFullYear() + 1; // always upcoming, whenever the suite runs
+      return Promise.resolve([
+        { date: `${yr}-01-01`, name: "New Year's Day" },
+        { date: `${yr}-03-21`, name: 'Human Rights Day' },
+        { date: `${yr}-04-27`, name: 'Freedom Day' },
+      ]);
+    },
+    onThisDay: (m, d) => {
+      calls.push(`otd:${m}-${d}`);
+      return Promise.resolve([
+        { year: 1969, text: 'Apollo 11 launched from Cape Kennedy.' },
+        { year: 1945, text: 'The Trinity test ushered in the atomic age.' },
+      ]);
+    },
     ...over,
   };
   return { calls, sources };
@@ -4547,4 +4567,123 @@ Deno.test('v51: news — numbered headlines, topics, and honest quiet days', asy
 
   eq(await tryWorld('is there anything new under the sun', w.sources), null, 'philosophy is not a news ask');
   eq(await tryWorld('good news everyone', w.sources), null, 'exclamations stay conversation');
+});
+
+// ── v52: the observatory round — five more world engines (sun, air, markets,
+//        holidays, this day), same injected sources, never touching the net ──
+
+Deno.test('v52: the observatory parsers are anchored — asks parse, conversation does not', () => {
+  eq(parseSunAsk('sunrise in johannesburg'), { which: 'sunrise', city: 'johannesburg' }, 'core sunrise ask');
+  eq(parseSunAsk('When does the sun set in cape town?'), { which: 'sunset', city: 'cape town' }, 'spoken sunset');
+  eq(parseSunAsk('what time is sunset'), { which: 'sunset', city: '' }, 'bare ask carries no city');
+  eq(parseSunAsk('the sunset was beautiful tonight'), null, 'sunset talk stays talk');
+  eq(parseSunAsk('sunrise in durban and news about music'), null, 'a multi-part tail is not a place');
+  eq(parseAirAsk('air quality in johannesburg'), { what: 'air', city: 'johannesburg' }, 'core air ask');
+  eq(parseAirAsk("what's the uv index in durban today"), { what: 'uv', city: 'durban' }, 'uv with a time word');
+  eq(parseAirAsk('i need some fresh air'), null, 'air talk stays talk');
+  eq(parseQuoteAsk('price of apple stock'), { name: 'apple' }, 'stock ask with the market word');
+  eq(parseQuoteAsk('price of apple'), null, 'without the market word apple stays fruit');
+  eq(parseQuoteAsk('gold price'), { name: 'gold' }, 'commodities need no market word');
+  eq(parseQuoteAsk("where's the s&p 500"), { name: 's&p 500' }, 'the index where-form');
+  eq(parseQuoteAsk("where's the apple"), null, 'the where-form is for indexes only');
+  eq(parseQuoteAsk('tesla'), null, 'a bare name is conversation');
+  eq(parseHolidaysAsk('public holidays in france'), { country: 'france', next: false }, 'list ask with a country');
+  eq(parseHolidaysAsk('when is the next public holiday'), { country: '', next: true }, 'next ask defaults home');
+  eq(parseHolidaysAsk('i love public holidays so much'), null, 'holiday talk stays talk');
+  eq(parseThisDayAsk('today in history'), {}, 'the core this-day ask');
+  eq(parseThisDayAsk('what happened on this day?'), {}, 'spoken form');
+  eq(parseThisDayAsk('what happened today'), null, "somebody's day is not a history ask");
+});
+
+Deno.test('v52: sun — both ends of the day, honest misses, and the cache', async () => {
+  const w = worldStub();
+  const out = await tryWorld('sunrise in johannesburg', w.sources);
+  eq(out, 'Sunrise in Johannesburg, South Africa today is at 06:55 (sunset 17:31 — 10 h 36 min of daylight). (Open-Meteo)', 'the sunrise report');
+  eq(w.calls, ['geo:johannesburg', 'sun'], 'one geocode, one almanac read');
+  await tryWorld('sunrise in johannesburg', w.sources);
+  eq(w.calls.length, 2, 'the second ask came from the cache');
+  const set = await tryWorld('when does the sun set in johannesburg', w.sources);
+  if (!set?.startsWith('Sunset in Johannesburg, South Africa today is at 17:31')) throw new Error('the sunset report leads with sunset: ' + set);
+
+  const bare = await tryWorld('what time is sunrise', w.sources);
+  if (!bare?.includes('sunrise in johannesburg')) throw new Error('a bare ask teaches the form: ' + bare);
+  const lost = await tryWorld('sunrise in narnia', worldStub({ geocode: () => Promise.resolve(null) }).sources);
+  if (!lost?.includes('couldn\'t find a place called "narnia"')) throw new Error('an unknown place is honest: ' + lost);
+  const down = await tryWorld('sunset in atlantis', worldStub({ sun: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the sun almanac")) throw new Error('a down almanac is honest: ' + down);
+});
+
+Deno.test('v52: air — AQI bands, UV bands, and honest empty readings', async () => {
+  const w = worldStub();
+  const out = await tryWorld('air quality in johannesburg', w.sources);
+  eq(out, 'Air quality in Johannesburg, South Africa right now: US AQI 42 — good, PM2.5 9 µg/m³, PM10 18 µg/m³, UV index 6.4 (high). (Open-Meteo)', 'the full air report');
+  eq(w.calls, ['geo:johannesburg', 'air'], 'one geocode, one air read');
+  await tryWorld('air quality in johannesburg', w.sources);
+  eq(w.calls.length, 2, 'the second ask came from the cache');
+  const uv = await tryWorld('uv index in johannesburg', w.sources);
+  if (!uv?.startsWith('UV index in Johannesburg, South Africa right now: 6.4 (high)')) throw new Error('the uv ask answers alone: ' + uv);
+
+  const bare = await tryWorld("what's the air quality", w.sources);
+  if (!bare?.includes('air quality in johannesburg')) throw new Error('a bare ask teaches the form: ' + bare);
+  const noRead = await tryWorld('air quality in durban',
+    worldStub({ air: () => Promise.resolve({ aqi: null, pm25: null, pm10: null, uv: 5 }) }).sources);
+  if (!noRead?.includes('has no reading for')) throw new Error('a missing AQI is honest: ' + noRead);
+  const down = await tryWorld('air quality in atlantis', worldStub({ air: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the air-quality service")) throw new Error('a down service is honest: ' + down);
+});
+
+Deno.test('v52: markets — closed tickers, commodity units, honest feed talk', async () => {
+  const w = worldStub();
+  const out = await tryWorld('price of apple stock', w.sources);
+  eq(out, 'Apple (AAPL) right now: 213.55 USD. (Yahoo Finance — markets move, treat this as a snapshot.)', 'the stock quote');
+  eq(w.calls, ['q:AAPL'], 'one quote fetch');
+  await tryWorld('how much is apple stock', w.sources);
+  eq(w.calls.length, 1, 'the second ask came from the cache');
+  const gold = await tryWorld('gold price', w.sources);
+  if (!gold?.includes('Gold right now: 213.55 USD per ounce')) throw new Error('commodities carry their unit: ' + gold);
+  const index = await tryWorld("where's the dow", w.sources);
+  if (!index?.startsWith('The Dow Jones right now:')) throw new Error('the where-form quotes indexes: ' + index);
+
+  const down = await tryWorld('price of tesla stock', worldStub({ quote: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the market feed")) throw new Error('a down feed is honest: ' + down);
+  eq(await tryWorld('the price of freedom is eternal vigilance', w.sources), null, 'proverbs stay conversation');
+});
+
+Deno.test('v52: holidays — the home calendar, named countries, honest gaps', async () => {
+  const w = worldStub();
+  const list = await tryWorld('public holidays in south africa', w.sources);
+  if (!list?.startsWith('Public holidays coming up in South Africa:') ||
+    !list.includes("1. 1 January") || !list.includes("New Year's Day") || !list.includes('(Nager.Date)')) {
+    throw new Error('the list reads dated and numbered: ' + list);
+  }
+  eq(w.calls, ['hol:south africa'], 'one calendar fetch');
+  const next = await tryWorld('when is the next public holiday', w.sources);
+  if (!next?.includes("The next public holiday in South Africa is New Year's Day") || !/days away/.test(next)) {
+    throw new Error('the next ask counts down: ' + next);
+  }
+  eq(w.calls.length, 2, 'the bare ask defaulted home with its own fetch');
+
+  const unknown = await tryWorld('public holidays in wakanda', worldStub({ holidays: () => Promise.resolve('unknown') }).sources);
+  if (!unknown?.includes("couldn't find a public-holiday calendar")) throw new Error('an unknown calendar is honest: ' + unknown);
+  const down = await tryWorld('public holidays in lesotho', worldStub({ holidays: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the holiday calendar")) throw new Error('a down calendar is honest: ' + down);
+  const empty = await tryWorld('public holidays in eswatini', worldStub({ holidays: () => Promise.resolve([]) }).sources);
+  if (!empty?.includes('nothing coming up for Eswatini')) throw new Error('an empty calendar is honest: ' + empty);
+});
+
+Deno.test('v52: this day — history reads forward, honest quiet days', async () => {
+  // The down case runs FIRST: this-day has one cache key per calendar day, and
+  // honest can't-reach replies are never cached — the good ask below is.
+  const down = await tryWorld('this day in history', worldStub({ onThisDay: () => Promise.resolve(null) }).sources);
+  if (!down?.includes("couldn't reach the history books")) throw new Error('a down feed is honest: ' + down);
+
+  const w = worldStub();
+  const out = await tryWorld('today in history', w.sources);
+  if (!out?.includes('in history:') || !out.includes('(Wikipedia)')) throw new Error('the history report: ' + out);
+  if (out.indexOf('1945 — The Trinity test') > out.indexOf('1969 — Apollo 11')) {
+    throw new Error('events read oldest-first: ' + out);
+  }
+  if (!w.calls[0]?.startsWith('otd:')) throw new Error("the fetch carried today's date: " + w.calls.join(','));
+  await tryWorld('what happened on this day', w.sources);
+  eq(w.calls.length, 1, 'the second ask came from the cache');
 });

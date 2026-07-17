@@ -10,10 +10,27 @@
 //   1. WEATHER   — Open-Meteo (geocoding + forecast): "weather in joburg"
 //   2. CURRENCY  — Frankfurter (ECB reference rates): "convert 100 usd to zar"
 //   3. CRYPTO    — CoinGecko simple price: "price of bitcoin [in rands]"
-//   4. ATLAS     — REST Countries: "capital / population / currency /
-//                  languages of <country>"
+//   4. ATLAS     — mledoze/countries + World Bank: "capital / population /
+//                  currency / languages of <country>"
 //   5. NEWS      — Google News RSS (SA edition): "today's headlines" /
 //                  "news about <topic>"
+//
+// v52 — the observatory round — added five more (same laws, same seam):
+//   6. SUN       — Open-Meteo daily (same geocoder): "sunrise in joburg" /
+//                  "when does the sun set in cape town"
+//   7. AIR       — Open-Meteo air quality: "air quality in johannesburg" /
+//                  "uv index in durban" (closed AQI + UV band maps)
+//   8. MARKETS   — Yahoo Finance v8 chart (keyless, UA header): "price of
+//                  apple stock" / "gold price" / "where's the s&p 500" —
+//                  CLOSED ticker list; JSE quotes in ZAc are converted to ZAR
+//   9. HOLIDAYS  — Nager.Date: "public holidays in south africa" / "when is
+//                  the next public holiday" (country resolved via the atlas,
+//                  South Africa by default)
+//  10. THIS DAY  — Wikipedia on-this-day (selected): "today in history" /
+//                  "what happened on this day"
+//
+// Candidate verified for a future round: TheMealDB recipes (keyless via the
+// public test key: themealdb.com/api/json/v1/1/search.php?s=<dish>).
 //
 // The house rules all hold:
 //   - Anchored, conservative parsing (invariant #2): every regex matches the
@@ -33,9 +50,10 @@
 //     the world and never touch the network.
 //
 // Cache: one in-memory map per warm isolate, TTL per engine — weather 30 min,
-// crypto 5 min, exchange rates 6 h, country facts 7 days, news 15 min.
+// crypto 5 min, exchange rates 6 h, country facts 7 days, news 15 min,
+// sun 6 h, air 30 min, market quotes 10 min, holidays 24 h, this-day 6 h.
 
-import { tryUnits } from './skills.ts';
+import { tryUnits, todayInTZ } from './skills.ts';
 
 // Same guard as agent.ts/compose.ts: crisis language is a human emergency,
 // never a search topic.
@@ -64,6 +82,11 @@ export type CountryFacts = {
   currencies: string[]; languages: string[]; region: string;
   popYear?: string; // the World Bank observation year, when known
 };
+export type SunTimes = { sunrise: string; sunset: string; daylightSec: number };
+export type AirNow = { aqi: number | null; pm25: number | null; pm10: number | null; uv: number | null };
+export type Quote = { price: number; currency: string };
+export type Holiday = { date: string; name: string };
+export type DayEvent = { year: number; text: string };
 
 export type WorldSources = {
   /** null = no such place; 'down' = couldn't reach the geocoder. */
@@ -78,6 +101,16 @@ export type WorldSources = {
   country: (name: string) => Promise<CountryFacts | null | 'unknown'>;
   /** Newest headline titles (topic omitted = top stories); null = couldn't reach. */
   news: (topic?: string) => Promise<string[] | null>;
+  /** v52: local sunrise/sunset ISO datetimes; null = couldn't reach. */
+  sun: (lat: number, lon: number) => Promise<SunTimes | null>;
+  /** v52: current air quality + UV; null = couldn't reach. */
+  air: (lat: number, lon: number) => Promise<AirNow | null>;
+  /** v52: last market price for a KNOWN symbol; null = couldn't reach. */
+  quote: (symbol: string) => Promise<Quote | null>;
+  /** v52: upcoming holidays for a SPOKEN country name; 'unknown' = no calendar. */
+  holidays: (country: string) => Promise<Holiday[] | null | 'unknown'>;
+  /** v52: curated events for a calendar day; null = couldn't reach. */
+  onThisDay: (month: number, day: number) => Promise<DayEvent[] | null>;
 };
 
 const TIMEOUT = 4000;
@@ -99,9 +132,17 @@ async function getJson(url: string): Promise<unknown> {
 // ask ever pays for it.
 
 type SlimCountry = {
-  name: string; cca3: string; capitals: string[];
+  name: string; cca2: string; cca3: string; capitals: string[];
   currencies: string[]; languages: string[]; region: string; alts: string[];
 };
+
+// The one name matcher both the atlas and the holiday calendar use.
+function findCountry(list: SlimCountry[], name: string): SlimCountry | undefined {
+  const q = name.toLowerCase().trim();
+  return list.find((c) => c.name.toLowerCase() === q) ??
+    list.find((c) => c.alts.includes(q)) ??
+    list.find((c) => c.name.toLowerCase().startsWith(q));
+}
 
 let atlas: SlimCountry[] | null = null;
 
@@ -119,6 +160,7 @@ async function loadAtlas(): Promise<SlimCountry[] | null> {
     atlas = rows
       .map((r) => ({
         name: String(r?.name?.common ?? ''),
+        cca2: String(r?.cca2 ?? ''),
         cca3: String(r?.cca3 ?? ''),
         capitals: Array.isArray(r?.capital) ? r.capital.map(String) : [],
         currencies: r?.currencies && typeof r.currencies === 'object'
@@ -205,10 +247,7 @@ const REAL_SOURCES: WorldSources = {
   country: async (name) => {
     const list = await loadAtlas();
     if (!list) return null;
-    const q = name.toLowerCase().trim();
-    const hit = list.find((c) => c.name.toLowerCase() === q) ??
-      list.find((c) => c.alts.includes(q)) ??
-      list.find((c) => c.name.toLowerCase().startsWith(q));
+    const hit = findCountry(list, name);
     if (!hit) return 'unknown';
     // Population lives at the World Bank (mledoze carries none) — fetched only
     // here, cached with the whole answer by tryWorld. A miss just means the
@@ -251,6 +290,100 @@ const REAL_SOURCES: WorldSources = {
       return null;
     }
   },
+  sun: async (lat, lon) => {
+    try {
+      const data = await getJson(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&daily=sunrise,sunset,daylight_duration&timezone=auto&forecast_days=1`,
+        // deno-lint-ignore no-explicit-any
+      ) as any;
+      const d = data?.daily;
+      if (typeof d?.sunrise?.[0] !== 'string' || typeof d?.sunset?.[0] !== 'string') return null;
+      return {
+        sunrise: String(d.sunrise[0]),
+        sunset: String(d.sunset[0]),
+        daylightSec: Math.round(Number(d.daylight_duration?.[0] ?? 0)),
+      };
+    } catch {
+      return null;
+    }
+  },
+  air: async (lat, lon) => {
+    try {
+      const data = await getJson(
+        `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +
+        `&current=pm2_5,pm10,us_aqi,uv_index`,
+        // deno-lint-ignore no-explicit-any
+      ) as any;
+      const c = data?.current;
+      if (!c || typeof c !== 'object') return null;
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      const out = { aqi: num(c.us_aqi), pm25: num(c.pm2_5), pm10: num(c.pm10), uv: num(c.uv_index) };
+      return out.aqi === null && out.uv === null ? null : out;
+    } catch {
+      return null;
+    }
+  },
+  quote: async (symbol) => {
+    try {
+      // Yahoo's v8 chart endpoint is keyless but wants a browser UA.
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`,
+        { signal: AbortSignal.timeout(TIMEOUT), headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } },
+      );
+      if (!res.ok) return null;
+      // deno-lint-ignore no-explicit-any
+      const data = await res.json() as any;
+      const meta = data?.chart?.result?.[0]?.meta;
+      const price = Number(meta?.regularMarketPrice);
+      if (!Number.isFinite(price) || price <= 0) return null;
+      let currency = String(meta?.currency ?? 'USD');
+      let value = price;
+      // JSE quotes come back in ZAc (cents of a rand) — speak rand.
+      if (currency === 'ZAc') { currency = 'ZAR'; value = price / 100; }
+      return { price: value, currency };
+    } catch {
+      return null;
+    }
+  },
+  holidays: async (country) => {
+    const list = await loadAtlas();
+    if (!list) return null;
+    const hit = findCountry(list, country);
+    if (!hit || !hit.cca2) return 'unknown';
+    try {
+      const res = await fetch(
+        `https://date.nager.at/api/v3/NextPublicHolidays/${hit.cca2}`,
+        { signal: AbortSignal.timeout(TIMEOUT), headers: { 'Accept': 'application/json' } },
+      );
+      if (res.status === 404) return 'unknown'; // no calendar for that country
+      if (!res.ok) return null;
+      // deno-lint-ignore no-explicit-any
+      const rows = await res.json() as any[];
+      if (!Array.isArray(rows)) return null;
+      return rows
+        .filter((r) => typeof r?.date === 'string')
+        .map((r) => ({ date: String(r.date), name: String(r.localName ?? r.name ?? 'Public holiday') }));
+    } catch {
+      return null;
+    }
+  },
+  onThisDay: async (month, day) => {
+    try {
+      const mm = String(month).padStart(2, '0');
+      const dd = String(day).padStart(2, '0');
+      const data = await getJson(
+        `https://en.wikipedia.org/api/rest_v1/feed/onthisday/selected/${mm}/${dd}`,
+        // deno-lint-ignore no-explicit-any
+      ) as any;
+      const events = Array.isArray(data?.selected) ? data.selected : [];
+      return events
+        .filter((e: { year?: unknown; text?: unknown }) => typeof e?.year === 'number' && typeof e?.text === 'string')
+        .map((e: { year: number; text: string }) => ({ year: e.year, text: e.text }));
+    } catch {
+      return null;
+    }
+  },
 };
 
 // ── Cache (per warm isolate, webCache-style) ─────────────────────────────────
@@ -275,6 +408,11 @@ const TTL_CRYPTO = 5 * MIN;
 const TTL_RATE = 6 * 60 * MIN;
 const TTL_COUNTRY = 7 * 24 * 60 * MIN;
 const TTL_NEWS = 15 * MIN;
+const TTL_SUN = 6 * 60 * MIN;
+const TTL_AIR = 30 * MIN;
+const TTL_QUOTE = 10 * MIN;
+const TTL_HOLIDAYS = 24 * 60 * MIN;
+const TTL_THIS_DAY = 6 * 60 * MIN;
 
 // ── Shared vocabulary ────────────────────────────────────────────────────────
 
@@ -318,6 +456,66 @@ const COINS: Record<string, { id: string; label: string }> = {
   tron: { id: 'tron', label: 'TRON' }, trx: { id: 'tron', label: 'TRON' },
 };
 const COIN_NAMES = Object.keys(COINS).join('|');
+
+// v52: the markets NAVI quotes — a CLOSED list mapped to Yahoo symbols.
+// No raw tickers on purpose: "price of a car" must never hit a market API.
+const TICKERS: Record<string, { sym: string; label: string; kind: 'stock' | 'index' | 'commodity'; unit?: string }> = {
+  'apple': { sym: 'AAPL', label: 'Apple (AAPL)', kind: 'stock' },
+  'tesla': { sym: 'TSLA', label: 'Tesla (TSLA)', kind: 'stock' },
+  'microsoft': { sym: 'MSFT', label: 'Microsoft (MSFT)', kind: 'stock' },
+  'google': { sym: 'GOOGL', label: 'Alphabet (GOOGL)', kind: 'stock' },
+  'alphabet': { sym: 'GOOGL', label: 'Alphabet (GOOGL)', kind: 'stock' },
+  'amazon': { sym: 'AMZN', label: 'Amazon (AMZN)', kind: 'stock' },
+  'meta': { sym: 'META', label: 'Meta (META)', kind: 'stock' },
+  'facebook': { sym: 'META', label: 'Meta (META)', kind: 'stock' },
+  'nvidia': { sym: 'NVDA', label: 'Nvidia (NVDA)', kind: 'stock' },
+  'netflix': { sym: 'NFLX', label: 'Netflix (NFLX)', kind: 'stock' },
+  'naspers': { sym: 'NPN.JO', label: 'Naspers (NPN, JSE)', kind: 'stock' },
+  's&p 500': { sym: '^GSPC', label: 'The S&P 500', kind: 'index' },
+  'sp500': { sym: '^GSPC', label: 'The S&P 500', kind: 'index' },
+  's&p': { sym: '^GSPC', label: 'The S&P 500', kind: 'index' },
+  'dow jones': { sym: '^DJI', label: 'The Dow Jones', kind: 'index' },
+  'dow': { sym: '^DJI', label: 'The Dow Jones', kind: 'index' },
+  'nasdaq': { sym: '^IXIC', label: 'The Nasdaq', kind: 'index' },
+  'gold': { sym: 'GC=F', label: 'Gold', kind: 'commodity', unit: 'per ounce' },
+  'silver': { sym: 'SI=F', label: 'Silver', kind: 'commodity', unit: 'per ounce' },
+  'oil': { sym: 'CL=F', label: 'Oil (WTI crude)', kind: 'commodity', unit: 'per barrel' },
+  'crude oil': { sym: 'CL=F', label: 'Oil (WTI crude)', kind: 'commodity', unit: 'per barrel' },
+  'brent': { sym: 'BZ=F', label: 'Brent crude', kind: 'commodity', unit: 'per barrel' },
+};
+const TICKER_NAMES = Object.keys(TICKERS)
+  .sort((a, b) => b.length - a.length) // longest first: "crude oil" before "oil"
+  .map((k) => k.replace(/[&$^.]/g, (ch) => '\\' + ch))
+  .join('|');
+
+// v52: closed US-AQI bands (EPA) — every number lands in exactly one.
+function aqiBand(aqi: number): string {
+  if (aqi <= 50) return 'good';
+  if (aqi <= 100) return 'moderate';
+  if (aqi <= 150) return 'unhealthy for sensitive groups';
+  if (aqi <= 200) return 'unhealthy';
+  if (aqi <= 300) return 'very unhealthy';
+  return 'hazardous';
+}
+
+// v52: closed UV-index bands (WHO).
+function uvBand(uv: number): string {
+  if (uv < 3) return 'low';
+  if (uv < 6) return 'moderate';
+  if (uv < 8) return 'high';
+  if (uv < 11) return 'very high';
+  return 'extreme';
+}
+
+// "2026-07-16T06:55" → "06:55"; daylight seconds → "10 h 36 min".
+function clockOf(iso: string): string {
+  return iso.length >= 16 ? iso.slice(11, 16) : iso;
+}
+function daylightOf(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return `${h} h ${m} min`;
+}
 
 // WMO weather codes → words. Closed and exhaustive over Open-Meteo's set.
 function skyOf(code: number): string {
@@ -431,6 +629,119 @@ export function parseNewsAsk(message: string): { topic?: string } | null {
   // "what's the news with you" is conversation, not a search topic.
   if (/^(?:you|me|us|him|her|them|it|yourself|everyone|everybody|life)$/.test(topic)) return null;
   return { topic };
+}
+
+// ── v52 parsers — sun, air, markets, holidays, this day ──────────────────────
+
+const SUN_RX =
+  /^(?:when (?:is|does) (?:the )?sun ?(rise|set)|(?:what time is |when is )?(?:the )?(sunrise|sunset)(?: time)?)(?: today)?(?: (?:in|at|for) ([a-z][a-z' .-]{1,39}?))?(?: today)?$/;
+
+/** { which, city } from a sun ask ('' = no city named), or null. */
+export function parseSunAsk(message: string): { which: 'sunrise' | 'sunset'; city: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 70) return null;
+  const m = t.match(SUN_RX);
+  if (!m) return null;
+  const which = (m[1] ? `sun${m[1]}` : m[2]) as 'sunrise' | 'sunset';
+  const city = (m[3] ?? '').trim();
+  // A multi-part tail is not a place (splitIntents never splits these forms).
+  if (/\b(?:and|then)\b/.test(city)) return null;
+  return { which, city };
+}
+
+const AIR_RX =
+  /^(?:what(?:'s| is) |how(?:'s| is) )?(?:the )?(air quality|air pollution|aqi|uv index|uv)(?: like)?(?: (?:in|for|at) ([a-z][a-z' .-]{1,39}?))?(?: today| right now| now)?$/;
+
+/** { what, city } from an air/UV ask ('' = no city named), or null. */
+export function parseAirAsk(message: string): { what: 'air' | 'uv'; city: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 70) return null;
+  const m = t.match(AIR_RX);
+  if (!m) return null;
+  const what = m[1].startsWith('uv') ? 'uv' : 'air';
+  const city = (m[2] ?? '').trim();
+  if (/\b(?:and|then)\b/.test(city)) return null;
+  return { what, city };
+}
+
+const QUOTE_RX = new RegExp(
+  `^(?:what(?:'s| is) |how much is )?(?:the )?(?:price of |current price of )?(?:one share of |a share of |shares of )?(${TICKER_NAMES})(?: (?:stock|shares?))?(?: price| worth| trading(?: at)?)?(?: (?:right )?now| today)?$`,
+);
+const QUOTE_WHERE_RX = new RegExp(
+  `^where(?:'s| is) the (${TICKER_NAMES})(?: (?:at|trading))?(?: today| right now)?$`,
+);
+
+/** { name } (a TICKERS key) from a market price ask, or null. */
+export function parseQuoteAsk(message: string): { name: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 60) return null;
+  // "where's the s&p 500" — the where-form is a market idiom for INDEXES only
+  // ("where's the apple" is somebody looking for fruit).
+  const w = t.match(QUOTE_WHERE_RX);
+  if (w && TICKERS[w[1]].kind === 'index') return { name: w[1] };
+  const m = t.match(QUOTE_RX);
+  if (!m) return null;
+  // A bare name with no price words is conversation ("tesla"), not an ask.
+  if (!/\b(?:price|worth|how much|trading)\b/.test(t)) return null;
+  // Companies need the market word — "price of apple" stays fruit.
+  if (TICKERS[m[1]].kind === 'stock' && !/\b(?:stock|shares?)\b/.test(t)) return null;
+  return { name: m[1] };
+}
+
+const HOLIDAY_NEXT_RX =
+  /^(?:when(?:'s| is) |what(?:'s| is) )?(?:the )?next public holiday(?: (?:in|for) ([a-z][a-z' .-]{2,39}))?$/;
+const HOLIDAYS_LIST_RX =
+  /^(?:what (?:are )?|show me |list |any )?(?:the )?(?:next |upcoming )?public holidays(?: (?:in|for) ([a-z][a-z' .-]{2,39}))?(?: this year| coming up)?$/;
+
+/** { country ('' = home), next } from a public-holiday ask, or null. */
+export function parseHolidaysAsk(message: string): { country: string; next: boolean } | null {
+  const t = tidy(message);
+  if (!t || t.length > 70) return null;
+  const n = t.match(HOLIDAY_NEXT_RX);
+  const m = n ? null : t.match(HOLIDAYS_LIST_RX);
+  if (!n && !m) return null;
+  const country = ((n ? n[1] : m?.[1]) ?? '').trim();
+  if (/\b(?:and|then)\b/.test(country)) return null;
+  return { country, next: !!n };
+}
+
+const THIS_DAY_RX =
+  /^(?:today|(?:on )?this day) in history$|^what happened on this day(?: in history)?$|^what happened today in history$/;
+
+/** {} from a this-day-in-history ask, or null ("what happened today" is
+ *  somebody's day, not a history ask — it needs "on this day" or "in history"). */
+export function parseThisDayAsk(message: string): Record<never, never> | null {
+  const t = tidy(message);
+  if (!t || t.length > 50) return null;
+  return THIS_DAY_RX.test(t) ? {} : null;
+}
+
+// ── v52 formatting helpers ───────────────────────────────────────────────────
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function titleCase(s: string): string {
+  return s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+// "2026-09-24" → "24 September" (year named only when it isn't this year).
+function niceDate(iso: string, thisYear: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d || m > 12) return iso;
+  return `${d} ${MONTH_NAMES[m - 1]}${y !== thisYear ? ` ${y}` : ''}`;
+}
+
+function daysUntil(iso: string, today: { y: number; m: number; d: number }): number {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(today.y, today.m - 1, today.d)) / 86400000);
+}
+
+// UV comes back in tenths — show one decimal, band on the raw value.
+function fmtUv(n: number): string {
+  return String(Math.round(n * 10) / 10);
 }
 
 // ── The engine ───────────────────────────────────────────────────────────────
@@ -577,6 +888,128 @@ export async function tryWorld(
     const lines = titles.map((t, i) => `${i + 1}. ${t}`).join('\n');
     const head = news.topic ? `The latest on "${news.topic}":` : "Today's headlines:";
     return remember(key, `${head}\n${lines}\n(Google News, South Africa edition.)`, TTL_NEWS);
+  }
+
+  // 6. SUN (v52 — rides the same geocoder as weather)
+  const sun = parseSunAsk(message);
+  if (sun) {
+    if (!sun.city) {
+      return `Tell me where and I'll check the almanac: "${sun.which} in johannesburg" (any city works).`;
+    }
+    const key = `s:${sun.which}:${sun.city}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const geo = await sources.geocode(sun.city);
+    if (geo === 'down') return 'I couldn\'t reach the sun almanac just now — try me again in a moment.';
+    if (!geo) return `I couldn't find a place called "${sun.city}" on the map — check the spelling and try me again.`;
+    const st = await sources.sun(geo.lat, geo.lon);
+    if (!st) return 'I found the place but couldn\'t reach the sun almanac just now — try me again in a moment.';
+    const where = geo.country && geo.country !== geo.name ? `${geo.name}, ${geo.country}` : geo.name;
+    const text = sun.which === 'sunrise'
+      ? `Sunrise in ${where} today is at ${clockOf(st.sunrise)} (sunset ${clockOf(st.sunset)} — ${daylightOf(st.daylightSec)} of daylight). (Open-Meteo)`
+      : `Sunset in ${where} today is at ${clockOf(st.sunset)} (sunrise ${clockOf(st.sunrise)} — ${daylightOf(st.daylightSec)} of daylight). (Open-Meteo)`;
+    return remember(key, text, TTL_SUN);
+  }
+
+  // 7. AIR (v52 — same geocoder again)
+  const airAsk = parseAirAsk(message);
+  if (airAsk) {
+    if (!airAsk.city) {
+      return 'Tell me where and I\'ll check the air: "air quality in johannesburg" or "uv index in durban" (any city works).';
+    }
+    const key = `air:${airAsk.what}:${airAsk.city}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const geo = await sources.geocode(airAsk.city);
+    if (geo === 'down') return 'I couldn\'t reach the air-quality service just now — try me again in a moment.';
+    if (!geo) return `I couldn't find a place called "${airAsk.city}" on the map — check the spelling and try me again.`;
+    const now = await sources.air(geo.lat, geo.lon);
+    if (!now) return 'I found the place but couldn\'t reach the air-quality service just now — try me again in a moment.';
+    const where = geo.country && geo.country !== geo.name ? `${geo.name}, ${geo.country}` : geo.name;
+    if (airAsk.what === 'uv') {
+      if (now.uv === null) return `The air-quality service has no UV reading for ${where} just now — try me again later.`;
+      return remember(key, `UV index in ${where} right now: ${fmtUv(now.uv)} (${uvBand(now.uv)}). (Open-Meteo)`, TTL_AIR);
+    }
+    if (now.aqi === null) return `The air-quality service has no reading for ${where} just now — try me again later.`;
+    const parts = [`US AQI ${Math.round(now.aqi)} — ${aqiBand(now.aqi)}`];
+    if (now.pm25 !== null) parts.push(`PM2.5 ${Math.round(now.pm25)} µg/m³`);
+    if (now.pm10 !== null) parts.push(`PM10 ${Math.round(now.pm10)} µg/m³`);
+    if (now.uv !== null) parts.push(`UV index ${fmtUv(now.uv)} (${uvBand(now.uv)})`);
+    return remember(key, `Air quality in ${where} right now: ${parts.join(', ')}. (Open-Meteo)`, TTL_AIR);
+  }
+
+  // 8. MARKETS (v52)
+  const quoteAsk = parseQuoteAsk(message);
+  if (quoteAsk) {
+    const tk = TICKERS[quoteAsk.name];
+    const key = `q:${tk.sym}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const q = await sources.quote(tk.sym);
+    if (!q) return 'I couldn\'t reach the market feed just now — try me again in a moment.';
+    const unit = tk.unit ? ` ${tk.unit}` : '';
+    return remember(
+      key,
+      `${tk.label} right now: ${fmtMoney(q.price)} ${q.currency}${unit}. (Yahoo Finance — markets move, treat this as a snapshot.)`,
+      TTL_QUOTE,
+    );
+  }
+
+  // 9. HOLIDAYS (v52 — country resolved through the same atlas, home is SA)
+  const hol = parseHolidaysAsk(message);
+  if (hol) {
+    const country = hol.country || 'south africa';
+    const today = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${today.y}-${String(today.m).padStart(2, '0')}-${String(today.d).padStart(2, '0')}`;
+    const key = `h:${hol.next ? 'next' : 'list'}:${country}:${todayISO}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const rows = await sources.holidays(country);
+    if (rows === 'unknown') {
+      return `I couldn't find a public-holiday calendar for "${country}" — try the country's common name, like "public holidays in south africa".`;
+    }
+    if (rows === null) return 'I couldn\'t reach the holiday calendar just now — try me again in a moment.';
+    const upcoming = rows.filter((r) => r.date >= todayISO);
+    if (!upcoming.length) {
+      return `The holiday calendar has nothing coming up for ${titleCase(country)} — either it's a quiet stretch or the calendar is.`;
+    }
+    if (hol.next) {
+      const h = upcoming[0];
+      const days = daysUntil(h.date, today);
+      const when = days === 0 ? "that's today!" : days === 1 ? "that's tomorrow!" : `${days} days away`;
+      return remember(
+        key,
+        `The next public holiday in ${titleCase(country)} is ${h.name} on ${niceDate(h.date, today.y)} — ${when} (Nager.Date)`,
+        TTL_HOLIDAYS,
+      );
+    }
+    const lines = upcoming.slice(0, 5)
+      .map((h, i) => `${i + 1}. ${niceDate(h.date, today.y)} — ${h.name}`).join('\n');
+    return remember(
+      key,
+      `Public holidays coming up in ${titleCase(country)}:\n${lines}\n(Nager.Date)`,
+      TTL_HOLIDAYS,
+    );
+  }
+
+  // 10. THIS DAY (v52 — Wikipedia's curated on-this-day feed)
+  if (parseThisDayAsk(message)) {
+    const today = todayInTZ('Africa/Johannesburg');
+    const key = `d:${today.m}-${today.d}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const events = await sources.onThisDay(today.m, today.d);
+    if (events === null) return 'I couldn\'t reach the history books just now — try me again in a moment.';
+    if (!events.length) return 'The history feed came back empty for today — try me again in a moment.';
+    // The feed leads with its most notable picks — keep its top 5, then read
+    // them oldest-first so the reply tells time forward.
+    const picks = events.slice(0, 5).sort((a, b) => a.year - b.year);
+    const lines = picks.map((e) => `${e.year} — ${e.text}`).join('\n');
+    return remember(
+      key,
+      `On this day (${today.d} ${MONTH_NAMES[today.m - 1]}) in history:\n${lines}\n(Wikipedia)`,
+      TTL_THIS_DAY,
+    );
   }
 
   return null;
