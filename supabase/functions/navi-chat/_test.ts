@@ -4437,7 +4437,7 @@ const worldStub = (over: Partial<WorldSources> = {}) => {
     rate: (f, t) => { calls.push(`rate:${f}:${t}`); return Promise.resolve(18.5); },
     crypto: (id, vs) => { calls.push(`coin:${id}:${vs.join(',')}`); return Promise.resolve({ usd: 43250, zar: 812000 }); },
     country: (n) => { calls.push(`country:${n}`); return Promise.resolve({ name: 'South Africa', capitals: ['Pretoria', 'Cape Town', 'Bloemfontein'], population: 59308690, currencies: ['South African rand (ZAR)'], languages: ['Afrikaans', 'English', 'Zulu'], region: 'Africa' }); },
-    news: (t) => { calls.push(`news:${t ?? ''}`); return Promise.resolve(['Rains ease in Gauteng - News24', 'Springboks name squad - SuperSport']); },
+    news: (t) => { calls.push(`news:${t ?? ''}`); return Promise.resolve({ titles: ['Rains ease in Gauteng - News24', 'Springboks name squad - SuperSport'], source: 'Google News, South Africa edition' }); },
     sun: () => { calls.push('sun'); return Promise.resolve({ sunrise: '2026-07-16T06:55', sunset: '2026-07-16T17:31', daylightSec: 38160 }); },
     air: () => { calls.push('air'); return Promise.resolve({ aqi: 42, pm25: 9.2, pm10: 18.4, uv: 6.4 }); },
     quote: (s) => { calls.push(`q:${s}`); return Promise.resolve({ price: 213.55, currency: 'USD' }); },
@@ -4564,7 +4564,7 @@ Deno.test('v51: news — numbered headlines, topics, and honest quiet days', asy
   if (!topic?.includes('The latest on "music"')) throw new Error('the topic heads the reply: ' + topic);
   eq(w.calls[1], 'news:music', 'the topic rode the fetch');
 
-  const empty = await tryWorld('news about quantum basket weaving', worldStub({ news: () => Promise.resolve([]) }).sources);
+  const empty = await tryWorld('news about quantum basket weaving', worldStub({ news: () => Promise.resolve({ titles: [], source: 'SABC News' }) }).sources);
   if (!empty?.includes('Nothing in the news about')) throw new Error('an empty search is honest: ' + empty);
   const down = await tryWorld('news about rugby', worldStub({ news: () => Promise.resolve(null) }).sources);
   if (!down?.includes("couldn't reach the news feed")) throw new Error('a down feed is honest: ' + down);

@@ -105,8 +105,9 @@ export type WorldSources = {
   crypto: (id: string, vs: string[]) => Promise<Record<string, number> | null>;
   /** 'unknown' = no such country; null = couldn't reach. */
   country: (name: string) => Promise<CountryFacts | null | 'unknown'>;
-  /** Newest headline titles (topic omitted = top stories); null = couldn't reach. */
-  news: (topic?: string) => Promise<string[] | null>;
+  /** Newest headlines + the feed that answered (topic omitted = top stories);
+   *  null = no feed could be reached. */
+  news: (topic?: string) => Promise<{ titles: string[]; source: string } | null>;
   /** v52: local sunrise/sunset ISO datetimes; null = couldn't reach. */
   sun: (lat: number, lon: number) => Promise<SunTimes | null>;
   /** v52: current air quality + UV; null = couldn't reach. */
@@ -120,6 +121,34 @@ export type WorldSources = {
 };
 
 const TIMEOUT = 4000;
+
+/** Titles inside <item> blocks of an RSS feed (channel titles excluded),
+ *  newest-first as served, capped at 5; null = couldn't reach or non-OK. */
+async function rssItemTitles(url: string): Promise<string[] | null> {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(TIMEOUT),
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const titles: string[] = [];
+    const re = /<item>[\s\S]*?<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml)) !== null && titles.length < 5) {
+      const t = m[1]
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/&apos;/g, "'").replace(/&#8217;/g, "'").replace(/&#8216;/g, "'")
+        .replace(/&#8220;/g, '"').replace(/&#8221;/g, '"').replace(/&#8211;/g, '–')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/\s+/g, ' ').trim();
+      if (t && !titles.includes(t)) titles.push(t);
+    }
+    return titles;
+  } catch {
+    return null;
+  }
+}
 
 async function getJson(url: string): Promise<unknown> {
   const res = await fetch(url, {
@@ -274,33 +303,30 @@ const REAL_SOURCES: WorldSources = {
     return { ...hit, population, popYear };
   },
   news: async (topic) => {
-    try {
-      const url = topic
-        ? `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&hl=en-ZA&gl=ZA&ceid=ZA:en`
-        : 'https://news.google.com/rss?hl=en-ZA&gl=ZA&ceid=ZA:en';
-      // Google (like Yahoo) rejects UA-less datacenter fetches — seen live
-      // 2026-07-17: fine from a browser/curl, "couldn't reach" from the edge
-      // isolate until the header landed.
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(TIMEOUT),
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      });
-      if (!res.ok) return null;
-      const xml = await res.text();
-      const titles: string[] = [];
-      const re = /<item>[\s\S]*?<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(xml)) !== null && titles.length < 5) {
-        const t = m[1]
-          .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-          .replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-          .replace(/\s+/g, ' ').trim();
-        if (t && !titles.includes(t)) titles.push(t);
-      }
-      return titles;
-    } catch {
-      return null;
+    // Google News blocks the edge isolate's datacenter IPs outright (seen
+    // live 2026-07-17: fine from a browser/curl, "couldn't reach" from the
+    // isolate even with a browser UA) — so the SA feed chain tries Google
+    // first and falls back to SABC News (a plain WordPress RSS that welcomes
+    // programmatic readers, with a search feed for topics). The first feed
+    // with ITEMS wins; an empty answer only stands when every feed agreed
+    // (a consent page parses as empty — it must never mask the fallback).
+    const feeds: { url: string; source: string }[] = topic
+      ? [
+        { url: `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&hl=en-ZA&gl=ZA&ceid=ZA:en`, source: 'Google News, South Africa edition' },
+        { url: `https://www.sabcnews.com/sabcnews/?s=${encodeURIComponent(topic)}&feed=rss2`, source: 'SABC News' },
+      ]
+      : [
+        { url: 'https://news.google.com/rss?hl=en-ZA&gl=ZA&ceid=ZA:en', source: 'Google News, South Africa edition' },
+        { url: 'https://www.sabcnews.com/sabcnews/feed/', source: 'SABC News' },
+      ];
+    let empty: { titles: string[]; source: string } | null = null;
+    for (const feed of feeds) {
+      const titles = await rssItemTitles(feed.url);
+      if (titles === null) continue;
+      if (titles.length) return { titles, source: feed.source };
+      empty = { titles, source: feed.source };
     }
+    return empty;
   },
   sun: async (lat, lon) => {
     try {
@@ -895,16 +921,16 @@ export async function tryWorld(
     const key = `n:${news.topic ?? ''}`;
     const hit = cached(key);
     if (hit) return hit;
-    const titles = await sources.news(news.topic);
-    if (titles === null) return 'I couldn\'t reach the news feed just now — try me again in a moment.';
-    if (!titles.length) {
+    const feed = await sources.news(news.topic);
+    if (feed === null) return 'I couldn\'t reach the news feeds just now — try me again in a moment.';
+    if (!feed.titles.length) {
       return news.topic
-        ? `Nothing in the news about "${news.topic}" right now — either it's quiet or the feed is. Try a broader topic.`
-        : 'The news feed came back empty just now — try me again in a moment.';
+        ? `Nothing in the news about "${news.topic}" right now — either it's quiet or the feeds are. Try a broader topic.`
+        : 'The news feeds came back empty just now — try me again in a moment.';
     }
-    const lines = titles.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    const lines = feed.titles.map((t, i) => `${i + 1}. ${t}`).join('\n');
     const head = news.topic ? `The latest on "${news.topic}":` : "Today's headlines:";
-    return remember(key, `${head}\n${lines}\n(Google News, South Africa edition.)`, TTL_NEWS);
+    return remember(key, `${head}\n${lines}\n(${feed.source}.)`, TTL_NEWS);
   }
 
   // 6. SUN (v52 — rides the same geocoder as weather)
