@@ -183,6 +183,7 @@ import { visionItemCount } from './vision.ts';
 import { inboxUnreadCount, isSendStep, tryMail } from './mail.ts';
 import { chatsIdleCount } from './chats.ts';
 import { parseWhen } from './remind.ts'; // v46: "pause my X workflow until friday"
+import { holidayOn, priceOf, skyFor, type SkyNow } from './world.ts'; // v53: the reflex sources
 
 export type AgentRunner = (
   part: string,
@@ -198,12 +199,21 @@ export type ConditionSources = {
   inboxUnread: (email: string) => Promise<number | 'not-connected' | null>;
   // v37: idle chats past a horizon — a pure count, never a delete.
   chatsOlderThan: (email: string, days: number) => Promise<number | null>;
+  // v53: the reflex sources — keyless world.ts reads. sky answers rain and
+  // temperature conditions; price answers coin/ticker thresholds; holiday
+  // answers the SA public-holiday calendar for a yyyy-mm-dd date.
+  sky: (city: string) => Promise<SkyNow | null | 'unknown-place'>;
+  price: (name: string) => Promise<{ value: number; currency: string } | null | 'unknown'>;
+  holiday: (dateISO: string) => Promise<boolean | null>;
 };
 
 const REAL_SOURCES: ConditionSources = {
   visionCount: visionItemCount,
   inboxUnread: inboxUnreadCount,
   chatsOlderThan: chatsIdleCount,
+  sky: skyFor,
+  price: priceOf,
+  holiday: holidayOn,
 };
 
 /**
@@ -619,7 +629,7 @@ export function parseConditionStep(step: string): { cond: string; body: string }
 }
 
 const KNOWN_CONDITIONS =
-  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my mission is due soon", "my mission isn't due soon", "my mission is overdue", "my mission isn't overdue", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "i have an event today", "i have no events today", "i have an event this week", "i have no events this week", "it's a special day", "it isn't a special day", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting"`;
+  `"i haven't logged my <habit> habit", "i logged my <habit> habit", "a reminder is due", "no reminders are due", "my mood is low/stressed/good", "my mood isn't <x>", "my mission is idle", "i have a mission", "i have no mission", "my mission is due soon", "my mission isn't due soon", "my mission is overdue", "my mission isn't overdue", "my <habit> streak is under <n>", "my <habit> streak is at least <n>", "my vision board is empty", "my vision board isn't empty", "i have new email", "i have no new email", "a booked send is waiting", "no booked sends are waiting", "i have chats older than <n> days", "i have no chats older than <n> days", "it's <weekday>", "it isn't <weekday>", "it's the weekend", "it's a weekday", "it's morning/afternoon/evening/night", "it isn't <time of day>", "it's the <nth> (of the month)", "it isn't the <nth>", "i have an event today", "i have no events today", "i have an event this week", "i have no events this week", "it's a special day", "it isn't a special day", "my <device> has tasks waiting", "my <device> has no tasks waiting", "my <device> has results waiting", "my <device> has no results waiting", "it's raining (in <city>)", "it isn't raining (in <city>)", "it's cold in <city>" (10°C or under), "it's hot in <city>" (28°C or up) — say "i live in <city>" once and the bare weather forms use your city, "it's a public holiday", "it isn't a public holiday", "tomorrow is a public holiday", "bitcoin is above <n>", "gold is below <n>" (any coin or market NAVI quotes)`;
 
 // Canonical mood labels the journal uses, keyed by the words people say.
 const MOOD_ALIASES: Record<string, string> = {
@@ -855,6 +865,61 @@ export async function evalCondition(
     const n = await sources.chatsOlderThan(email, parseInt(m[1], 10));
     return n === null ? 'unreachable' : n === 0;
   }
+
+  // v53: weather conditions — the sky over a named city (or the stored place
+  // when the phrase names none; no city anywhere teaches). A city the map
+  // doesn't know can't be checked — honest 'unreachable', never a guess.
+  // "Cold" is ≤10°C and "hot" is ≥28°C — closed thresholds, documented in
+  // KNOWN_CONDITIONS so the verdict is never a matter of taste.
+  m = cond.match(/^it(?:'s| is) (raining|rainy|wet|cold|chilly|freezing|hot|warm)(?: (?:outside|out))?(?: (?:in|at) ([a-z][a-z' .-]{1,39}))?$/) ??
+    cond.match(/^it (?:isn'?t|is not) (raining|rainy|wet|cold|chilly|freezing|hot|warm)(?: (?:outside|out))?(?: (?:in|at) ([a-z][a-z' .-]{1,39}))?$/) ??
+    cond.match(/^it'?s not (raining|rainy|wet|cold|chilly|freezing|hot|warm)(?: (?:outside|out))?(?: (?:in|at) ([a-z][a-z' .-]{1,39}))?$/);
+  if (m) {
+    const negated = /^it(?:'s not| (?:isn'?t|is not))/.test(cond);
+    const city = (m[2] ?? profile.place ?? '').trim();
+    if (!city) return null; // teach — name a city, or say "i live in <city>" once
+    const sky = await sources.sky(city);
+    if (sky === null || sky === 'unknown-place') return 'unreachable';
+    const word = m[1];
+    const holds = word === 'cold' || word === 'chilly' || word === 'freezing'
+      ? sky.tempC <= 10
+      : word === 'hot' || word === 'warm'
+        ? sky.tempC >= 28
+        : sky.raining;
+    return negated ? !holds : holds;
+  }
+
+  // v53: public-holiday conditions — the SA calendar, today or tomorrow.
+  // Distinct from v45's "special day" (the personal dates book) on purpose.
+  m = cond.match(/^(today|tomorrow) (?:is|'?s) (?:a )?public holiday$/) ??
+    cond.match(/^it(?:'s| is) a public holiday(?: (today|tomorrow))?$/) ??
+    cond.match(/^(today|tomorrow) (?:isn'?t|is not) a public holiday$/) ??
+    cond.match(/^it (?:isn'?t|is not) a public holiday(?: (today|tomorrow))?$/) ??
+    cond.match(/^it'?s not a public holiday(?: (today|tomorrow))?$/);
+  if (m) {
+    const negated = /(?:isn'?t|is not|'?s not) a public holiday/.test(cond);
+    const day = m[1] === 'tomorrow'
+      ? new Date(Date.parse(todayISO) + 86400000).toISOString().slice(0, 10)
+      : todayISO;
+    const h = await sources.holiday(day);
+    if (h === null) return 'unreachable';
+    return negated ? !h : h;
+  }
+
+  // v53: price thresholds over the closed coin/ticker lists — "bitcoin is
+  // above 50000", "gold is under 2000". Coins compare in USD; tickers in the
+  // currency they trade in. A name NAVI doesn't quote falls through to the
+  // teach; a down feed skips honestly. Kept LAST so every specific condition
+  // above wins first.
+  m = cond.match(/^(?:the price of )?([a-z0-9&$^. '-]{2,20}?) is (above|over|below|under) \$?(\d{1,12}(?:\.\d{1,4})?)$/);
+  if (m) {
+    const p = await sources.price(m[1].trim());
+    if (p === 'unknown') return null;
+    if (p === null) return 'unreachable';
+    const n = parseFloat(m[3]);
+    return m[2] === 'above' || m[2] === 'over' ? p.value > n : p.value < n;
+  }
+
   return null;
 }
 
@@ -1196,7 +1261,7 @@ WORKFLOWS — saved routines I run on command:
 - pause my morning workflow / pause my morning workflow until friday (schedule, trigger, and manual runs all sleep; a dated pause wakes itself) / resume my morning workflow
 - include the step "my next mission step" and the routine shows your mission's current step, read-only
 - steps can act on your Vision Board too — "add * to my vision board" pins the topic of the day onto the board itself
-- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting / when my mission is due soon / when my mission is overdue
+- conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting / when my mission is due soon / when my mission is overdue / when it's raining in johannesburg (tell me "i live in johannesburg" once and bare "when it's raining" works) / when it's cold (10°C or under) or hot (28°C or up) / when it's a public holiday (or tomorrow is) / when bitcoin is above 50000 / when gold is below 2000 — and watches take all of these too: "run my umbrella workflow whenever it's raining"
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
 - run my triage workflow whenever i have new email (a WATCHED workflow — the schedule is a condition, any from the list above: I check it when you start a chat and fire the workflow at most once a day, only on a clean true) / stop watching my triage workflow / check my watches (checks every watch right now and fires the true ones)
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely

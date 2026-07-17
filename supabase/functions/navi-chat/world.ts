@@ -32,6 +32,12 @@
 // Candidate verified for a future round: TheMealDB recipes (keyless via the
 // public test key: themealdb.com/api/json/v1/1/search.php?s=<dish>).
 //
+// v53 — the reflex round — the senses now FEED THE EXECUTION LAYER: skyFor /
+// priceOf / holidayOn (bottom of this file) ride agent.ts's ConditionSources
+// (weather, price-threshold, and public-holiday workflow conditions — watches
+// inherit them) and brief.ts's BriefSources (the briefing's sky line); and
+// tryWorld's bare weather/sun/air asks default to Profile.place (homeCity).
+//
 // The house rules all hold:
 //   - Anchored, conservative parsing (invariant #2): every regex matches the
 //     whole tidied message; when in doubt return null and let the pipeline
@@ -518,7 +524,8 @@ function daylightOf(sec: number): string {
 }
 
 // WMO weather codes → words. Closed and exhaustive over Open-Meteo's set.
-function skyOf(code: number): string {
+// Exported since v53: the briefing's sky line speaks the same words.
+export function skyOf(code: number): string {
   if (code === 0) return 'clear skies';
   if (code === 1) return 'mostly clear';
   if (code === 2) return 'partly cloudy';
@@ -758,12 +765,16 @@ const CURRENCY_LIST =
 export async function tryWorld(
   message: string,
   sources: WorldSources = REAL_SOURCES,
+  homeCity = '', // v53: Profile.place — bare weather/sun/air asks default here
 ): Promise<string | null> {
+  const home = homeCity.toLowerCase().trim();
+
   // 1. WEATHER
   const weather = parseWeatherAsk(message);
   if (weather) {
+    if (!weather.city && home) weather.city = home;
     if (!weather.city) {
-      return 'Tell me where and I\'ll check the sky: "weather in johannesburg" (any city works).';
+      return 'Tell me where and I\'ll check the sky: "weather in johannesburg" (any city works — or say "i live in johannesburg" once and bare asks will use your city).';
     }
     const key = `w:${weather.city}`;
     const hit = cached(key);
@@ -893,8 +904,9 @@ export async function tryWorld(
   // 6. SUN (v52 — rides the same geocoder as weather)
   const sun = parseSunAsk(message);
   if (sun) {
+    if (!sun.city && home) sun.city = home;
     if (!sun.city) {
-      return `Tell me where and I'll check the almanac: "${sun.which} in johannesburg" (any city works).`;
+      return `Tell me where and I'll check the almanac: "${sun.which} in johannesburg" (any city works — or say "i live in johannesburg" once and bare asks will use your city).`;
     }
     const key = `s:${sun.which}:${sun.city}`;
     const hit = cached(key);
@@ -914,8 +926,9 @@ export async function tryWorld(
   // 7. AIR (v52 — same geocoder again)
   const airAsk = parseAirAsk(message);
   if (airAsk) {
+    if (!airAsk.city && home) airAsk.city = home;
     if (!airAsk.city) {
-      return 'Tell me where and I\'ll check the air: "air quality in johannesburg" or "uv index in durban" (any city works).';
+      return 'Tell me where and I\'ll check the air: "air quality in johannesburg" or "uv index in durban" (any city works — or say "i live in johannesburg" once and bare asks will use your city).';
     }
     const key = `air:${airAsk.what}:${airAsk.city}`;
     const hit = cached(key);
@@ -1013,4 +1026,65 @@ export async function tryWorld(
   }
 
   return null;
+}
+
+// ── v53: the reflex helpers — the senses feeding the EXECUTION layer ─────────
+// Three small reads agent.ts's ConditionSources and brief.ts's BriefSources
+// inject: the sky over a city, the price of a known asset, and whether a date
+// is a South African public holiday. Same laws as everything above — keyless,
+// honest nulls, and null NEVER guesses.
+
+export type SkyNow = { tempC: number; raining: boolean; words: string };
+
+// "Raining" is the closed WMO precipitation set: drizzle 51-57, rain 61-67,
+// showers 80-82, thunderstorms 95+. Snow and fog are honestly not rain.
+function isRainCode(code: number): boolean {
+  return (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
+}
+
+/** The sky over a city right now; 'unknown-place' = no such city on the map. */
+export async function skyFor(city: string): Promise<SkyNow | null | 'unknown-place'> {
+  const geo = await REAL_SOURCES.geocode(city);
+  if (geo === 'down') return null;
+  if (!geo) return 'unknown-place';
+  const fc = await REAL_SOURCES.forecast(geo.lat, geo.lon);
+  if (!fc) return null;
+  return { tempC: fc.tempC, raining: isRainCode(fc.code), words: skyOf(fc.code) };
+}
+
+/** Price of a coin (USD) or ticker (its own currency); 'unknown' = not a name NAVI quotes. */
+export async function priceOf(name: string): Promise<{ value: number; currency: string } | null | 'unknown'> {
+  const n = name.toLowerCase().trim();
+  const coin = COINS[n];
+  if (coin) {
+    const row = await REAL_SOURCES.crypto(coin.id, ['usd']);
+    const v = row?.usd;
+    return typeof v === 'number' && v > 0 ? { value: v, currency: 'USD' } : null;
+  }
+  const tk = TICKERS[n];
+  if (tk) {
+    const q = await REAL_SOURCES.quote(tk.sym);
+    return q ? { value: q.price, currency: q.currency } : null;
+  }
+  return 'unknown';
+}
+
+/** Is a yyyy-mm-dd date a South African public holiday? Whole-year calendar,
+ *  cached 24 h in the shared text cache (stored as a joined date list). */
+export async function holidayOn(dateISO: string): Promise<boolean | null> {
+  const year = dateISO.slice(0, 4);
+  if (!/^\d{4}$/.test(year)) return null;
+  const key = `hy:${year}`;
+  let dates = cached(key);
+  if (dates === null) {
+    try {
+      const rows = await getJson(`https://date.nager.at/api/v3/PublicHolidays/${year}/ZA`) as { date?: string }[];
+      if (!Array.isArray(rows)) return null;
+      dates = rows.map((r) => String(r?.date ?? '')).filter(Boolean).join(',');
+      remember(key, dates, TTL_HOLIDAYS);
+    } catch {
+      return null;
+    }
+  }
+  return dates.split(',').includes(dateISO);
 }

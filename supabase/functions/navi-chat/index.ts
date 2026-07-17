@@ -4227,7 +4227,9 @@ async function answerIntent(
   // v51: the world senses — weather, currency, crypto, country facts, news.
   // Reply-only and read-only, so a workflow step like "weather in
   // johannesburg" or "news about *" turns a routine into a live report.
-  const world = await tryWorld(part);
+  // v53: the stored place rides along so a bare "what's the weather" step
+  // reads the user's own sky.
+  const world = await tryWorld(part, undefined, profile.place ?? '');
   if (world) return { reply: world };
 
   const bible = await answerFromBible(part);
@@ -4645,7 +4647,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!response) response = await tryDefine(message);
     // v51: the world senses — weather, currency, crypto, country facts,
     // news — live keyless lookups delivered verbatim like every engine.
-    if (!response) response = (await tryWorld(message)) ?? '';
+    // v53: bare weather/sun/air asks default to the stored place.
+    if (!response) response = (await tryWorld(message, undefined, stored.place ?? '')) ?? '';
     if (!response) {
       const topic = lessonTopic(message);
       if (topic) {

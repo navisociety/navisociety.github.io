@@ -56,7 +56,7 @@ import {
   parseWorkflowPreview,
   parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
   parseLastRun, parseWorkflowRunAgain, parseMissionDeadline, isAgentAsk,
-  parseWatchSet,
+  parseWatchSet, type ConditionSources,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -3048,22 +3048,24 @@ const stubSources = (
   vision: number | null,
   unread: number | 'not-connected' | null,
   oldChats: number | null = 0, // v37: the chats-age source rides the same stub
+  over: Partial<ConditionSources> = {}, // v53: the reflex sources ride overrides
 ) => {
   const calls: string[] = [];
   const days: number[] = [];
-  return {
-    calls,
-    days,
-    sources: {
-      visionCount: (_e: string) => { calls.push('vision'); return Promise.resolve(vision); },
-      inboxUnread: (_e: string) => { calls.push('inbox'); return Promise.resolve(unread); },
-      chatsOlderThan: (_e: string, d: number) => {
-        calls.push('chats');
-        days.push(d);
-        return Promise.resolve(oldChats);
-      },
+  const sources: ConditionSources = {
+    visionCount: (_e: string) => { calls.push('vision'); return Promise.resolve(vision); },
+    inboxUnread: (_e: string) => { calls.push('inbox'); return Promise.resolve(unread); },
+    chatsOlderThan: (_e: string, d: number) => {
+      calls.push('chats');
+      days.push(d);
+      return Promise.resolve(oldChats);
     },
+    sky: (c) => { calls.push(`sky:${c}`); return Promise.resolve({ tempC: 17, raining: false, words: 'partly cloudy' }); },
+    price: (n) => { calls.push(`price:${n}`); return Promise.resolve({ value: 43250, currency: 'USD' }); },
+    holiday: (d) => { calls.push(`holiday:${d}`); return Promise.resolve(false); },
+    ...over,
   };
+  return { calls, days, sources };
 };
 
 Deno.test('v35: evalCondition looks at the world — board and inbox, lazily, honestly', async () => {
@@ -3546,6 +3548,7 @@ Deno.test('v39: the briefing looks at the world once — honest at every stage',
   const src = (board: number | null, unread: number | 'not-connected' | null) => ({
     visionCount: () => Promise.resolve(board),
     inboxUnread: () => Promise.resolve(unread),
+    sky: () => Promise.resolve({ tempC: 17, raining: false, words: 'partly cloudy' }),
   });
   eq(await worldLine(EMAIL, src(3, 2)), 'OUT IN THE WORLD: vision board: 3 items · inbox: 2 unread.', 'counts read plainly');
   eq(await worldLine(EMAIL, src(0, 0)), 'OUT IN THE WORLD: vision board: empty · inbox: clear.', 'zero is calm');
@@ -4686,4 +4689,105 @@ Deno.test('v52: this day — history reads forward, honest quiet days', async ()
   if (!w.calls[0]?.startsWith('otd:')) throw new Error("the fetch carried today's date: " + w.calls.join(','));
   await tryWorld('what happened on this day', w.sources);
   eq(w.calls.length, 1, 'the second ask came from the cache');
+});
+
+// ── v53: the reflex round — the senses feed the execution layer (weather /
+//        price / holiday conditions, home-place defaults, briefing sky) ──────
+
+Deno.test('v53: weather conditions — rain, cold, hot, the stored place, honest skies', async () => {
+  const t = '2026-07-17';
+  const rainy = stubSources(0, 0, 0, { sky: (c) => Promise.resolve({ tempC: 8, raining: true, words: 'raining' }) });
+  eq(await evalCondition("it's raining in johannesburg", {}, t, EMAIL, rainy.sources), true, 'rain is rain');
+  eq(await evalCondition("it isn't raining in johannesburg", {}, t, EMAIL, rainy.sources), false, 'the negation flips');
+  eq(await evalCondition("it's cold in johannesburg", {}, t, EMAIL, rainy.sources), true, '8°C is cold');
+  eq(await evalCondition("it's hot in johannesburg", {}, t, EMAIL, rainy.sources), false, '8°C is not hot');
+  eq(await evalCondition("it isn't hot in johannesburg", {}, t, EMAIL, rainy.sources), true, 'hot negation');
+
+  const dry = stubSources(0, 0); // stub default: 17°C, not raining
+  eq(await evalCondition("it's raining", { place: 'Johannesburg' }, t, EMAIL, dry.sources), false, 'the bare form reads the stored place');
+  eq(dry.calls, ['sky:Johannesburg'], 'the place rode the source call');
+  eq(await evalCondition("it's raining", {}, t, EMAIL, dry.sources), null, 'no city anywhere teaches');
+
+  const down = stubSources(0, 0, 0, { sky: () => Promise.resolve(null) });
+  eq(await evalCondition("it's raining in durban", {}, t, EMAIL, down.sources), 'unreachable', 'a silent sky is honest');
+  const lost = stubSources(0, 0, 0, { sky: () => Promise.resolve('unknown-place') });
+  eq(await evalCondition("it's raining in narnia", {}, t, EMAIL, lost.sources), 'unreachable', 'an unknown place cannot be checked');
+});
+
+Deno.test('v53: holiday conditions — today, tomorrow, negations, honest calendar', async () => {
+  const t = '2026-07-17';
+  const yes = stubSources(0, 0, 0, { holiday: (d) => Promise.resolve(true) });
+  eq(await evalCondition("it's a public holiday", {}, t, EMAIL, yes.sources), true, 'a holiday is a holiday');
+  eq(await evalCondition("it isn't a public holiday", {}, t, EMAIL, yes.sources), false, 'the negation flips');
+
+  const spy = stubSources(0, 0); // stub default: never a holiday
+  eq(await evalCondition('tomorrow is a public holiday', {}, t, EMAIL, spy.sources), false, 'tomorrow read honestly');
+  eq(spy.calls, ['holiday:2026-07-18'], 'the check carried tomorrow, not today');
+  eq(await evalCondition("today is a public holiday", {}, t, EMAIL, spy.sources), false, 'today form');
+  eq(spy.calls[1], 'holiday:2026-07-17', 'the today form carried today');
+
+  const down = stubSources(0, 0, 0, { holiday: () => Promise.resolve(null) });
+  eq(await evalCondition("it's a public holiday", {}, t, EMAIL, down.sources), 'unreachable', 'a silent calendar is honest');
+});
+
+Deno.test('v53: price conditions — thresholds on the closed lists, unknown names teach', async () => {
+  const t = '2026-07-17';
+  const w = stubSources(0, 0); // stub default: 43,250 USD for anything known
+  eq(await evalCondition('bitcoin is above 40000', {}, t, EMAIL, w.sources), true, 'above holds');
+  eq(await evalCondition('bitcoin is above 50000', {}, t, EMAIL, w.sources), false, 'above fails honestly');
+  eq(await evalCondition('bitcoin is under 50000', {}, t, EMAIL, w.sources), true, 'under holds');
+  eq(await evalCondition('the price of gold is below 2000', {}, t, EMAIL, w.sources), false, 'the price-of form');
+
+  const unknown = stubSources(0, 0, 0, { price: () => Promise.resolve('unknown') });
+  eq(await evalCondition('my car is above 50000', {}, t, EMAIL, unknown.sources), null, 'unknown names fall to the teach');
+  const down = stubSources(0, 0, 0, { price: () => Promise.resolve(null) });
+  eq(await evalCondition('bitcoin is above 40000', {}, t, EMAIL, down.sources), 'unreachable', 'a down feed is honest');
+
+  // Lazy: profile conditions still never touch the new sources.
+  const lazy = stubSources(0, 0);
+  await evalCondition('i have a mission', {}, t, EMAIL, lazy.sources);
+  eq(lazy.calls, [], 'the reflex sources are only called when their phrase matches');
+});
+
+Deno.test('v53: workflow steps and watches inherit the reflexes end to end', async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    place: 'Johannesburg',
+    workflows: [{ name: 'umbrella', steps: ["when it's raining: encourage me"], created: 'now' }],
+  };
+  const rainy = stubSources(0, 0, 0, { sky: () => Promise.resolve({ tempC: 12, raining: true, words: 'raining' }) });
+  const wet = await tryAgent('run my umbrella workflow', EMAIL, profile, run, rainy.sources);
+  if (!wet?.reply.includes('[did: encourage me]')) throw new Error('a rainy sky runs the step: ' + wet?.reply);
+
+  const dry = stubSources(0, 0); // 17°C, not raining
+  const held = await tryAgent('run my umbrella workflow', EMAIL, profile, run, dry.sources);
+  if (!held?.reply.includes('skipped')) throw new Error('a dry sky skips the step: ' + held?.reply);
+
+  const watch = await tryAgent("run my umbrella workflow whenever it's raining in johannesburg", EMAIL, profile, run, dry.sources);
+  if (!watch?.reply.toLowerCase().includes('whenever')) throw new Error('the watch sets on a weather condition: ' + watch?.reply);
+});
+
+Deno.test('v53: bare world asks read the stored place; the briefing carries the sky', async () => {
+  const w = worldStub();
+  const out = await tryWorld("what's the weather", w.sources, 'Polokwane');
+  if (!out?.startsWith('Weather in Johannesburg')) throw new Error('a bare ask with a home reads the sky: ' + out);
+  eq(w.calls[0], 'geo:polokwane', 'the stored place rode the geocoder');
+  const sunrise = await tryWorld('what time is sunrise', w.sources, 'Polokwane');
+  if (!sunrise?.startsWith('Sunrise in Johannesburg')) throw new Error('bare sun asks read the home too: ' + sunrise);
+  const still = await tryWorld("what's the weather", w.sources);
+  if (!still?.includes('i live in johannesburg')) throw new Error('no home still teaches, now naming the fix: ' + still);
+
+  const src = (sky: { tempC: number; raining: boolean; words: string } | null) => ({
+    visionCount: () => Promise.resolve(3),
+    inboxUnread: () => Promise.resolve(0 as const),
+    sky: () => Promise.resolve(sky),
+  });
+  const line = await worldLine(EMAIL, src({ tempC: 17, raining: false, words: 'partly cloudy' }), 'Johannesburg');
+  eq(line, 'OUT IN THE WORLD: vision board: 3 items · inbox: clear · johannesburg: 17°C, partly cloudy.', 'the sky joins the line');
+  const wet = await worldLine(EMAIL, src({ tempC: 14, raining: true, words: 'raining' }), 'Johannesburg');
+  if (!wet.includes('take an umbrella')) throw new Error('rain earns the umbrella note: ' + wet);
+  const quiet = await worldLine(EMAIL, src(null), 'Johannesburg');
+  if (!quiet.includes("the sky over johannesburg didn't answer")) throw new Error('a silent sky is honest: ' + quiet);
+  const homeless = await worldLine(EMAIL, src(null));
+  eq(homeless.includes('sky'), false, 'no stored place, no sky line');
 });

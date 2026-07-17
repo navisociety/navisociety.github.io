@@ -19,18 +19,23 @@ import { todayInTZ } from './skills.ts';
 import { visionItemCount } from './vision.ts';
 import { inboxUnreadCount } from './mail.ts';
 import { deadlineCountdown } from './agent.ts';
+import { skyFor, type SkyNow } from './world.ts';
 
 // v39 (roadmap #24): the briefing's one look at the world — board count and
 // unread count, injected so tests stub them (v35 seam pattern). This is the
-// briefing's ONLY network cost, and it's two small parallel reads.
+// briefing's ONLY network cost, and it's small parallel reads. v53 added the
+// sky over the stored place — fetched ONLY when the user has told NAVI where
+// they live, so the line costs nothing new for everyone else.
 export type BriefSources = {
   visionCount: (email: string) => Promise<number | null>;
   inboxUnread: (email: string) => Promise<number | 'not-connected' | null>;
+  sky: (city: string) => Promise<SkyNow | null | 'unknown-place'>;
 };
 
 const REAL_SOURCES: BriefSources = {
   visionCount: visionItemCount,
   inboxUnread: inboxUnreadCount,
+  sky: skyFor,
 };
 
 const NAVI_TZ = 'Africa/Johannesburg';
@@ -66,10 +71,15 @@ const SIGN_IN_REPLY =
 
 // v39: compose the world line from the two reads — honest at every stage:
 // a count is a count, no Gmail link says so, an unreachable source says so.
-export async function worldLine(email: string, sources: BriefSources = REAL_SOURCES): Promise<string> {
-  const [board, unread] = await Promise.all([
+export async function worldLine(
+  email: string,
+  sources: BriefSources = REAL_SOURCES,
+  place = '', // v53: Profile.place — '' skips the sky read entirely
+): Promise<string> {
+  const [board, unread, sky] = await Promise.all([
     sources.visionCount(email).catch(() => null),
     sources.inboxUnread(email).catch(() => null),
+    place ? sources.sky(place).catch(() => null) : Promise.resolve(null),
   ]);
   const parts: string[] = [];
   parts.push(
@@ -88,6 +98,14 @@ export async function worldLine(email: string, sources: BriefSources = REAL_SOUR
           ? 'inbox: clear'
           : `inbox: ${unread} unread`,
   );
+  // v53: the sky over the stored place — only when a place is stored, honest
+  // when the sky doesn't answer (an unknown place stays quiet: the field is
+  // free text, and the briefing is no place to nag about spelling).
+  if (place && sky !== null && sky !== 'unknown-place') {
+    parts.push(`${place.toLowerCase()}: ${sky.tempC}°C, ${sky.words}${sky.raining ? ' — take an umbrella' : ''}`);
+  } else if (place && sky === null) {
+    parts.push(`the sky over ${place.toLowerCase()} didn't answer just now`);
+  }
   return `OUT IN THE WORLD: ${parts.join(' · ')}.`;
 }
 
@@ -173,5 +191,5 @@ export async function tryBriefing(
 ): Promise<{ reply: string } | null> {
   if (!isBriefingAsk(message)) return null;
   if (!email) return { reply: SIGN_IN_REPLY };
-  return { reply: buildBriefing(profile, todayISO(), await worldLine(email, sources)) };
+  return { reply: buildBriefing(profile, todayISO(), await worldLine(email, sources, profile.place ?? '')) };
 }
