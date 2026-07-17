@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-17, at **v53** (the reflex round).
+Last updated: 2026-07-17, at **v54** (the conductor round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -333,6 +333,24 @@ null (the teach names the "i live in <city>" fix). Because v50 watches
 validate against evalCondition, the whole trigger family inherited the
 reflexes with zero new code.
 
+v54 additions: ONE new pipeline position in answerIntent — tryBriefing now
+sits right after tryTasks (so "brief me" is a legal workflow step; its
+board/inbox/sky reads only fire on a real briefing ask). Everything else is
+agent.ts + one memory.ts type touch (Workflow += days/window/skipHolidays).
+THE SCHEDULE LAWS GREW MODIFIERS: days ('weekdays'|'weekends') and window
+(the v38 clock segments) ride ONLY the daily branch — every schedule swap
+clears them, and the off form clears skipHolidays too. A window outside its
+segment is not-due-YET (lastRun unstamped, later sessions re-check — the
+v50 watch idea on the clock). runDailyWorkflows gained a trailing hourNow
+param (tests pin it, production reads SA time). KNOW THE ALIAS CHANGE:
+"every morning" was a plain-daily alias since v26 — it now sets a morning
+WINDOW (the words finally mean what they say). skipHolidays consults
+ConditionSources.holiday (v53) LAZILY — one check covers all flagged due
+workflows, and a silent calendar RUNS the workflow (the run is the promise,
+the skip is the modifier — opposite default from conditions, on purpose).
+cadenceOf is the one voice for every schedule read-back; CHECK_SCHEDULES is
+a sync promises-read (never a live world check — that's "check my watches").
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -343,7 +361,43 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v53) · world.ts (v51→v53) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v53)
+### agent.ts — workflows & missions (v25→v54) · world.ts (v51→v53) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v45) · dates.ts (v45, NEW) · brief.ts (v27→v54)
+
+**v54 — the conductor round** (agent.ts + one memory.ts type touch + the
+answerIntent tryBriefing wiring — built under Dian's "add 5 new keyless
+execution upgrades" direction, 2026-07-17; the scheduler itself learns
+finesse, the heavy condition seam gains nothing):
+- **Day gates**: "run my desk workflow every weekday" / "every weekend"
+  (Workflow.days) — a gated day is simply not due.
+- **Clock windows**: "run my calm workflow every morning" (afternoon /
+  evening / night — the v38 segments; Workflow.window) fires on the first
+  chat INSIDE the window; an unchatted window waits for the next day.
+  "every weekday morning" combines both gates. NOTE: "every morning" was
+  a plain-daily alias since v26 — it now means the morning.
+- **Holiday-aware schedules**: "skip public holidays for my desk
+  workflow" (Workflow.skipHolidays) — a calendar-scheduled run sits out
+  SA public holidays via ONE lazy v53 calendar check for all flagged due
+  workflows; a silent calendar runs normally (the run is the promise).
+  Refuses honestly on unscheduled workflows; "stop skipping…" and the
+  schedule off form both clear it.
+- **The schedules read**: "check my schedules" / "what's on my schedule
+  today" — every calendar schedule, watch, and trigger in one honest
+  sync report (ran today / due today / waits for the evening / weekend
+  off / paused / sits out public holidays / watch checked at chat start /
+  phrase named). Unscheduled workflows stay out; nothing scheduled
+  teaches all three schedule doors.
+- **The briefing as a step**: tryBriefing joined answerIntent (after
+  tryTasks), so "brief me" inside a routine reads the full picture —
+  "create a workflow called morning: brief me, then what's the weather,
+  then today's headlines" is now the personal dashboard on one phrase.
+- Read-backs everywhere share cadenceOf ("every weekday morning"), and
+  list/show/rename/confirm all name the gates and the holiday flag.
+- ONE live fix while verifying: the v51 news engine had gone quiet on the
+  edge (Google, like Yahoo, rejects UA-less datacenter fetches — fine
+  from curl, "couldn't reach" from the isolate). The news fetch now
+  carries the same Mozilla/5.0 header the market quotes always needed.
+  KNOW THE PATTERN: any new keyless source that works locally but fails
+  live probably wants a browser UA before you suspect anything deeper.
 
 **v53 — the reflex round** (world.ts helpers + agent.ts conditions +
 brief.ts sky line + the two index.ts pass-throughs — built under Dian's
@@ -1472,6 +1526,22 @@ clock is free; weigh it). Still gated: #19 reply threading + navi_choices
 drop (management token), direct Share posting (OAuth apps), share bridge
 ungated/unbuilt. Otherwise: ask Dian before inventing.
 
+Post-v54 status: Dian's second "keyless execution upgrades" ask
+(2026-07-17) taught the SCHEDULER finesse — day gates, clock windows,
+holiday-aware schedules (the one v53 reuse, still lazy), the schedules
+read, and the briefing as a step. The schedule vocabulary is now: daily /
+weekday-or-weekend / windowed / weekly / monthly / watched / triggered /
+paused / holiday-skipping — read back in one voice (cadenceOf) and one
+report (check my schedules). Ungated candidates if the direction returns:
+TheMealDB recipes (the v52 verified sense), window gates on WEEKLY and
+monthly schedules ("every sunday morning" — the machinery exists, only
+the parse forms are missing), reminder clock windows (the reminder line
+historically follows the workflow line), a schedules line in the briefing
+(sync and free — brief.ts already reads workflows). Still gated: #19
+reply threading + navi_choices drop (management token), direct Share
+posting (OAuth apps), share bridge ungated/unbuilt. Otherwise: ask Dian
+before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1510,7 +1580,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v51 | (see git) | senses round: world.ts NEW — five keyless world engines (Open-Meteo weather, Frankfurter ECB currency with the units-law step-aside, CoinGecko crypto, mledoze+World-Bank atlas, Google News RSS headlines), injected-source tested, TTL-cached, honest can't-reach replies, wired into answerIntent (workflow steps) + the main engine block |
 | v52 | `916b921` | observatory round: five more keyless world engines behind the same seam (Open-Meteo sun + air quality with closed AQI/UV band maps, Yahoo-chart markets with the closed ticker list and the fruit law, Nager.Date holidays through the shared atlas, Wikipedia on-this-day) — no new wiring, HELP_TEXT world line refreshed |
 | v53 | `a1b730f` | reflex round: the senses drive execution — weather/price/holiday conditions (ConditionSources #4-#6 via world.ts skyFor/priceOf/holidayOn), watches inherit free, bare weather/sun/air asks read Profile.place (tryWorld homeCity param), briefing sky line (BriefSources.sky, place-gated) |
+| v54 | `7936bb6` | conductor round: scheduler finesse — day gates (every weekday/weekend) + clock windows (every morning, fires inside the window) + holiday-aware schedules (skipHolidays, one lazy check, silent calendar runs) + "check my schedules" (the sync promises-read) + tryBriefing in answerIntent ("brief me" as a workflow step) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → **304** (v53). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → 304 (v53) → **310** (v54). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.

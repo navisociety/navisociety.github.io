@@ -278,7 +278,13 @@ const REAL_SOURCES: WorldSources = {
       const url = topic
         ? `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&hl=en-ZA&gl=ZA&ceid=ZA:en`
         : 'https://news.google.com/rss?hl=en-ZA&gl=ZA&ceid=ZA:en';
-      const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT) });
+      // Google (like Yahoo) rejects UA-less datacenter fetches — seen live
+      // 2026-07-17: fine from a browser/curl, "couldn't reach" from the edge
+      // isolate until the header landed.
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(TIMEOUT),
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      });
       if (!res.ok) return null;
       const xml = await res.text();
       const titles: string[] = [];
