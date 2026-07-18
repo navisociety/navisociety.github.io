@@ -1,7 +1,7 @@
 # NAVI Agentic & Execution Capabilities — Hand-Down File
 
 **For any future Claude session (or developer) continuing this work.**
-Last updated: 2026-07-17, at **v55** (the timekeeper round).
+Last updated: 2026-07-18, at **v56** (the concierge round).
 
 Read this before touching the agentic layer. It tells you what exists, how it's
 wired, the rules that must never break, how to ship safely, and where to go next.
@@ -371,6 +371,33 @@ hourNow param (tests pin it); night wraps (≥22 or <5). DAY_NAMES was
 hoisted above the booking regexes (TDZ). The briefing schedules line is a
 sync count over profile.workflows — never a live check.
 
+v56 additions: NO new wiring — agent.ts + world.ts + one memory.ts type
+touch (Workflow += runOnTopic/skipOn; `window` now also gates a watch).
+THE BOOKING LAW GREW A TOPIC: parseRunBooking accepts "run my study
+workflow on grace tomorrow" (topic before the never-topic time shape —
+"on friday" alone is STILL a topic run) and "book … for <when> on
+<topic>"; a slotted workflow is now bookable WITH a topic (the due filter
+admits `hasSlot && runOn===today && runOnTopic`, the topic fills the *,
+rides the receipt, and clears with the date). WATCH WINDOWS: the parse
+demands the word "only" ("whenever …, mornings only") so trailing time
+words never leak into the condition; outside the window the watch is not
+even CHECKED (sources unfetched — the filter gates before evalCondition);
+watch-set now manages `window` and clears stale v54 `days` on the swap,
+watch-off drops the window with the watch. ONE-SHOT SKIPS: skipOn quiets
+every auto channel for its one day (calendar AND watch), never a spoken
+run; INERT-BY-COMPARISON on purpose (a past skipOn just stops matching —
+no consumption write needed, the next skip replaces it); a booked day
+refuses a skip, a booking lifts the day's skip; the v54 "skip public
+holidays" forms can't collide (their names overflow the 24-char cap).
+TOMORROW'S READ: CHECK_SCHEDULES_TOMORROW_RX beside the v54 read — same
+sync promises-only law, watches described never predicted. RECIPES:
+world.ts engines #11-13 (TheMealDB, keyless test key '1') behind the SAME
+tryWorld seam — culinary verbs only ("how do i make friends" must stay
+conversation: there is NO "make" dish form, only "cook"); the ingredient
+filter reads its miss from `meals: null` in an HTTP-200 body; the random
+pick is NEVER cached (a pinned surprise is no surprise); the method clips
+at a sentence boundary with an honest note.
+
 **Golden rule of wiring:** anything agentic that consumes multi-part phrasing
 goes BEFORE `splitIntents`; anything that appends passive reports goes in the
 session-start block inside the `!isCrisisReply(response)` guard; anything that
@@ -381,7 +408,37 @@ changes survive).
 
 ## 3. The agentic layer today (what exists, where)
 
-### agent.ts — workflows & missions (v25→v55) · world.ts (v51→v53) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v55) · dates.ts (v45, NEW) · brief.ts (v27→v55)
+### agent.ts — workflows & missions (v25→v56) · world.ts (v51→v56) · mail.ts (v32→v43) · tasks.ts (v39→v41) · compose.ts (v21→v49) · understand.ts (v21→v49) · remind.ts (v22→v55) · dates.ts (v45, NEW) · brief.ts (v27→v55)
+
+**v56 — the concierge round** (agent.ts + world.ts + one memory.ts type
+touch — built under Dian's "give NAVI 5 execution upgrades preferably
+keyless" direction, 2026-07-18; the scheduler learns to hold your plans,
+and the world layer learns the kitchen):
+- **Booked runs with topics**: "run my study workflow on grace tomorrow" /
+  "book my study workflow for 25 december on grace" (Workflow.runOnTopic)
+  — a slotted workflow is finally bookable, the stored topic fills the *
+  when the booking fires, rides the receipt and the read-backs, clears
+  with the date. THE TOPIC LAW HOLDS: "on friday" alone stays a topic run.
+- **Watch windows**: "run my umbrella workflow whenever it's raining,
+  mornings only" — the "only" keeps the form closed; outside the window
+  the watch is not even checked (sources unfetched), "check my watches"
+  says so honestly, and the watch swap now clears stale calendar
+  modifiers both ways.
+- **One-shot skips**: "skip my desk workflow tomorrow" / "skip tomorrow's
+  run of my desk workflow" (Workflow.skipOn) — the mirror of the v55
+  booking: one date, inert after its day, quiets calendar AND watch but
+  never a spoken run. A booked day refuses the skip; a booking lifts the
+  day's skip.
+- **Tomorrow's schedule read**: "what runs tomorrow" / "what's on my
+  schedule tomorrow" — the v54 promises-read one day ahead, sync and
+  free; gates, windows, pauses, wakes, skips, topics all speak; watches
+  stay honest (described, never predicted).
+- **TheMealDB recipes** (world.ts engines #11-13, keyless): "recipe for
+  chicken curry" / "how do i cook pasta" / "what can i make with chicken"
+  / "what should i cook tonight" (random, never cached) — culinary verbs
+  only, honest misses teach, methods clip at a sentence boundary, and all
+  of it works as workflow steps for free ("what should i cook tonight" in
+  an evening routine).
 
 **v55 — the timekeeper round** (agent.ts + remind.ts + brief.ts + three
 memory.ts type touches — built under Dian's third "execution upgrades"
@@ -1608,6 +1665,21 @@ threading + navi_choices drop (management token), direct Share posting
 (OAuth apps), share bridge ungated/unbuilt. Otherwise: ask Dian before
 inventing.
 
+Post-v56 status: Dian's "give NAVI 5 execution upgrades preferably
+keyless" (2026-07-18) consumed ALL the ungated candidates the v55
+hand-down named — booked topics, watch windows, TheMealDB recipes — plus
+the "skip tomorrow" one-shot (built as skipOn, lighter than the
+pause-until it was weighed against) and the tomorrow schedules read.
+The scheduler seam is now COMPLETE end to end: book/skip/pause/watch/
+calendar, each with topics, windows, gates and honest read-backs, today
+and tomorrow. Genuinely ungated candidates left are thin: more recipes
+depth (TheMealDB has category/area browse endpoints), a "this weekend"
+schedules read (the tomorrow read generalised), watch receipts in the
+briefing. The condition seam stays heavy at six sources — be sparing.
+Still gated: #19 reply threading + navi_choices drop (management token),
+direct Share posting (OAuth apps), share bridge ungated/unbuilt.
+Otherwise: ask Dian before inventing.
+
 **Anti-goals** (decided, don't revisit without Dian): no external LLM on free
 tier, no cron/server-push (NAVI only speaks when spoken to — "session-start
 append" is the only proactive channel), no unbounded lists, no UI work.
@@ -1648,7 +1720,8 @@ append" is the only proactive channel), no unbounded lists, no UI work.
 | v53 | `a1b730f` | reflex round: the senses drive execution — weather/price/holiday conditions (ConditionSources #4-#6 via world.ts skyFor/priceOf/holidayOn), watches inherit free, bare weather/sun/air asks read Profile.place (tryWorld homeCity param), briefing sky line (BriefSources.sky, place-gated) |
 | v54 | `7936bb6` | conductor round: scheduler finesse — day gates (every weekday/weekend) + clock windows (every morning, fires inside the window) + holiday-aware schedules (skipHolidays, one lazy check, silent calendar runs) + "check my schedules" (the sync promises-read) + tryBriefing in answerIntent ("brief me" as a workflow step) |
 | v55 | `8feaef0` | timekeeper round: weekly/monthly clock windows (the gate guards the whole calendar filter) + one-off booked runs (Workflow.runOn, via 'booked', topic-law-safe, self-clearing, outranks watch/holiday for its run) + reminder clock windows (held till the window, missed windows speak late, held never rolls) + week receipts read + briefing schedules count |
+| v56 | `8007ee8` | concierge round: booked runs with topics (Workflow.runOnTopic — slotted workflows bookable, topic fills the *), watch windows ("whenever …, mornings only" — unchecked outside the window), one-shot skips (Workflow.skipOn — one date sits out, inert after, booking outranks), tomorrow's schedule read ("what runs tomorrow", sync), TheMealDB recipes (world.ts #11-13: dish / by-ingredient / random, keyless, honest misses) |
 
-Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → 304 (v53) → 310 (v54) → **316** (v55). Keep the number climbing — every
+Test counts: 121 → 132 → 139 → 147 → 153 → 161 → 170 → 178 → 185 → 193 → 196 → 198 → 201 → 204 → 208 → 213 → 217 → 221 → 226 → 233 → 240 → 247 → 256 → 268 → 273 → 276 (the 2026-07-16 /vision slash round) → 281 (v49) → 287 (v50) → 293 (v51) → 299 (v52) → 304 (v53) → 310 (v54) → 316 (v55) → **323** (v56). Keep the number climbing — every
 feature lands with parser tests, lifecycle tests, and a negative test proving
 ordinary conversation stays untouched.
