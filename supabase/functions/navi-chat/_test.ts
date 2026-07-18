@@ -57,7 +57,7 @@ import {
   parseOtherwiseStep, parseWorkflowPause, parseWorkflowResume, isPaused,
   parseLastRun, parseWorkflowRunAgain, parseMissionDeadline, isAgentAsk,
   parseWatchSet, type ConditionSources,
-  parseHolidaySkip, isSchedulesCheck, parseRunBooking,
+  parseHolidaySkip, isSchedulesCheck, parseRunBooking, parseRunSkip,
 } from './agent.ts';
 import { tryHabit, sparkline, streakLine } from './habit.ts';
 import { isBriefingAsk, buildBriefing, tryBriefing, worldLine } from './brief.ts';
@@ -76,7 +76,8 @@ import type { Profile, Workflow } from './memory.ts';
 import {
   tryWorld, parseWeatherAsk, parseConvertAsk, parseCryptoAsk, parseCountryAsk,
   parseSunAsk, parseAirAsk, parseQuoteAsk, parseHolidaysAsk, parseThisDayAsk,
-  parseNewsAsk, type WorldSources,
+  parseNewsAsk, parseRecipeAsk, parseMealsWithAsk, parseRandomRecipeAsk,
+  type WorldSources,
 } from './world.ts';
 
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -4457,6 +4458,23 @@ const worldStub = (over: Partial<WorldSources> = {}) => {
         { year: 1945, text: 'The Trinity test ushered in the atomic age.' },
       ]);
     },
+    meal: (dish) => {
+      calls.push(`meal:${dish}`);
+      return Promise.resolve({
+        name: 'Chicken Curry', category: 'Chicken', area: 'Indian',
+        ingredients: ['500g chicken', '2 tbsp curry powder', '1 onion'],
+        method: 'Brown the onion. Add the chicken and curry powder. Simmer until cooked through.',
+      });
+    },
+    mealsWith: (ing) => { calls.push(`mw:${ing}`); return Promise.resolve(['Chicken Curry', 'Chicken Alfredo Primavera']); },
+    randomMeal: () => {
+      calls.push('random');
+      return Promise.resolve({
+        name: 'Bobotie', category: 'Beef', area: 'South African',
+        ingredients: ['1kg beef mince', '2 slices bread'],
+        method: 'Soak the bread. Fry the onions. Bake until golden.',
+      });
+    },
     ...over,
   };
   return { calls, sources };
@@ -5054,3 +5072,187 @@ Deno.test('v55: the week receipts read and the briefing schedules count', async 
   }
   eq(buildBriefing({}).includes('SCHEDULES'), false, 'nothing scheduled, no line');
 });
+
+// ── v56 — the concierge round: booked topics, watch windows, one-shot skips,
+//          tomorrow's schedule read, and the TheMealDB kitchen ──────────────
+
+Deno.test('v56: bookings carry topics — and the topic law still holds', () => {
+  eq(parseRunBooking('run my study workflow on grace tomorrow'),
+    { name: 'study', when: 'tomorrow', topic: 'grace' }, 'run-verb booking with a topic');
+  eq(parseRunBooking('run my study workflow on the gig in 3 days'),
+    { name: 'study', when: 'in 3 days', topic: 'the gig' }, 'multi-word topic before in-N-days');
+  eq(parseRunBooking('book my study workflow for 25 december on grace'),
+    { name: 'study', when: '25 december', topic: 'grace' }, 'book verb: date first, topic after');
+  eq(parseRunBooking('book my desk workflow for next friday'),
+    { name: 'desk', when: 'next friday' }, 'a topicless book stays topicless');
+  eq(parseRunBooking('run my study workflow on friday'), null, 'THE TOPIC LAW: on friday stays a topic run');
+  eq(parseRunBooking('run my study workflow on grace'), null, 'a plain topic run is not a booking');
+});
+
+Deno.test('v56: a slotted workflow books with a topic and fires with it', async () => {
+  const t = '2026-07-17';
+  const { ran, run } = stubRunner();
+  const slotted: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now' }] };
+
+  const bare = await tryAgent('run my study workflow tomorrow', EMAIL, slotted, run);
+  if (!bare?.reply.includes('* slot') || !bare?.reply.includes('on <topic> tomorrow')) {
+    throw new Error('a topicless booking on a slot teaches the topic form: ' + bare?.reply);
+  }
+  const set = await tryAgent('run my study workflow on grace tomorrow', EMAIL, slotted, run);
+  if (!set?.reply.startsWith('Booked') || !set.reply.includes('on "grace"')) throw new Error('the booking confirm names the topic: ' + set?.reply);
+  eq(set?.profile?.workflows?.[0].runOnTopic, 'grace', 'the topic stored beside the date');
+
+  const dueToday: Profile = { workflows: [{ name: 'study', steps: ['a verse about *'], created: 'now', runOn: t, runOnTopic: 'grace' }] };
+  const fired = await runDailyWorkflows(dueToday, run, t, EMAIL, undefined, 8);
+  if (!fired?.report.includes('Your booked "study" workflow (on "grace")')) throw new Error('the header names the topic: ' + fired?.report);
+  eq(ran.splice(0), ['a verse about grace'], 'the topic filled the * slot');
+  const after = fired!.profile.workflows![0];
+  eq({ runOn: after.runOn, runOnTopic: after.runOnTopic, lastRun: after.lastRun },
+    { runOn: undefined, runOnTopic: undefined, lastRun: t }, 'the booking and its topic cleared together');
+  const log = fired!.profile.workflowLog!;
+  eq(log[log.length - 1].topic, 'grace', 'the receipt carries the topic');
+
+  const cancel = await tryAgent('cancel the booked run of my study workflow', EMAIL, dueToday, run);
+  if (!cancel?.reply.includes('(on "grace")')) throw new Error('the cancel names the topic: ' + cancel?.reply);
+  eq(cancel?.profile?.workflows?.[0].runOnTopic, undefined, 'the cancel clears the topic too');
+});
+
+Deno.test('v56: watch windows — parsed with "only", gated at the check', async () => {
+  eq(parseWatchSet("run my umbrella workflow whenever it's raining in johannesburg, mornings only"),
+    { name: 'umbrella', cond: "it's raining in johannesburg", window: 'morning' }, 'the window rides the watch');
+  eq(parseWatchSet('run my triage workflow whenever i have new email in the evenings only'),
+    { name: 'triage', cond: 'i have new email', window: 'evening' }, 'the in-the form');
+  eq(parseWatchSet('run my triage workflow whenever i have new email'),
+    { name: 'triage', cond: 'i have new email' }, 'no "only", no window — the condition stays whole');
+
+  const { ran, run } = stubRunner();
+  const profile: Profile = { workflows: [{ name: 'triage', steps: ['encourage me'], created: 'now' }] };
+  const busy = stubSources(0, 2);
+  const set = await tryAgent('run my triage workflow whenever i have new email, mornings only', EMAIL, profile, run, busy.sources);
+  if (!set?.reply.includes('Mornings only: I check it only during the morning')) throw new Error('the confirm names the window: ' + set?.reply);
+  eq(set?.profile?.workflows?.[0].window, 'morning', 'the window stored');
+  eq(set?.profile?.workflows?.[0].watch, 'i have new email', 'the condition stored clean');
+
+  const windowed: Profile = { workflows: [{ name: 'triage', steps: ['encourage me'], created: 'now', watch: 'i have new email', window: 'morning' }] };
+  const later = stubSources(0, 2);
+  eq(await runDailyWorkflows(windowed, run, '2026-07-17', EMAIL, later.sources, 14), null, 'outside the window the watch stays quiet');
+  eq(later.calls.length, 0, '— and is not even checked');
+  ran.splice(0);
+  const fired = await runDailyWorkflows(windowed, run, '2026-07-17', EMAIL, later.sources, 8);
+  if (!fired?.report.includes('Your watched "triage" workflow')) throw new Error('inside the window it fires: ' + fired?.report);
+  eq(ran.splice(0), ['encourage me'], 'the watched workflow ran');
+
+  const listed = await tryAgent('list my workflows', EMAIL, windowed, run);
+  if (!listed?.reply.includes('watching: whenever i have new email, mornings only')) throw new Error('the list names the window: ' + listed?.reply);
+});
+
+Deno.test('v56: one-shot skips — one date sits out, the schedule carries on', async () => {
+  eq(parseRunSkip('skip my desk workflow tomorrow'), { name: 'desk', when: 'tomorrow' }, 'the plain skip');
+  eq(parseRunSkip("skip tomorrow's run of my desk workflow"), { name: 'desk', when: 'tomorrow' }, 'the run-of form');
+  eq(parseRunSkip('skip my desk workflow next friday'), { name: 'desk', when: 'next friday' }, 'a named day');
+  eq(parseRunSkip('cancel the skip for my desk workflow'), { name: 'desk', cancel: true }, 'the cancel');
+  eq(parseRunSkip('unskip my desk workflow'), { name: 'desk', cancel: true }, 'unskip');
+  eq(parseRunSkip('skip'), null, 'the bare mission skip is untouched');
+  eq(parseRunSkip('skip this step'), null, 'mission step skips are untouched');
+  eq(parseRunSkip('skip public holidays for my desk workflow'), null, 'the v54 holiday form is untouched');
+
+  const { ran, run } = stubRunner();
+  const t = '2026-07-17';
+  const daily: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true }] };
+  const set = await tryAgent('skip my desk workflow tomorrow', EMAIL, daily, run);
+  if (!set?.reply.includes('sits out') || !set?.reply.includes('run it by hand')) throw new Error('the skip confirm: ' + set?.reply);
+  const skipOn = set!.profile!.workflows![0].skipOn!;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(skipOn)) throw new Error('a real date stored: ' + skipOn);
+
+  const unsched: Profile = { workflows: [{ name: 'notes', steps: ['encourage me'], created: 'now' }] };
+  const no = await tryAgent('skip my notes workflow tomorrow', EMAIL, unsched, run);
+  if (!no?.reply.includes("isn't scheduled")) throw new Error('an unscheduled skip is honest: ' + no?.reply);
+
+  const skipped: Profile = { workflows: [{ name: 'desk', steps: ['encourage me'], created: 'now', daily: true, skipOn: t }] };
+  eq(await runDailyWorkflows(skipped, run, t, EMAIL, undefined, 8), null, 'the skipped day stays silent');
+  eq(ran.splice(0), [], 'nothing ran');
+  const nextDay = await runDailyWorkflows(skipped, run, '2026-07-18', EMAIL, undefined, 8);
+  if (!nextDay?.report.includes('"desk"')) throw new Error('the next day runs as normal: ' + nextDay?.report);
+
+  const bookedSet = await tryAgent('run my desk workflow tomorrow', EMAIL, daily, run);
+  const clash = await tryAgent('skip my desk workflow tomorrow', EMAIL, bookedSet!.profile!, run);
+  if (!clash?.reply.includes('booking outranks a skip')) throw new Error('a booked day refuses the skip: ' + clash?.reply);
+
+  const off = await tryAgent('cancel the skip for my desk workflow', EMAIL, skipped, run);
+  eq(off?.profile?.workflows?.[0].skipOn, undefined, 'the cancel clears the skip');
+  const nothing = await tryAgent('unskip my desk workflow', EMAIL, daily, run);
+  if (!nothing?.reply.includes('no skip to cancel')) throw new Error('a bare cancel is honest: ' + nothing?.reply);
+});
+
+Deno.test("v56: tomorrow's schedule read — sync, honest, watch-aware", async () => {
+  const { run } = stubRunner();
+  const profile: Profile = {
+    workflows: [
+      { name: 'desk', steps: ['encourage me'], created: 'now', daily: true },
+      { name: 'triage', steps: ['encourage me'], created: 'now', watch: 'i have new email' },
+      { name: 'notes', steps: ['encourage me'], created: 'now' },
+    ],
+  };
+  const read = await tryAgent('what runs tomorrow', EMAIL, profile, run);
+  const r = read?.reply ?? '';
+  if (!r.startsWith('Tomorrow (')) throw new Error('the header carries the date: ' + r);
+  if (!r.includes('desk — runs tomorrow')) throw new Error('the daily schedule reads: ' + r);
+  if (!r.includes('condition-driven')) throw new Error('the watch stays honest about the future: ' + r);
+  if (r.includes('notes')) throw new Error('unscheduled workflows stay out: ' + r);
+
+  const empty = await tryAgent('what runs tomorrow', EMAIL, {}, run);
+  if (!empty?.reply.includes('No workflows yet')) throw new Error('nothing scheduled is honest: ' + empty?.reply);
+  eq(isSchedulesCheck("what's on my schedule tomorrow"), true, 'the tomorrow read is a schedules check');
+  eq(isAgentAsk('what runs tomorrow'), true, 'and an agent ask');
+  eq(isAgentAsk('skip my desk workflow tomorrow'), true, 'the skip is an agent ask');
+});
+
+Deno.test('v56: recipe parsers — culinary verbs only, conversation untouched', () => {
+  eq(parseRecipeAsk('recipe for chicken curry'), { dish: 'chicken curry' }, 'the plain form');
+  eq(parseRecipeAsk('give me a recipe for bobotie'), { dish: 'bobotie' }, 'the give-me form');
+  eq(parseRecipeAsk('how do i cook pasta'), { dish: 'pasta' }, 'the cook form');
+  eq(parseRecipeAsk("what's the recipe for pancakes"), { dish: 'pancakes' }, 'the what-is form');
+  eq(parseRecipeAsk('how do i make friends'), null, 'no cook word, no recipe word — conversation');
+  eq(parseRecipeAsk('recipe for chicken and waffles then a poem'), null, 'a multi-part tail is two asks');
+  eq(parseRecipeAsk('recipe for death'), null, 'crisis language never drives a search');
+  eq(parseMealsWithAsk('what can i make with chicken'), { ingredient: 'chicken' }, 'the ingredient form');
+  eq(parseMealsWithAsk('recipes with beef'), { ingredient: 'beef' }, 'the recipes-with form');
+  eq(parseMealsWithAsk('what can i make with chicken and rice'), null, 'one main ingredient at a time');
+  eq(parseRandomRecipeAsk('what should i cook tonight'), {}, 'the dinner-idea form');
+  eq(parseRandomRecipeAsk('surprise me with a recipe'), {}, 'the surprise form');
+  eq(parseRandomRecipeAsk('what should i cook'), null, 'needs a when — otherwise conversation');
+});
+
+Deno.test('v56: recipes — the full card, honest misses, and the cache', async () => {
+  const w = worldStub();
+  const out = await tryWorld('recipe for chicken curry', w.sources);
+  eq(out,
+    'Chicken Curry — Indian · Chicken (TheMealDB):\nIngredients: 500g chicken, 2 tbsp curry powder, 1 onion.\nMethod: Brown the onion. Add the chicken and curry powder. Simmer until cooked through.',
+    'the recipe card');
+  eq(w.calls, ['meal:chicken curry'], 'one cookbook read');
+  await tryWorld('recipe for chicken curry', w.sources);
+  eq(w.calls.length, 1, 'the second ask came from the cache');
+
+  const none = worldStub({ meal: () => Promise.resolve('none' as const) });
+  const miss = await tryWorld('recipe for unicorn stew', none.sources);
+  if (!miss?.includes('no recipe filed under "unicorn stew"')) throw new Error('an unknown dish is honest: ' + miss);
+  const down = worldStub({ meal: () => Promise.resolve(null) });
+  const oops = await tryWorld('recipe for bunny chow', down.sources);
+  if (!oops?.includes("couldn't reach the cookbook")) throw new Error('a down cookbook is honest: ' + oops);
+
+  const list = await tryWorld('what can i make with chicken', w.sources);
+  if (!list?.startsWith('With chicken you could make:\n1. Chicken Curry\n2. Chicken Alfredo Primavera')) {
+    throw new Error('the ingredient list: ' + list);
+  }
+  const noneWith = worldStub({ mealsWith: () => Promise.resolve('none' as const) });
+  const dry = await tryWorld('what can i make with moonlight', noneWith.sources);
+  if (!dry?.includes('nothing filed under "moonlight"')) throw new Error('an unknown ingredient is honest: ' + dry);
+
+  const rand = await tryWorld('what should i cook tonight', w.sources);
+  if (!rand?.startsWith("Here's an idea — Bobotie — South African · Beef (TheMealDB):")) throw new Error('the random card: ' + rand);
+  await tryWorld('a random recipe', w.sources);
+  eq(w.calls.filter((c) => c === 'random').length, 2, 'random is never cached — a pinned surprise is no surprise');
+
+  eq(await tryWorld('i love cooking for my family', w.sources), null, 'cooking talk stays conversation');
+});
+

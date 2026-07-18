@@ -292,28 +292,72 @@ const RAN_WEEK_RX =
 // (remind.ts parseWhen vocabulary). THE TOPIC LAW HOLDS: "run my X workflow
 // on friday" stays a TOPIC run (v38), so the run-verb forms here only accept
 // shapes that can never be topics; "on <date>" booking takes the book verb.
+// v56: bookings learn TOPICS — "run my study workflow on grace tomorrow" /
+// "book my study workflow for 25 december on grace". The topic law still
+// holds: the run-verb form only books when a never-topic time shape ENDS the
+// ask, so "run my study workflow on friday" stays a topic run; in the book
+// form the when comes first and the topic takes a trailing "on".
 const RUN_LATER_RX = new RegExp(
-  `^(?:please )?(?:run|start|do|execute|launch|play)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) (tomorrow|next (?:${DAY_NAMES})|in \\d{1,2} days?)(?: morning| afternoon| evening| night)?$`,
+  `^(?:please )?(?:run|start|do|execute|launch|play)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: (?:on|about|for|with) (.+?))? (tomorrow|next (?:${DAY_NAMES})|in \\d{1,2} days?)(?: morning| afternoon| evening| night)?$`,
 );
 const BOOK_RX = new RegExp(
-  `^(?:please )?book(?: a run of)?(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) for (.{2,40})$`,
+  `^(?:please )?book(?: a run of)?(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine) for (.{2,40}?)(?: (?:on|about|with) (.{1,60}))?$`,
 );
 const UNBOOK_RX = new RegExp(
   `^(?:please )?(?:cancel|scrap|drop)(?: the)? booked run (?:of|for)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$|^(?:please )?unbook(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
 );
 
-/** { name, when } / { name, cancel } from a booked-run ask, or null. */
+/** { name, when, topic? } / { name, cancel } from a booked-run ask, or null. */
 export function parseRunBooking(
+  message: string,
+): { name: string; when?: string; topic?: string; cancel?: boolean } | null {
+  const t = tidy(message);
+  if (!t || t.length > 120) return null;
+  const off = t.match(UNBOOK_RX);
+  if (off) return { name: (off[1] ?? off[2]).trim(), cancel: true };
+  const later = t.match(RUN_LATER_RX);
+  const book = later ? null : t.match(BOOK_RX);
+  const m = later ?? book;
+  if (!m) return null;
+  const topic = (later ? m[2] : m[3])?.trim();
+  // Crisis language is never a topic (invariant #1); a booked topic also
+  // keeps the run parsers' size manners.
+  if (topic && (topic.length > 60 || CRISIS_RX.test(topic))) return null;
+  const out: { name: string; when: string; topic?: string } = {
+    name: m[1].trim(),
+    when: (later ? m[3] : m[2]).trim(),
+  };
+  if (topic) out.topic = topic;
+  return out;
+}
+
+// v56: one-shot skips — "skip my desk workflow tomorrow" sits ONE scheduled
+// auto-run out (the mirror of a booking: one date, self-inert after its day).
+// A spoken "run my desk workflow" still works that day — the skip is about
+// the AUTO channel, pause is the tool for full sleep. "skip" here always
+// carries the workflow word, so the bare mission "skip" can never collide.
+const SKIP_RX = new RegExp(
+  `^(?:please )?skip(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?:'s run)? (today|tomorrow|next (?:${DAY_NAMES})|on (?:.{2,30}))$`,
+);
+const SKIP_RUNOF_RX = new RegExp(
+  `^(?:please )?skip (tomorrow'?s|today'?s) run of(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$`,
+);
+const UNSKIP_RX = new RegExp(
+  `^(?:please )?(?:cancel|scrap|drop)(?: the)? skip (?:of|for|on)(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$|^(?:please )?unskip(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)$|^(?:please )?don'?t skip(?: my| the)? (${NAME_CHARS}?) (?:workflow|routine)(?: after all)?$`,
+);
+
+/** v56: { name, when } / { name, cancel } from a one-shot skip ask, or null. */
+export function parseRunSkip(
   message: string,
 ): { name: string; when?: string; cancel?: boolean } | null {
   const t = tidy(message);
   if (!t || t.length > 100) return null;
-  const off = t.match(UNBOOK_RX);
-  if (off) return { name: (off[1] ?? off[2]).trim(), cancel: true };
-  const later = t.match(RUN_LATER_RX);
-  if (later) return { name: later[1].trim(), when: later[2].trim() };
-  const book = t.match(BOOK_RX);
-  if (book) return { name: book[1].trim(), when: book[2].trim() };
+  const off = t.match(UNSKIP_RX);
+  if (off) return { name: (off[1] ?? off[2] ?? off[3]).trim(), cancel: true };
+  const runOf = t.match(SKIP_RUNOF_RX);
+  if (runOf) return { name: runOf[2].trim(), when: runOf[1].startsWith('today') ? 'today' : 'tomorrow' };
+  const m = t.match(SKIP_RX);
+  if (m) return { name: m[1].trim(), when: m[2].replace(/^on /, '').trim() };
   return null;
 }
 
@@ -435,15 +479,32 @@ const WATCH_OFF_COND_RX = new RegExp(
 const CHECK_WATCHES_RX =
   /^(?:please )?(?:check|run|test) my (?:watches|watchers|watched (?:workflows|routines))$/;
 
+// v56: a watch can carry a clock window — "run my umbrella workflow whenever
+// it's raining, mornings only". The "only" keeps the form closed: without it,
+// trailing time words stay part of the condition and the set-time validation
+// teaches honestly. The window gates the CHECK (outside it the watch simply
+// isn't looked at; the day's fire budget is untouched).
+const WATCH_WINDOW_RX = /,? (?:in the )?(morning|afternoon|evening|night)s? only$/;
+
 /**
  * v50: { name, cond } from a watch-on ask, { name } from a watch-off ask,
  * or null when this isn't a watch ask at all.
+ * v56: `window` rides a watch-on when the ask ends "…, mornings only".
  */
-export function parseWatchSet(message: string): { name: string; cond?: string } | null {
+export function parseWatchSet(
+  message: string,
+): { name: string; cond?: string; window?: 'morning' | 'afternoon' | 'evening' | 'night' } | null {
   const t = tidy(message);
   if (!t || t.length > 140) return null;
   let m = t.match(WATCH_ON_RX);
-  if (m) return { name: m[1].trim(), cond: m[2].trim() };
+  if (m) {
+    const w = m[2].trim().match(WATCH_WINDOW_RX);
+    const cond = m[2].trim().replace(WATCH_WINDOW_RX, '').trim();
+    if (w && cond.length >= 3) {
+      return { name: m[1].trim(), cond, window: w[1] as 'morning' | 'afternoon' | 'evening' | 'night' };
+    }
+    return { name: m[1].trim(), cond: m[2].trim() };
+  }
   m = t.match(WATCH_ON_LEAD_RX);
   if (m) return { name: m[2].trim(), cond: m[1].trim() };
   m = t.match(WATCH_OFF_RX) ?? t.match(WATCH_OFF_COND_RX);
@@ -1108,6 +1169,12 @@ function cadenceOf(w: Workflow): string {
   return 'daily';
 }
 
+// v56: how a watch reads back — the condition plus its clock window, if any
+// (the ONE voice for every watch read, the cadenceOf idea).
+function watchLabel(w: Workflow): string {
+  return `whenever ${w.watch}${w.window ? `, ${w.window}s only` : ''}`;
+}
+
 /** The workflow name from a delete ask, or null. */
 export function parseWorkflowDelete(message: string): string | null {
   const t = tidy(message);
@@ -1190,8 +1257,13 @@ export function parseHolidaySkip(message: string): { name: string; skip: boolean
 const CHECK_SCHEDULES_RX =
   /^(?:check|show|list)(?: me)?(?: all)?(?: of)? my schedules?$|^what(?:'s| is) on (?:my|the) schedule(?: (?:for )?today)?$|^which workflows are scheduled$|^(?:check|show|list)(?: me)? my scheduled workflows$/;
 
+// v56: the same promises-read pointed at TOMORROW — still sync and free
+// (watches stay honest: a condition can't be predicted, only described).
+const CHECK_SCHEDULES_TOMORROW_RX =
+  /^(?:check|show|list)(?: me)? my schedules? for tomorrow$|^what(?:'s| is) on (?:my|the) schedule (?:for )?tomorrow$|^what runs tomorrow$|^which workflows (?:run|will run) tomorrow$/;
+
 export function isSchedulesCheck(message: string): boolean {
-  return CHECK_SCHEDULES_RX.test(tidy(message));
+  return CHECK_SCHEDULES_RX.test(tidy(message)) || CHECK_SCHEDULES_TOMORROW_RX.test(tidy(message));
 }
 
 /**
@@ -1381,11 +1453,12 @@ WORKFLOWS — saved routines I run on command:
 - conditions can look at the world, not just your profile: when my vision board is empty / when i have new email / when a booked send is waiting / when i have chats older than 30 days / when it's monday / when it's morning / when it's the 1st (of the month) / when i have an event this week / when it's a special day / when my pc has results waiting / when my mission is due soon / when my mission is overdue / when it's raining in johannesburg (tell me "i live in johannesburg" once and bare "when it's raining" works) / when it's cold (10°C or under) or hot (28°C or up) / when it's a public holiday (or tomorrow is) / when bitcoin is above 50000 / when gold is below 2000 — and watches take all of these too: "run my umbrella workflow whenever it's raining"
 - run my morning workflow every day (auto-runs on your first chat of the day) — or every sunday, or every month on the 15th (weekly and monthly schedules, one per workflow)
 - schedules with finesse: run my desk workflow every weekday / every weekend / every morning (fires on your first chat inside that window) / every weekday morning / every sunday morning / every month on the 1st in the evening — and "skip public holidays for my desk workflow" makes a scheduled routine sit out SA public holidays
-- one-off bookings: run my desk workflow tomorrow / next friday / in 3 days, or book my desk workflow for 25 december — one date, one run, it clears itself after; cancel the booked run of my desk workflow calls it off
-- check my schedules (or "what's on my schedule today") — every schedule, phrase, watch, and booking in one honest report: what ran, what's due, what's waiting for its window
+- one-off bookings: run my desk workflow tomorrow / next friday / in 3 days, or book my desk workflow for 25 december — one date, one run, it clears itself after; cancel the booked run of my desk workflow calls it off — and a topic can ride along: run my study workflow on grace tomorrow (that books a slotted workflow too, the topic fills the *)
+- one-off skips: skip my desk workflow tomorrow (or next friday, or "skip tomorrow's run of my desk workflow") — that one auto-run sits out and the schedule carries on; you can still run it by hand that day, and "cancel the skip for my desk workflow" changes your mind
+- check my schedules (or "what's on my schedule today") — every schedule, phrase, watch, and booking in one honest report: what ran, what's due, what's waiting for its window — and "what runs tomorrow" reads the same promises one day ahead
 - which workflows ran this week — the last 7 days of run receipts, day by day (and "what ran today" for just today)
 - "brief me" works as a workflow step now, so a morning routine can open with the full picture and follow with the sky and the headlines
-- run my triage workflow whenever i have new email (a WATCHED workflow — the schedule is a condition, any from the list above: I check it when you start a chat and fire the workflow at most once a day, only on a clean true) / stop watching my triage workflow / check my watches (checks every watch right now and fires the true ones)
+- run my triage workflow whenever i have new email (a WATCHED workflow — the schedule is a condition, any from the list above: I check it when you start a chat and fire the workflow at most once a day, only on a clean true) / stop watching my triage workflow / check my watches (checks every watch right now and fires the true ones) — and end a watch with "…, mornings only" and I only check it inside that window
 - a step that SENDS email ("send an email to me about *") makes the run pause and ask for your yes first — and scheduled auto-runs hold send steps back entirely
 - list my workflows / delete my morning workflow / which workflows ran today (every run leaves a receipt)
 - what did my last run do (the newest receipt, step by step — what ran, what skipped and why) / run my study workflow again (repeats the last run, same topic and all)
@@ -1410,7 +1483,7 @@ BEYOND THE CHAT — I execute on your other tools too:
 - how many chats do i have / clean up my old chats — I count what's been idle 30+ days and ALWAYS ask before deleting anything
 - email: draft an email to me about … / /email/sam@x.com/Subject/Body (end it /send to be offered the send in the same turn) / check my inbox / summarise my inbox / summarise the last email from sam (that one mail, read in full) / reply to the last email from sam / send draft 2 tomorrow morning — real sends ALWAYS take a spoken yes
 - devices: add a task for my laptop: push the repo / what's waiting on my laptop / run backup on my pc (the runner on that device executes only names it already knows) / any results from my pc
-- the world: weather in johannesburg / convert 100 usd to zar / price of bitcoin / capital of france / news about music / sunrise in cape town / air quality in joburg / price of apple stock / when is the next public holiday / today in history — all of these work as workflow steps too, so a routine can open with the sky, the markets, and the headlines
+- the world: weather in johannesburg / convert 100 usd to zar / price of bitcoin / capital of france / news about music / sunrise in cape town / air quality in joburg / price of apple stock / when is the next public holiday / today in history / recipe for chicken curry / what can i make with chicken / what should i cook tonight — all of these work as workflow steps too, so a routine can open with the sky, the markets, the headlines, and dinner
 - export my reminders as a calendar — an .ics block your calendar app imports
 
 And anytime you want the full picture — mission, habits, reminders, mood — just say "brief me".
@@ -1436,6 +1509,7 @@ export function isAgentAsk(message: string): boolean {
     parseDailySet(message) !== null ||
     parseHolidaySkip(message) !== null ||
     parseRunBooking(message) !== null ||
+    parseRunSkip(message) !== null ||
     parseWatchSet(message) !== null ||
     parseWorkflowPause(message) !== null ||
     parseWorkflowResume(message) !== null ||
@@ -1447,6 +1521,7 @@ export function isAgentAsk(message: string): boolean {
     LIST_RX.test(t) ||
     CHECK_WATCHES_RX.test(t) ||
     CHECK_SCHEDULES_RX.test(t) ||
+    CHECK_SCHEDULES_TOMORROW_RX.test(t) ||
     RAN_TODAY_RX.test(t) ||
     RAN_WEEK_RX.test(t) ||
     MISSION_DEADLINE_CLEAR_RX.test(t) ||
@@ -1473,11 +1548,12 @@ function nameList(workflows: Workflow[]): string {
       const trig = w.trigger ? ` — trigger: "${w.trigger}"` : '';
       const daily = w.daily || w.day || w.monthDay
         ? ` — runs ${cadenceOf(w)}${w.skipHolidays ? ', skips public holidays' : ''}`
-        : w.watch ? ` — watching: whenever ${w.watch}` : '';
-      const booked = w.runOn ? ` — booked for ${w.runOn}` : ''; // v55
+        : w.watch ? ` — watching: ${watchLabel(w)}` : '';
+      const booked = w.runOn ? ` — booked for ${w.runOn}${w.runOnTopic ? ` on "${w.runOnTopic}"` : ''}` : ''; // v55/v56
+      const sitOut = w.skipOn && w.skipOn >= todayISO ? ` — sits out ${w.skipOn}` : ''; // v56
       // v46: a sleeping workflow says so wherever it's listed.
       const nap = isPaused(w, todayISO) ? ` — ${pauseLabel(w)}` : '';
-      return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}${booked}${nap}`;
+      return `- ${w.name} (${w.steps.length} step${w.steps.length === 1 ? '' : 's'})${trig}${daily}${booked}${sitOut}${nap}`;
     })
     .join('\n');
 }
@@ -2293,7 +2369,7 @@ export async function tryAgent(
       : wf.day
       ? `\nRuns every ${wf.day}, on your first chat that day.${holNote}`
       : wf.monthDay ? `\nRuns on the ${ordinal(wf.monthDay)} of every month, on your first chat that day.${holNote}`
-      : wf.watch ? `\nWatching: runs itself whenever ${wf.watch} — checked when you start a chat, fired at most once a day.` : '';
+      : wf.watch ? `\nWatching: runs itself ${watchLabel(wf)} — checked ${wf.window ? `on your first chat in the ${wf.window}` : 'when you start a chat'}, fired at most once a day.` : '';
     // v46: a sleeping workflow says so when shown.
     const td = todayInTZ('Africa/Johannesburg');
     const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
@@ -2546,13 +2622,16 @@ export async function tryAgent(
       if (!wf.runOn) return { reply: `"${booking.name}" has no booked run to cancel.` };
       const next = { ...wf };
       delete next.runOn;
+      delete next.runOnTopic;
       return {
-        reply: `Cancelled — the ${wf.runOn} booking for "${booking.name}" is off. ${cadenceOf(wf) ? `Its regular schedule (${cadenceOf(wf)}) still stands.` : `Run it anytime with "run my ${booking.name} workflow".`}`,
+        reply: `Cancelled — the ${wf.runOn} booking${wf.runOnTopic ? ` (on "${wf.runOnTopic}")` : ''} for "${booking.name}" is off. ${cadenceOf(wf) ? `Its regular schedule (${cadenceOf(wf)}) still stands.` : `Run it anytime with "run my ${booking.name} workflow".`}`,
         profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
       };
     }
-    if (hasSlot(wf)) {
-      return { reply: `"${booking.name}" has a * slot, so it needs a topic each time — a booked auto-run wouldn't know what to fill in. Run it live with "run my ${booking.name} workflow on <topic>".` };
+    // v56: a topic makes a slotted workflow bookable — the topic is stored
+    // with the date and fills the * when the booking fires.
+    if (hasSlot(wf) && !booking.topic) {
+      return { reply: `"${booking.name}" has a * slot, so a booking needs a topic to fill it — say "run my ${booking.name} workflow on <topic> tomorrow" (or "book my ${booking.name} workflow for <day> on <topic>") and I'll hold both.` };
     }
     const td = todayInTZ('Africa/Johannesburg');
     const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
@@ -2564,15 +2643,75 @@ export async function tryAgent(
       return { reply: `I can book a run for "tomorrow", "next friday", "in 3 days", or a date like "25 december" — that phrasing I don't know yet.` };
     }
     if (due <= todayISO) {
-      return { reply: `That lands today — just say "run my ${booking.name} workflow" and I'll do it right now.` };
+      return { reply: `That lands today — just say "run my ${booking.name} workflow${booking.topic ? ` on ${booking.topic}` : ''}" and I'll do it right now.` };
     }
     const wasBooked = wf.runOn ? ` (replacing the ${wf.runOn} booking)` : '';
+    // A skip and a booking can't share a day — the explicit booking wins.
+    const unSkipped = wf.skipOn === due ? ` (and the skip you'd set for that day steps aside)` : '';
     const napNote = isPaused(wf, todayISO) && (wf.paused === true || (typeof wf.paused === 'string' && wf.paused > due))
       ? ` Heads up: it's paused, and a paused workflow sleeps through bookings — "resume my ${booking.name} workflow" first.`
       : '';
+    const onTopic = booking.topic ? ` on "${booking.topic}"` : '';
     return {
-      reply: `Booked — "${booking.name}" will run itself on ${due}, on your first chat that day (whatever the hour)${wasBooked}. One date, one run: it clears itself after. "cancel the booked run of my ${booking.name} workflow" calls it off.${napNote}`,
-      profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? { ...w, runOn: due } : w)) },
+      reply: `Booked — "${booking.name}" will run itself${onTopic} on ${due}, on your first chat that day (whatever the hour)${wasBooked}${unSkipped}. One date, one run: it clears itself after. "cancel the booked run of my ${booking.name} workflow" calls it off.${napNote}`,
+      profile: {
+        ...profile,
+        workflows: workflows.map((w, i) => {
+          if (i !== idx) return w;
+          const next = { ...w, runOn: due };
+          if (booking.topic) next.runOnTopic = booking.topic;
+          else delete next.runOnTopic;
+          if (next.skipOn === due) delete next.skipOn;
+          return next;
+        }),
+      },
+    };
+  }
+
+  // v56: one-shot skips — "skip my desk workflow tomorrow" sits one scheduled
+  // auto-run out. The mirror of a booking: one date, inert after its day, and
+  // a spoken run that day still works (pause is the tool for full sleep).
+  const skipAsk = parseRunSkip(message);
+  if (skipAsk) {
+    const idx = workflows.findIndex((w) => w.name === skipAsk.name);
+    if (idx < 0) {
+      return {
+        reply: `I don't have a workflow called "${skipAsk.name}". ${workflows.length ? `You have: ${workflows.map((w) => w.name).join(', ')}.` : 'Create it first: create a workflow called ' + skipAsk.name + ': …'}`,
+      };
+    }
+    const wf = workflows[idx];
+    const td = todayInTZ('Africa/Johannesburg');
+    const todayISO = `${td.y}-${String(td.m).padStart(2, '0')}-${String(td.d).padStart(2, '0')}`;
+    if (skipAsk.cancel) {
+      if (!wf.skipOn || wf.skipOn < todayISO) return { reply: `"${skipAsk.name}" has no skip to cancel — its schedule runs as normal.` };
+      const next = { ...wf };
+      delete next.skipOn;
+      return {
+        reply: `Okay — the ${wf.skipOn} skip for "${skipAsk.name}" is off; ${cadenceOf(wf) ? `it runs ${cadenceOf(wf)} as usual` : 'its schedule stands'}.`,
+        profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? next : w)) },
+      };
+    }
+    if (!wf.daily && !wf.day && !wf.monthDay && !wf.watch) {
+      return { reply: `"${skipAsk.name}" isn't scheduled, so there's no auto-run to sit out — it only runs when you ask. (A booking is cancelled with "cancel the booked run of my ${skipAsk.name} workflow".)` };
+    }
+    const { due } = skipAsk.when === 'today' ? { due: todayISO } : parseWhen(skipAsk.when!, td);
+    if (!due) {
+      return { reply: `I can skip "today", "tomorrow", "next friday", or a date like "on 25 december" — that phrasing I don't know yet.` };
+    }
+    if (due < todayISO) {
+      return { reply: `That day's already gone — nothing to skip.` };
+    }
+    if (due === todayISO && wf.lastRun === todayISO) {
+      return { reply: `"${skipAsk.name}" already ran today, so there's nothing left to skip — say "skip my ${skipAsk.name} workflow tomorrow" if you meant the next one.` };
+    }
+    if (wf.runOn === due) {
+      return { reply: `That day has a booked run of "${skipAsk.name}" — a booking outranks a skip, so call it off directly: "cancel the booked run of my ${skipAsk.name} workflow".` };
+    }
+    const replaced = wf.skipOn && wf.skipOn >= todayISO ? ` (replacing the ${wf.skipOn} skip)` : '';
+    const dayWord = due === todayISO ? 'today' : due;
+    return {
+      reply: `Okay — "${skipAsk.name}" sits out ${dayWord}${replaced}. One day, one skip: after that its ${wf.watch ? `watch (${watchLabel(wf)})` : `schedule (${cadenceOf(wf)})`} carries on. You can still run it by hand that day, and "cancel the skip for my ${skipAsk.name} workflow" changes your mind.`,
+      profile: { ...profile, workflows: workflows.map((w, i) => (i === idx ? { ...w, skipOn: due } : w)) },
     };
   }
 
@@ -2777,18 +2916,67 @@ export async function tryAgent(
         if (w.skipHolidays) bits.push('sits out public holidays');
       }
       if (w.watch) {
-        bits.push(`watching: whenever ${w.watch}`);
+        bits.push(`watching: ${watchLabel(w)}`);
         if (isPaused(w, todayISO)) bits.push(pauseLabel(w));
         else if (w.lastRun === todayISO) bits.push('fired today');
+        else if (w.window && w.window !== seg) bits.push(`checked in the ${w.window} (it's ${seg} now)`); // v56
         else bits.push('checked when you start a chat');
       }
       // v55: a one-off booking reads back beside whatever else is set.
-      if (w.runOn) bits.push(`booked for ${w.runOn === todayISO ? 'today' : w.runOn}`);
+      // v56: its topic too, and a one-shot skip.
+      if (w.runOn) bits.push(`booked for ${w.runOn === todayISO ? 'today' : w.runOn}${w.runOnTopic ? ` on "${w.runOnTopic}"` : ''}`);
+      if (w.skipOn && w.skipOn >= todayISO) bits.push(`sits out ${w.skipOn === todayISO ? 'today' : w.skipOn}`);
       if (w.trigger) bits.push(`on the phrase "${w.trigger}"`);
       return `- ${w.name} — ${bits.join(' · ')}`;
     });
     return {
       reply: `Your schedules (${scheduled.length} of ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}):\n${lines.join('\n')}\n\n"check my watches" checks the watched ones against the live world right now.`,
+    };
+  }
+
+  // ── v56: "what runs tomorrow" — the same promises-read, one day ahead ─────
+  // Sync and free like the today read. Watches stay honest (a condition can't
+  // be predicted); pauses, skips, bookings, day gates and windows all speak.
+  if (CHECK_SCHEDULES_TOMORROW_RX.test(t)) {
+    const td = todayInTZ('Africa/Johannesburg');
+    const tomo = new Date(Date.UTC(td.y, td.m - 1, td.d + 1));
+    const tomorrowISO = tomo.toISOString().slice(0, 10);
+    const dow2 = weekdayOf(tomorrowISO);
+    const weekend2 = dow2 === 'saturday' || dow2 === 'sunday';
+    const dom2 = tomo.getUTCDate();
+    const scheduled = workflows.filter((w) => w.daily || w.day || w.monthDay || w.watch || w.trigger || w.runOn === tomorrowISO);
+    if (!scheduled.length) {
+      return {
+        reply: workflows.length
+          ? 'Nothing on tomorrow\'s calendar — your workflows only run when you ask. Book a one-off ("run my <name> workflow tomorrow") or set a schedule ("run my <name> workflow every weekday morning").'
+          : 'No workflows yet, so tomorrow is clear. Create one first: create a workflow called <name>: <step>, then <step>.',
+      };
+    }
+    const lines = scheduled.map((w) => {
+      const bits: string[] = [];
+      const calTomorrow = w.daily
+        ? (!w.days || (w.days === 'weekdays' ? !weekend2 : weekend2))
+        : (!!w.day && w.day === dow2) || (!!w.monthDay && w.monthDay === dom2);
+      if (isPaused(w, tomorrowISO)) {
+        bits.push(`${pauseLabel(w)} — sleeps through tomorrow`);
+      } else if (w.runOn === tomorrowISO) {
+        bits.push(`booked for tomorrow${w.runOnTopic ? ` on "${w.runOnTopic}"` : ''} — fires on your first chat, whatever the hour`);
+      } else if (w.daily || w.day || w.monthDay) {
+        if (w.skipOn === tomorrowISO) bits.push('sits tomorrow out (you skipped it)');
+        else if (calTomorrow) {
+          bits.push(`runs tomorrow${w.window ? `, on your first chat in the ${w.window}` : ''}${w.skipHolidays ? ' — unless it\'s a public holiday (I check on the day)' : ''}`);
+        } else bits.push(`not tomorrow (runs ${cadenceOf(w)})`);
+      } else if (w.watch) {
+        bits.push(w.skipOn === tomorrowISO
+          ? 'watch skipped for tomorrow (you asked)'
+          : `condition-driven — I check "${watchLabel(w)}" when you chat${w.window ? ` in the ${w.window}` : ''}, so tomorrow depends on the world`);
+      }
+      if (typeof w.paused === 'string' && w.paused === tomorrowISO) bits.push('wakes tomorrow');
+      if (w.trigger) bits.push(`on the phrase "${w.trigger}" (any day you say it)`);
+      return `- ${w.name} — ${bits.join(' · ')}`;
+    });
+    return {
+      reply: `Tomorrow (${tomorrowISO}, ${dow2}):\n${lines.join('\n')}\n\n"check my schedules" reads today; a skip ("skip my <name> workflow tomorrow") or a booking ("run my <name> workflow tomorrow") changes tomorrow.`,
     };
   }
 
@@ -2806,14 +2994,25 @@ export async function tryAgent(
     let changed = false;
     const lines: string[] = [];
     const reports: string[] = [];
+    const segNow = segmentOf(hourInTZ('Africa/Johannesburg')); // v56: watch windows
     for (const wf of watchers) {
-      const tag = `"${wf.name}" (whenever ${wf.watch})`;
+      const tag = `"${wf.name}" (${watchLabel(wf)})`;
       if (isPaused(wf, todayISO)) {
         lines.push(`- ${tag} — ${pauseLabel(wf)}, so it sits this one out.`);
         continue;
       }
       if (wf.lastRun === todayISO) {
         lines.push(`- ${tag} — already fired today; a watch fires at most once a day.`);
+        continue;
+      }
+      // v56: a skipped day quiets the watch; a windowed watch is only looked
+      // at inside its window — the window is the promise, even when asked.
+      if (wf.skipOn === todayISO) {
+        lines.push(`- ${tag} — you skipped it for today, so I left it alone.`);
+        continue;
+      }
+      if (wf.window && wf.window !== segNow) {
+        lines.push(`- ${tag} — outside its window (it's ${segNow} now), so I only check it in the ${wf.window}.`);
         continue;
       }
       const verdict = await evalCondition(wf.watch!, prof, todayISO, email, sources);
@@ -2868,7 +3067,8 @@ export async function tryAgent(
       }
       const nextList = workflows.map((w, i) => {
         if (i !== idx) return w;
-        const { watch: _watch, ...rest } = w;
+        // v56: a watch window leaves with its watch.
+        const { watch: _watch, window: _window, ...rest } = w;
         return rest as Workflow;
       });
       return {
@@ -2898,10 +3098,18 @@ export async function tryAgent(
       delete next.daily;
       delete next.day;
       delete next.monthDay;
+      delete next.days;
+      // v56: the window belongs to THIS watch now — set it, or clear a stale
+      // calendar one (every schedule swap clears its modifiers, the v54 law).
+      if (watchSet.window) next.window = watchSet.window;
+      else delete next.window;
       return next;
     });
     const swapped = (wf.daily || wf.day || wf.monthDay)
       ? ' Its calendar schedule steps down — one schedule per workflow, and the watch is it now.'
+      : '';
+    const windowed = watchSet.window
+      ? ` ${watchSet.window.charAt(0).toUpperCase() + watchSet.window.slice(1)}s only: I check it only during the ${watchSet.window}.`
       : '';
     // v42's law reaches here too: a watch-fired run is a scheduled run.
     const sends = sendStepsOf(wf, workflows).length
@@ -2915,7 +3123,7 @@ export async function tryAgent(
           ? "I couldn't reach the source to check it just now, but the watch is set — I'll keep trying"
           : "Gmail isn't connected yet, so the check can't pass until you link it (the Email tool's Connect button)";
     return {
-      reply: `Watching — "${wf.name}" now runs itself whenever ${watchSet.cond}. I check when you start a chat and fire it at most once a day, only on a clean true.${swapped}${sends} ${now}. "stop watching my ${wf.name} workflow" calls it off, and "check my watches" checks right now.`,
+      reply: `Watching — "${wf.name}" now runs itself whenever ${watchSet.cond}.${windowed} I check when you start a chat${watchSet.window ? ` in the ${watchSet.window}` : ''} and fire it at most once a day, only on a clean true.${swapped}${sends} ${now}. "stop watching my ${wf.name} workflow" calls it off, and "check my watches" checks right now.`,
       profile: { ...profile, workflows: nextList },
     };
   }
@@ -2949,7 +3157,7 @@ export async function tryAgent(
     const nextList = workflows.map((w, i) => (i === idx ? { ...w, paused: until ?? true } : w));
     const sleeps: string[] = [];
     if (wf.daily || wf.day || wf.monthDay) sleeps.push('its schedule');
-    if (wf.watch) sleeps.push(`its watch ("whenever ${wf.watch}")`);
+    if (wf.watch) sleeps.push(`its watch ("${watchLabel(wf)}")`);
     if (wf.trigger) sleeps.push(`its trigger ("${wf.trigger}")`);
     const what = sleeps.length ? ` ${sleeps.join(' and ')} sleep${sleeps.length === 1 ? 's' : ''} too;` : '';
     return {
@@ -3101,6 +3309,9 @@ export async function tryAgent(
  * todayISO falls on their weekday, stamped with the same lastRun.
  * v41: monthly workflows (Workflow.monthDay) too — due only when todayISO
  * falls on their day of the month (1-28, so every month has one).
+ * v56: watch windows (checked only inside their clock segment), one-shot
+ * skips (skipOn quiets the day, inert after), and booked topics (a slotted
+ * workflow fires with its stored topic).
  */
 export async function runDailyWorkflows(
   profile: Profile,
@@ -3135,9 +3346,15 @@ export async function runDailyWorkflows(
   // holds, checked lazily below so calendar schedules stay free. A watch that
   // hasn't fired yet keeps checking on every session start of the day.
   // v55: a booked run (runOn === today) joins the channel and clears itself.
+  // v56: a windowed watch is only looked at inside its window; a one-shot
+  // skip (skipOn === today) quiets every auto channel for the day; and a
+  // booking with a stored topic admits a slotted workflow — the topic fills
+  // the * when it fires.
   let due = (profile.workflows ?? []).filter((w) =>
-    (calDue(w) || w.watch || w.runOn === todayISO) &&
-    w.lastRun !== todayISO && !hasSlot(w) && !isPaused(w, todayISO));
+    (calDue(w) || (w.watch && (!w.window || w.window === seg)) || w.runOn === todayISO) &&
+    w.lastRun !== todayISO && w.skipOn !== todayISO &&
+    (!hasSlot(w) || (w.runOn === todayISO && !!w.runOnTopic)) &&
+    !isPaused(w, todayISO));
   // v54: holiday-aware schedules — ONE lazy calendar check covers every
   // flagged workflow that's due. A calendar that doesn't answer can't hold
   // the schedule hostage: the run is the promise, the skip is the modifier,
@@ -3164,21 +3381,24 @@ export async function runDailyWorkflows(
       if (verdict !== true) continue;
     }
     const via = booked ? 'booked' : wf.watch ? 'watch' : wf.daily ? 'daily' : wf.day ? 'weekly' : 'monthly';
-    const out = await runWorkflow(wf, prof, run, undefined, email, sources, via);
+    // v56: a booked topic rides the run — it fills any * slot and stamps the
+    // receipt exactly like a spoken "run my X workflow on <topic>".
+    const topic = booked ? wf.runOnTopic : undefined;
+    const out = await runWorkflow(wf, prof, run, topic, email, sources, via);
     if (out.profile) prof = out.profile;
     // v42 (#27): a glanceable headline, counted from the run itself — the
     // zero-cost cousin of the pre-run preview the roadmap weighed and feared.
     const head = out.counts ? ` (${out.counts.executed} of ${out.counts.total} step${out.counts.total === 1 ? '' : 's'} ran)` : '';
     const label = booked ? 'booked' : wf.watch ? 'watched' : wf.daily ? 'daily' : wf.day ?? 'monthly';
-    const why = wf.watch && !booked ? ` (${wf.watch})` : '';
+    const why = booked && topic ? ` (on "${topic}")` : wf.watch && !booked ? ` (${wf.watch})` : '';
     reports.push(`— Your ${label} "${wf.name}" workflow${why}${head} —\n\n${out.reply}`);
     prof = {
       ...prof,
       workflows: (prof.workflows ?? []).map((w) => {
         if (w.name !== wf.name) return w;
         const next = { ...w, lastRun: todayISO };
-        // A consumed booking clears itself — one date, one run.
-        if (booked) delete next.runOn;
+        // A consumed booking clears itself — one date, one run (topic too).
+        if (booked) { delete next.runOn; delete next.runOnTopic; }
         return next;
       }),
     };

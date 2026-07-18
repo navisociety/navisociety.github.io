@@ -29,8 +29,12 @@
 //  10. THIS DAY  — Wikipedia on-this-day (selected): "today in history" /
 //                  "what happened on this day"
 //
-// Candidate verified for a future round: TheMealDB recipes (keyless via the
-// public test key: themealdb.com/api/json/v1/1/search.php?s=<dish>).
+// v56 — the concierge round — added the kitchen (same laws, same seam):
+//  11. RECIPES   — TheMealDB (keyless via the public test key '1'):
+//                  "recipe for chicken curry" / "how do i cook pasta" /
+//                  "what can i make with chicken" / "what should i cook
+//                  tonight" (a random pick). Honest misses teach the form;
+//                  the method is clipped honestly when it runs long.
 //
 // v53 — the reflex round — the senses now FEED THE EXECUTION LAYER: skyFor /
 // priceOf / holidayOn (bottom of this file) ride agent.ts's ConditionSources
@@ -93,6 +97,8 @@ export type AirNow = { aqi: number | null; pm25: number | null; pm10: number | n
 export type Quote = { price: number; currency: string };
 export type Holiday = { date: string; name: string };
 export type DayEvent = { year: number; text: string };
+// v56: one recipe — ingredients are already "measure ingredient" strings.
+export type Meal = { name: string; category: string; area: string; ingredients: string[]; method: string };
 
 export type WorldSources = {
   /** null = no such place; 'down' = couldn't reach the geocoder. */
@@ -118,6 +124,12 @@ export type WorldSources = {
   holidays: (country: string) => Promise<Holiday[] | null | 'unknown'>;
   /** v52: curated events for a calendar day; null = couldn't reach. */
   onThisDay: (month: number, day: number) => Promise<DayEvent[] | null>;
+  /** v56: a recipe by dish name; 'none' = the cookbook has no match. */
+  meal: (dish: string) => Promise<Meal | null | 'none'>;
+  /** v56: meal NAMES by main ingredient; 'none' = nothing filed under it. */
+  mealsWith: (ingredient: string) => Promise<string[] | null | 'none'>;
+  /** v56: one random recipe; null = couldn't reach. */
+  randomMeal: () => Promise<Meal | null>;
 };
 
 const TIMEOUT = 4000;
@@ -421,7 +433,67 @@ const REAL_SOURCES: WorldSources = {
       return null;
     }
   },
+  meal: async (dish) => {
+    try {
+      const data = await getJson(
+        `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(dish)}`,
+        // deno-lint-ignore no-explicit-any
+      ) as any;
+      const row = Array.isArray(data?.meals) ? data.meals[0] : null;
+      if (!row) return 'none';
+      return slimMeal(row);
+    } catch {
+      return null;
+    }
+  },
+  mealsWith: async (ingredient) => {
+    try {
+      const data = await getJson(
+        `https://www.themealdb.com/api/json/v1/1/filter.php?i=${encodeURIComponent(ingredient)}`,
+        // deno-lint-ignore no-explicit-any
+      ) as any;
+      // An unknown ingredient comes back { meals: null } — same HTTP 200 as a
+      // hit, so the miss is read from the body, never from the status.
+      const rows = Array.isArray(data?.meals) ? data.meals : null;
+      if (!rows || !rows.length) return 'none';
+      return rows.map((r: { strMeal?: unknown }) => String(r?.strMeal ?? '')).filter(Boolean).slice(0, 5);
+    } catch {
+      return null;
+    }
+  },
+  randomMeal: async () => {
+    try {
+      const data = await getJson(
+        'https://www.themealdb.com/api/json/v1/1/random.php',
+        // deno-lint-ignore no-explicit-any
+      ) as any;
+      const row = Array.isArray(data?.meals) ? data.meals[0] : null;
+      return row ? slimMeal(row) : null;
+    } catch {
+      return null;
+    }
+  },
 };
+
+// v56: TheMealDB rows carry strIngredient1..20 + strMeasure1..20 — fold them
+// into spoken "measure ingredient" lines and keep only what NAVI speaks.
+// deno-lint-ignore no-explicit-any
+function slimMeal(row: any): Meal {
+  const ingredients: string[] = [];
+  for (let i = 1; i <= 20; i++) {
+    const ing = String(row[`strIngredient${i}`] ?? '').trim();
+    if (!ing) continue;
+    const measure = String(row[`strMeasure${i}`] ?? '').trim();
+    ingredients.push(measure ? `${measure} ${ing}` : ing);
+  }
+  return {
+    name: String(row?.strMeal ?? 'Unnamed dish'),
+    category: String(row?.strCategory ?? ''),
+    area: String(row?.strArea ?? ''),
+    ingredients,
+    method: String(row?.strInstructions ?? '').replace(/\r/g, '').replace(/\n{2,}/g, '\n').trim(),
+  };
+}
 
 // ── Cache (per warm isolate, webCache-style) ─────────────────────────────────
 
@@ -450,6 +522,7 @@ const TTL_AIR = 30 * MIN;
 const TTL_QUOTE = 10 * MIN;
 const TTL_HOLIDAYS = 24 * 60 * MIN;
 const TTL_THIS_DAY = 6 * 60 * MIN;
+const TTL_RECIPE = 24 * 60 * MIN; // v56: the cookbook barely moves
 
 // ── Shared vocabulary ────────────────────────────────────────────────────────
 
@@ -754,6 +827,48 @@ export function parseThisDayAsk(message: string): Record<never, never> | null {
   return THIS_DAY_RX.test(t) ? {} : null;
 }
 
+// ── v56 parsers — recipes ────────────────────────────────────────────────────
+// The verbs stay culinary on purpose: "recipe for X" and "how do i cook X"
+// can only mean the kitchen, while "how do i make friends" (no cook word, no
+// recipe word) never gets near the cookbook — conversation is never hijacked.
+
+const RECIPE_RX =
+  /^(?:give me |show me |find me |get me )?(?:a |the )?recipe for (.{2,50})$|^how (?:do i|to) cook (.{2,50})$|^what(?:'s| is) the recipe for (.{2,50})$/;
+const MEALS_WITH_RX =
+  /^what (?:can|could|should) i (?:cook|make) with (.{2,40})$|^(?:recipes|meals|dishes) with (.{2,40})$/;
+const RANDOM_RECIPE_RX =
+  /^(?:give me |show me )?a random recipe$|^surprise me with a recipe$|^what should i (?:cook|make) (?:today|tonight|for (?:dinner|lunch|breakfast|supper))$/;
+
+/** v56: { dish } from a recipe ask, or null. */
+export function parseRecipeAsk(message: string): { dish: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 70) return null;
+  const m = t.match(RECIPE_RX);
+  if (!m) return null;
+  const dish = (m[1] ?? m[2] ?? m[3]).trim();
+  // Crisis language never drives a search; a multi-part tail is two asks.
+  if (CRISIS_RX.test(dish) || /\b(?:and|then)\b/.test(dish)) return null;
+  return { dish };
+}
+
+/** v56: { ingredient } from a what-can-i-make ask, or null. */
+export function parseMealsWithAsk(message: string): { ingredient: string } | null {
+  const t = tidy(message);
+  if (!t || t.length > 60) return null;
+  const m = t.match(MEALS_WITH_RX);
+  if (!m) return null;
+  const ingredient = (m[1] ?? m[2]).trim();
+  if (CRISIS_RX.test(ingredient) || /\b(?:and|then)\b/.test(ingredient)) return null;
+  return { ingredient };
+}
+
+/** v56: {} from a random-recipe ask, or null. */
+export function parseRandomRecipeAsk(message: string): Record<never, never> | null {
+  const t = tidy(message);
+  if (!t || t.length > 50) return null;
+  return RANDOM_RECIPE_RX.test(t) ? {} : null;
+}
+
 // ── v52 formatting helpers ───────────────────────────────────────────────────
 
 const MONTH_NAMES = [
@@ -1056,7 +1171,66 @@ export async function tryWorld(
     );
   }
 
+  // 11. RECIPES (v56 — TheMealDB, keyless via the public test key)
+  const recipe = parseRecipeAsk(message);
+  if (recipe) {
+    const key = `re:${recipe.dish}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const m = await sources.meal(recipe.dish);
+    if (m === null) return 'I couldn\'t reach the cookbook just now — try me again in a moment.';
+    if (m === 'none') {
+      return `TheMealDB has no recipe filed under "${recipe.dish}" — try a classic dish name ("recipe for chicken curry") or ask by ingredient ("what can i make with chicken").`;
+    }
+    return remember(key, mealText(m), TTL_RECIPE);
+  }
+
+  // 12. WHAT CAN I MAKE WITH (v56 — one main ingredient, meal names back)
+  const mealsWith = parseMealsWithAsk(message);
+  if (mealsWith) {
+    const key = `ri:${mealsWith.ingredient}`;
+    const hit = cached(key);
+    if (hit) return hit;
+    const names = await sources.mealsWith(mealsWith.ingredient);
+    if (names === null) return 'I couldn\'t reach the cookbook just now — try me again in a moment.';
+    if (names === 'none') {
+      return `The cookbook has nothing filed under "${mealsWith.ingredient}" — it thinks in single main ingredients, like "what can i make with chicken" or "recipes with beef".`;
+    }
+    const lines = names.map((n, i) => `${i + 1}. ${n}`).join('\n');
+    return remember(
+      key,
+      `With ${mealsWith.ingredient} you could make:\n${lines}\nSay "recipe for <name>" and I'll read you the method. (TheMealDB)`,
+      TTL_RECIPE,
+    );
+  }
+
+  // 13. RANDOM RECIPE (v56 — never cached: a pinned surprise is no surprise)
+  if (parseRandomRecipeAsk(message)) {
+    const m = await sources.randomMeal();
+    if (!m) return 'I couldn\'t reach the cookbook just now — try me again in a moment.';
+    return `Here's an idea — ${mealText(m)}`;
+  }
+
   return null;
+}
+
+// v56: one recipe, spoken — ingredients capped at 12, the method clipped at a
+// sentence boundary with an honest note when the full version runs longer.
+function mealText(m: Meal): string {
+  const kind = [m.area, m.category].filter(Boolean).join(' · ');
+  const shown = m.ingredients.slice(0, 12);
+  const more = m.ingredients.length > shown.length
+    ? ` (+${m.ingredients.length - shown.length} more)` : '';
+  let method = m.method;
+  let clipped = false;
+  if (method.length > 700) {
+    const cut = method.slice(0, 700);
+    const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('.\n'));
+    method = stop > 200 ? cut.slice(0, stop + 1) : cut;
+    clipped = true;
+  }
+  const clipNote = clipped ? '\n(That\'s the short version — the full method carries on from there.)' : '';
+  return `${m.name}${kind ? ` — ${kind}` : ''} (TheMealDB):\nIngredients: ${shown.join(', ')}${more}.\nMethod: ${method}${clipNote}`;
 }
 
 // ── v53: the reflex helpers — the senses feeding the EXECUTION layer ─────────

@@ -156,7 +156,13 @@ export type ScheduledSend = { id: string; to: string; subject: string; sendAt: s
 // evalCondition vocabulary, checked at session-start (and by "check my
 // watches"), fired at most once a day on a CLEAN true, sharing `lastRun`.
 // Exclusive with daily/day/monthDay — setting one clears the others.
-export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string; days?: 'weekdays' | 'weekends'; window?: 'morning' | 'afternoon' | 'evening' | 'night'; skipHolidays?: boolean; runOn?: string };
+// v55: `runOn` books ONE dated run (yyyy-mm-dd) that clears itself on firing.
+// v56: `runOnTopic` rides a booking on a slotted workflow (the topic fills
+// the * when the booking fires, then clears with it); `window` also gates a
+// `watch` now ("whenever …, mornings only" — checked only inside the window);
+// `skipOn` sits ONE dated auto-run out (yyyy-mm-dd) — inert once the day
+// passes, replaced by the next skip, never blocks a spoken run.
+export type Workflow = { name: string; steps: string[]; trigger?: string; created: string; daily?: boolean; day?: string; monthDay?: number; watch?: string; lastRun?: string; paused?: boolean | string; days?: 'weekdays' | 'weekends'; window?: 'morning' | 'afternoon' | 'evening' | 'night'; skipHolidays?: boolean; runOn?: string; runOnTopic?: string; skipOn?: string };
 
 // v26: one tracked habit. `lastDone` is an ISO date (yyyy-mm-dd) in SA time;
 // a log the day after lastDone extends the streak, any later day restarts it.
